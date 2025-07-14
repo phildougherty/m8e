@@ -3,11 +3,11 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/compose"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/dashboard"
-	"github.com/phildougherty/mcp-compose/internal/task_scheduler"
+	"github.com/phildougherty/m8e/internal/compose"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/dashboard"
+	"github.com/phildougherty/m8e/internal/task_scheduler"
 
 	"github.com/spf13/cobra"
 )
@@ -101,7 +101,7 @@ func restartProxy() error {
 		return fmt.Errorf("failed to detect container runtime: %w", err)
 	}
 
-	proxyContainerName := "mcp-compose-http-proxy"
+	proxyContainerName := "matey-http-proxy"
 
 	// Check if proxy container exists and is running
 	status, err := runtime.GetContainerStatus(proxyContainerName)
@@ -142,7 +142,7 @@ func restartDashboard(configFile string) error {
 		return fmt.Errorf("failed to detect container runtime: %w", err)
 	}
 
-	dashboardContainerName := "mcp-compose-dashboard"
+	dashboardContainerName := "matey-dashboard"
 
 	// Check if dashboard container exists and is running
 	status, err := runtime.GetContainerStatus(dashboardContainerName)

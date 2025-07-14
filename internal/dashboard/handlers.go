@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/constants"
 
 	"github.com/gorilla/websocket"
 )
@@ -399,7 +399,7 @@ func (d *DashboardServer) handleServerLogs(w http.ResponseWriter, r *http.Reques
 	if tail == "" {
 		tail = "100"
 	}
-	containerName := "mcp-compose-" + path
+	containerName := "matey-" + path
 	logs, err := d.getContainerLogs(containerName, tail, false)
 	if err != nil {
 		d.logger.Error("Failed to get logs for %s: %v", containerName, err)
@@ -2110,7 +2110,7 @@ func (d *DashboardServer) handleServerAction(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	containerName := fmt.Sprintf("mcp-compose-%s", req.Server)
+	containerName := fmt.Sprintf("matey-%s", req.Server)
 	runtime := d.detectContainerRuntime()
 
 	var cmd *exec.Cmd

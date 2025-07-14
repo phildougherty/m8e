@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // MCPSSEConnection represents a Server-Sent Events connection to an MCP server
@@ -108,7 +108,7 @@ func (h *ProxyHandler) createSSEConnection(serverName string, serverConfig confi
 }
 
 func (h *ProxyHandler) getServerSSEURL(serverName string, serverConfig config.ServerConfig) (string, string) {
-	targetHost := fmt.Sprintf("mcp-compose-%s", serverName)
+	targetHost := fmt.Sprintf("matey-%s", serverName)
 	targetPort := serverConfig.HttpPort
 	if serverConfig.SSEPort > 0 {
 		targetPort = serverConfig.SSEPort
@@ -160,7 +160,7 @@ func (h *ProxyHandler) initializeSSEConnection(conn *MCPSSEConnection) error {
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{},
 			"clientInfo": map[string]interface{}{
-				"name":    "mcp-compose-proxy",
+				"name":    "matey-proxy",
 				"version": "1.0.0",
 			},
 		},

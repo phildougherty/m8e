@@ -1,0 +1,104 @@
+{{- if and .Values.registry.enabled .Values.registry.builtin.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "matey.fullname" . }}-registry
+  labels:
+    {{- include "matey.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "matey.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: registry
+  template:
+    metadata:
+      labels:
+        {{- include "matey.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: registry
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "matey.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: registry
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.registry.builtin.image.repository }}:{{ .Values.registry.builtin.image.tag }}"
+          imagePullPolicy: {{ .Values.registry.builtin.image.pullPolicy }}
+          ports:
+            - name: registry
+              containerPort: 5000
+              protocol: TCP
+          env:
+            - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
+              value: "/var/lib/registry"
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.registry.builtin.resources | nindent 12 }}
+          volumeMounts:
+            - name: registry-storage
+              mountPath: /var/lib/registry
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: registry-storage
+          {{- if .Values.registry.builtin.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "matey.fullname" . }}-registry-storage
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+---
+{{- if .Values.registry.builtin.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "matey.fullname" . }}-registry-storage
+  labels:
+    {{- include "matey.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.registry.builtin.persistence.storageClass }}
+  storageClassName: {{ .Values.registry.builtin.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.registry.builtin.persistence.size }}
+{{- end }}
+{{- end }}

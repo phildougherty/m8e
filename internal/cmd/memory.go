@@ -3,10 +3,10 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/memory"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/memory"
 
 	"github.com/spf13/cobra"
 )
@@ -88,7 +88,7 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 		cfg.Memory.Host = "0.0.0.0"
 	}
 	if cfg.Memory.DatabaseURL == "" {
-		cfg.Memory.DatabaseURL = "postgresql://postgres:password@mcp-compose-postgres-memory:5432/memory_graph?sslmode=disable"
+		cfg.Memory.DatabaseURL = "postgresql://postgres:password@matey-postgres-memory:5432/memory_graph?sslmode=disable"
 	}
 	if !cfg.Memory.PostgresEnabled {
 		cfg.Memory.PostgresEnabled = true
@@ -140,10 +140,10 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 	// Add memory server to servers config (so proxy can find it)
 	cfg.Servers["memory"] = config.ServerConfig{
 		Build: config.BuildConfig{
-			Context:    "github.com/phildougherty/mcp-compose-memory.git",
+			Context:    "github.com/phildougherty/m8e-memory.git",
 			Dockerfile: "Dockerfile",
 		},
-		Command:      "./mcp-compose-memory",
+		Command:      "./matey-memory",
 		Args:         []string{"--host", "0.0.0.0", "--port", "3001"},
 		Protocol:     "http",
 		HttpPort:     constants.DefaultMemoryHTTPPort,

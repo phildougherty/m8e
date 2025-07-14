@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // MCPHTTPConnection represents a persistent HTTP connection to an MCP server
@@ -142,7 +142,7 @@ func (h *ProxyHandler) initializeHTTPConnection(conn *MCPHTTPConnection) error {
 		"params": map[string]interface{}{
 			"protocolVersion": "2025-03-26",
 			"clientInfo": map[string]interface{}{
-				"name":    "mcp-compose-proxy",
+				"name":    "matey-proxy",
 				"version": "1.1.0",
 			},
 			"capabilities": map[string]interface{}{},

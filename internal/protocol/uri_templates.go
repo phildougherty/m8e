@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // URITemplate represents an RFC 6570 URI template

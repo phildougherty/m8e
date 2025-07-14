@@ -3,8 +3,8 @@ package server
 import (
 	"testing"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/container"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/container"
 )
 
 func TestNewManager(t *testing.T) {

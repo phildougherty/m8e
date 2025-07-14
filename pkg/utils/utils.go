@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // FindComposeFile tries to find a compose file in the current directory

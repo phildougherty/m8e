@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/auth"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/logging"
+	"github.com/phildougherty/m8e/internal/auth"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/logging"
 )
 
 func (h *ProxyHandler) startConnectionMaintenance() {
@@ -92,7 +92,7 @@ func getServerNameFromPath(path string) string {
 
 func initializeOAuth(oauthConfig *config.OAuthConfig, logger *logging.Logger) (*auth.AuthorizationServer, *auth.AuthenticationMiddleware, *auth.ResourceMetadataHandler) {
 	// Use the issuer from config, with a sensible default for container environments
-	defaultIssuer := "http://mcp-compose-http-proxy:9876"
+	defaultIssuer := "http://matey-http-proxy:9876"
 	if oauthConfig.Issuer != "" {
 		defaultIssuer = oauthConfig.Issuer
 	}

@@ -4,7 +4,7 @@ package container
 import (
 	"fmt"
 	"io"
-	"github.com/phildougherty/mcp-compose/internal/config"
+	"github.com/phildougherty/m8e/internal/config"
 	"os/exec"
 )
 
@@ -258,26 +258,15 @@ type Runtime interface {
 
 // DetectRuntime tries to detect and initialize a container runtime
 func DetectRuntime() (Runtime, error) {
-	// Try Docker first
-	dockerPath, err := exec.LookPath("docker")
-	if err == nil {
-		fmt.Println("Detected Docker runtime")
-
-		return NewDockerRuntime(dockerPath)
+	// For matey, we use Kubernetes as the primary runtime
+	fmt.Println("Using Kubernetes runtime")
+	
+	k8sRuntime, err := NewKubernetesRuntime("default")
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Kubernetes runtime: %w", err)
 	}
-
-	// Try Podman next
-	podmanPath, err := exec.LookPath("podman")
-	if err == nil {
-		fmt.Println("Detected Podman runtime")
-
-		return NewPodmanRuntime(podmanPath)
-	}
-
-	// Return a null runtime that can only handle process-based servers
-	fmt.Println("No container runtime detected, only process-based servers will be supported")
-
-	return NewNullRuntime(), nil
+	
+	return k8sRuntime, nil
 }
 
 // ValidateContainerOptions performs basic validation on container options
@@ -370,7 +359,7 @@ func validateMemoryLimit(memory string) error {
 // ConvertConfigToContainerOptions converts server config to container options
 func ConvertConfigToContainerOptions(serverName string, serverCfg config.ServerConfig) *ContainerOptions {
 	opts := &ContainerOptions{
-		Name:        fmt.Sprintf("mcp-compose-%s", serverName),
+		Name:        fmt.Sprintf("matey-%s", serverName),
 		Image:       serverCfg.Image,
 		Build:       serverCfg.Build,
 		Command:     serverCfg.Command,
@@ -469,8 +458,8 @@ func ConvertConfigToContainerOptions(serverName string, serverCfg config.ServerC
 func GetDefaultContainerOptions() *ContainerOptions {
 
 	return &ContainerOptions{
-		RestartPolicy: "unless-stopped",
-		Networks:      []string{"mcp-net"},
+		RestartPolicy: "Always",
+		Networks:      []string{"default"},
 		Security: SecurityConfig{
 			AllowDockerSocket:  false,
 			AllowPrivilegedOps: false,

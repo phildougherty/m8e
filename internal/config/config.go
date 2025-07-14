@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/constants"
 
 	yaml "gopkg.in/yaml.v3"
 )

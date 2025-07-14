@@ -4,7 +4,7 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/logging"
+	"github.com/phildougherty/m8e/internal/logging"
 	"time"
 )
 

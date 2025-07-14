@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // EnhancedMCPSSEConnection represents a high-performance Server-Sent Events connection to an MCP server
@@ -153,7 +153,7 @@ func (h *ProxyHandler) initializeEnhancedSSEConnection(conn *EnhancedMCPSSEConne
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{},
 			"clientInfo": map[string]interface{}{
-				"name":    "mcp-compose-proxy-enhanced",
+				"name":    "matey-proxy-enhanced",
 				"version": "1.0.0",
 			},
 		},

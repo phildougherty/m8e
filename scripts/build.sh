@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build script for mcp-compose
+# Build script for matey
 
 set -e
 
@@ -11,8 +11,8 @@ cd "$DIR/.."
 go mod download
 
 # Build for the current platform
-echo "Building mcp-compose..."
-go build -o bin/mcp-compose ./cmd/mcp-compose
+echo "Building matey..."
+go build -o bin/matey ./cmd/matey
 
-echo "Build complete. Binary available at bin/mcp-compose"
-echo "To install locally: sudo cp bin/mcp-compose /usr/local/bin/"
+echo "Build complete. Binary available at bin/matey"
+echo "To install locally: sudo cp bin/matey /usr/local/bin/"

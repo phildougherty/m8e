@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/openapi"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/openapi"
 )
 
 func (h *ProxyHandler) refreshToolCache() {
@@ -90,7 +90,7 @@ func (h *ProxyHandler) discoverServerTools(serverName string) ([]openapi.ToolSpe
 		case "stdio":
 			if serverConfig.StdioHosterPort > 0 {
 				// Use socat TCP connection
-				containerName := fmt.Sprintf("mcp-compose-%s", serverName)
+				containerName := fmt.Sprintf("matey-%s", serverName)
 				socatHost := containerName
 				socatPort := serverConfig.StdioHosterPort
 				response, err = h.sendRawTCPRequestWithRetry(socatHost, socatPort, toolsRequest, timeout, attempt)

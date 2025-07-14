@@ -13,13 +13,13 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/logging"
-	"github.com/phildougherty/mcp-compose/internal/protocol"
-	"github.com/phildougherty/mcp-compose/internal/runtime"
-	"github.com/phildougherty/mcp-compose/internal/server"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/logging"
+	"github.com/phildougherty/m8e/internal/protocol"
+	"github.com/phildougherty/m8e/internal/runtime"
+	"github.com/phildougherty/m8e/internal/server"
 
 	"github.com/fatih/color"
 )
@@ -548,7 +548,7 @@ func startServerProcess(serverName string, serverCfg config.ServerConfig) error 
 	proc, err := runtime.NewProcess(serverCfg.Command, serverCfg.Args, runtime.ProcessOptions{
 		Env:     env,
 		WorkDir: serverCfg.WorkDir,
-		Name:    fmt.Sprintf("mcp-compose-%s", serverName),
+		Name:    fmt.Sprintf("matey-%s", serverName),
 	})
 	if err != nil {
 
@@ -620,7 +620,7 @@ func Down(configFile string, serverNames []string) error {
 			continue
 		}
 
-		containerName := fmt.Sprintf("mcp-compose-%s", serverName)
+		containerName := fmt.Sprintf("matey-%s", serverName)
 		if err := cRuntime.StopContainer(containerName); err != nil {
 			if !strings.Contains(err.Error(), "No such container") {
 				composeErrors = append(composeErrors, fmt.Sprintf("Failed to stop %s: %v", serverName, err))
@@ -692,7 +692,7 @@ func List(configFile string) error {
 	processColor := color.New(color.FgCyan).SprintFunc()
 
 	for serverName, srvConfig := range cfg.Servers {
-		identifier := fmt.Sprintf("mcp-compose-%s", serverName)
+		identifier := fmt.Sprintf("matey-%s", serverName)
 		var statusStr string
 
 		// USE THE SAME DETECTION LOGIC AS STARTUP
@@ -823,7 +823,7 @@ func Logs(configFile string, serverNames []string, follow bool) error {
 		if len(serversToLog) > 1 || len(serverNames) > 1 {
 			fmt.Printf("=== Logs for server '%s' ===\n", name)
 		}
-		containerName := fmt.Sprintf("mcp-compose-%s", name)
+		containerName := fmt.Sprintf("matey-%s", name)
 		if err := cRuntime.ShowContainerLogs(containerName, follow); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to show logs for server '%s' (container %s): %v\n", name, containerName, err)
 		}
@@ -1007,7 +1007,7 @@ func buildFallbackOrder(cfg *config.ComposeConfig, serverNames []string) []strin
 
 func convertSecurityConfig(serverName string, serverCfg config.ServerConfig) container.ContainerOptions {
 	opts := container.ContainerOptions{
-		Name:        fmt.Sprintf("mcp-compose-%s", serverName),
+		Name:        fmt.Sprintf("matey-%s", serverName),
 		Image:       serverCfg.Image,
 		Build:       serverCfg.Build,
 		Command:     serverCfg.Command,

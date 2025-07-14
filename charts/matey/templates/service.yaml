@@ -1,0 +1,61 @@
+{{- if .Values.proxy.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "matey.fullname" . }}-proxy
+  labels:
+    {{- include "matey.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+spec:
+  type: {{ .Values.proxy.service.type }}
+  ports:
+    - port: {{ .Values.proxy.service.port }}
+      targetPort: {{ .Values.proxy.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "matey.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: proxy
+{{- end }}
+
+---
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "matey.fullname" . }}-dashboard
+  labels:
+    {{- include "matey.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  ports:
+    - port: {{ .Values.dashboard.service.port }}
+      targetPort: {{ .Values.dashboard.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "matey.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+{{- end }}
+
+---
+{{- if .Values.registry.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "matey.fullname" . }}-registry
+  labels:
+    {{- include "matey.labels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+spec:
+  type: {{ .Values.registry.builtin.service.type }}
+  ports:
+    - port: {{ .Values.registry.builtin.service.port }}
+      targetPort: 5000
+      protocol: TCP
+      name: registry
+  selector:
+    {{- include "matey.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: registry
+{{- end }}

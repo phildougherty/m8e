@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // Message types for different WebSocket streams
@@ -393,7 +393,7 @@ func (d *DashboardServer) handleLogWebSocket(w http.ResponseWriter, r *http.Requ
 		return nil
 	})
 
-	containerName := "mcp-compose-" + serverName
+	containerName := "matey-" + serverName
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -754,7 +754,7 @@ func BroadcastActivity(level, activityType, server, client, message string, deta
 	}
 
 	go func() {
-		resp, err := http.Post("http://mcp-compose-dashboard:3001/api/activity", "application/json", bytes.NewBuffer(jsonData))
+		resp, err := http.Post("http://matey-dashboard:3001/api/activity", "application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
 			log.Printf("[ACTIVITY] Failed to send to dashboard service: %v", err)
 

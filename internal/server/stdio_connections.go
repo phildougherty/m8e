@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
+	"github.com/phildougherty/m8e/internal/constants"
 )
 
 // MCPSTDIOConnection represents a STDIO connection to an MCP server
@@ -84,7 +84,7 @@ func (h *ProxyHandler) createStdioConnection(serverName string) (*MCPSTDIOConnec
 		return nil, fmt.Errorf("server %s not found in config", serverName)
 	}
 
-	containerName := fmt.Sprintf("mcp-compose-%s", serverName)
+	containerName := fmt.Sprintf("matey-%s", serverName)
 	port := serverConfig.StdioHosterPort
 	address := fmt.Sprintf("%s:%d", containerName, port)
 
@@ -158,7 +158,7 @@ func (h *ProxyHandler) initializeStdioConnection(conn *MCPSTDIOConnection) error
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{},
 			"clientInfo": map[string]interface{}{
-				"name":    "mcp-compose-proxy",
+				"name":    "matey-proxy",
 				"version": "1.0.0",
 			},
 		},
@@ -432,7 +432,7 @@ func (h *ProxyHandler) createFreshStdioConnection(serverName string, timeout tim
 		return nil, fmt.Errorf("server %s not found in config", serverName)
 	}
 
-	containerName := fmt.Sprintf("mcp-compose-%s", serverName)
+	containerName := fmt.Sprintf("matey-%s", serverName)
 	port := serverConfig.StdioHosterPort
 	address := fmt.Sprintf("%s:%d", containerName, port)
 
@@ -501,7 +501,7 @@ func (h *ProxyHandler) quickInitializeStdioConnection(conn *MCPSTDIOConnection, 
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{},
 			"clientInfo": map[string]interface{}{
-				"name":    "mcp-compose-proxy",
+				"name":    "matey-proxy",
 				"version": "1.0.0",
 			},
 		},
@@ -560,7 +560,7 @@ func (h *ProxyHandler) readStdioResponseWithTimeout(conn *MCPSTDIOConnection, ti
 }
 
 func (h *ProxyHandler) handleSTDIOServerRequest(w http.ResponseWriter, _ *http.Request, serverName string, requestPayload map[string]interface{}, reqIDVal interface{}, reqMethodVal string) {
-	containerName := fmt.Sprintf("mcp-compose-%s", serverName)
+	containerName := fmt.Sprintf("matey-%s", serverName)
 	serverCfg, cfgExists := h.Manager.config.Servers[serverName]
 	if !cfgExists {
 		h.logger.Error("Config not found for STDIO server %s", serverName)
@@ -713,7 +713,7 @@ func (h *ProxyHandler) sendRawTCPRequestWithRetry(host string, port int, request
 	// Find server name for connection tracking
 	var serverName string
 	for name, config := range h.Manager.config.Servers {
-		containerName := fmt.Sprintf("mcp-compose-%s", name)
+		containerName := fmt.Sprintf("matey-%s", name)
 		if containerName == host && config.StdioHosterPort == port {
 			serverName = name
 

@@ -2,10 +2,10 @@ package task_scheduler
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/dashboard" // Add this import for BroadcastActivity
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/dashboard" // Add this import for BroadcastActivity
 	"time"
 )
 
@@ -41,7 +41,7 @@ func (m *Manager) Start() error {
 		})
 
 	// Check if already running
-	status, err := m.runtime.GetContainerStatus("mcp-compose-task-scheduler")
+	status, err := m.runtime.GetContainerStatus("matey-task-scheduler")
 	if err == nil && status == "running" {
 		dashboard.BroadcastActivity("WARN", "service", "task-scheduler", "",
 			"Task scheduler is already running",
@@ -116,8 +116,8 @@ func (m *Manager) Start() error {
 
 	// Container options
 	opts := &container.ContainerOptions{
-		Name:     "mcp-compose-task-scheduler",
-		Image:    "mcp-compose-task-scheduler:latest",
+		Name:     "matey-task-scheduler",
+		Image:    "matey-task-scheduler:latest",
 		Ports:    []string{fmt.Sprintf("%d:%d", m.config.TaskScheduler.Port, m.config.TaskScheduler.Port)},
 		Env:      env,
 		Networks: []string{"mcp-net"},
@@ -198,7 +198,7 @@ func (m *Manager) Stop() error {
 		"Stopping task scheduler service...",
 		nil)
 
-	if err := m.runtime.StopContainer("mcp-compose-task-scheduler"); err != nil {
+	if err := m.runtime.StopContainer("matey-task-scheduler"); err != nil {
 		dashboard.BroadcastActivity("ERROR", "service", "task-scheduler", "",
 			"Failed to stop task scheduler container",
 			map[string]interface{}{
@@ -247,7 +247,7 @@ func (m *Manager) Restart() error {
 
 // Status returns the current status of the task scheduler
 func (m *Manager) Status() (string, error) {
-	status, err := m.runtime.GetContainerStatus("mcp-compose-task-scheduler")
+	status, err := m.runtime.GetContainerStatus("matey-task-scheduler")
 	if err != nil {
 
 		return "stopped", nil
@@ -258,7 +258,7 @@ func (m *Manager) Status() (string, error) {
 
 // IsRunning checks if the task scheduler is currently running
 func (m *Manager) IsRunning() bool {
-	status, err := m.runtime.GetContainerStatus("mcp-compose-task-scheduler")
+	status, err := m.runtime.GetContainerStatus("matey-task-scheduler")
 
 	return err == nil && status == "running"
 }
@@ -286,7 +286,7 @@ func (m *Manager) buildEnvironment() map[string]string {
 	}
 
 	// Add activity broadcasting configuration
-	env["MCP_CRON_ACTIVITY_WEBHOOK"] = "http://mcp-compose-dashboard:3001/api/activity"
+	env["MCP_CRON_ACTIVITY_WEBHOOK"] = "http://matey-dashboard:3001/api/activity"
 
 	// Add OpenRouter configuration
 	if m.config.TaskScheduler.OpenRouterAPIKey != "" {
@@ -347,5 +347,5 @@ func (m *Manager) waitForHealthy(timeout time.Duration) error {
 // GetLogs retrieves logs from the task scheduler container
 func (m *Manager) GetLogs(follow bool) error {
 
-	return m.runtime.ShowContainerLogs("mcp-compose-task-scheduler", follow)
+	return m.runtime.ShowContainerLogs("matey-task-scheduler", follow)
 }

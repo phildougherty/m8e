@@ -2,9 +2,9 @@ package dashboard
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/logging"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/logging"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,7 +52,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Check if dashboard container is already running
-	status, err := m.runtime.GetContainerStatus("mcp-compose-dashboard")
+	status, err := m.runtime.GetContainerStatus("matey-dashboard")
 	if err == nil && status == "running" {
 		m.logger.Info("Dashboard container is already running")
 
@@ -79,7 +79,7 @@ func (m *Manager) Stop() error {
 		}
 	}
 
-	err := m.runtime.StopContainer("mcp-compose-dashboard")
+	err := m.runtime.StopContainer("matey-dashboard")
 	if err != nil {
 
 		return fmt.Errorf("failed to stop dashboard container: %w", err)
@@ -101,7 +101,7 @@ func (m *Manager) buildDashboardImage() error {
 	}
 
 	// Build the image
-	cmd := exec.Command("docker", "build", "-f", dockerfilePath, "-t", "mcp-compose-dashboard:latest", ".")
+	cmd := exec.Command("docker", "build", "-f", dockerfilePath, "-t", "matey-dashboard:latest", ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -161,7 +161,7 @@ func (m *Manager) startDashboardContainer() error {
 	// Prepare environment variables for container
 	env := map[string]string{
 		"MCP_DASHBOARD_HOST":          "0.0.0.0",                            // Must bind to all interfaces in container
-		"MCP_PROXY_URL":               "http://mcp-compose-http-proxy:9876", // Container network URL
+		"MCP_PROXY_URL":               "http://matey-http-proxy:9876", // Container network URL
 		"MCP_API_KEY":                 m.config.ProxyAuth.APIKey,
 		"MCP_DASHBOARD_THEME":         m.config.Dashboard.Theme,
 		"MCP_DASHBOARD_LOG_STREAMING": strconv.FormatBool(m.config.Dashboard.LogStreaming),
@@ -177,8 +177,8 @@ func (m *Manager) startDashboardContainer() error {
 	}
 
 	opts := &container.ContainerOptions{
-		Name:     "mcp-compose-dashboard",
-		Image:    "mcp-compose-dashboard:latest",
+		Name:     "matey-dashboard",
+		Image:    "matey-dashboard:latest",
 		Env:      env,
 		Ports:    []string{fmt.Sprintf("%d:%d", hostPort, containerPort)}, // hostPort:3001
 		Networks: []string{"mcp-net"},

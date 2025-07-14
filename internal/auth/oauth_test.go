@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/logging"
+	"github.com/phildougherty/m8e/internal/logging"
 )
 
 // Test OAuth 2.1 Authorization Server Implementation

@@ -1,0 +1,253 @@
+# Default values for matey
+# This is a YAML-formatted file.
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# Registry configuration
+registry:
+  enabled: true
+  endpoint: "localhost:5000"
+  # For external registries:
+  # endpoint: "my-registry.com"
+  # username: "user"
+  # password: ""
+  
+  # Built-in registry settings
+  builtin:
+    enabled: true
+    image:
+      repository: registry
+      tag: "2.8.3"
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 5000
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# Proxy service configuration
+proxy:
+  enabled: true
+  image:
+    repository: matey-proxy
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 9876
+    targetPort: 9876
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  # Authentication settings
+  auth:
+    enabled: true
+    apiKey: ""
+    oauth:
+      enabled: false
+
+# Dashboard service configuration  
+dashboard:
+  enabled: true
+  image:
+    repository: matey-dashboard
+    tag: latest
+    pullPolicy: IfNotPresent
+    
+  service:
+    type: ClusterIP
+    port: 3001
+    targetPort: 3001
+    
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Task scheduler configuration
+taskScheduler:
+  enabled: true
+  image:
+    repository: matey-task-scheduler
+    tag: latest
+    pullPolicy: IfNotPresent
+    
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+      
+  env:
+    TZ: "America/New_York"
+    MCP_CRON_LOGGING_LEVEL: "info"
+
+# Memory service configuration
+memory:
+  enabled: true
+  image:
+    repository: matey-memory
+    tag: latest
+    pullPolicy: IfNotPresent
+    
+  service:
+    type: ClusterIP
+    port: 3001
+    targetPort: 3001
+    
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      
+  # PostgreSQL for memory service
+  postgresql:
+    enabled: true
+    image:
+      repository: postgres
+      tag: "15-alpine"
+      pullPolicy: IfNotPresent
+    auth:
+      database: matey_memory
+      username: postgres
+      password: ""
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# MCP servers configuration
+servers: {}
+# Example server configuration:
+# servers:
+#   my-server:
+#     image: my-mcp-server:latest
+#     build:
+#       context: ./my-server
+#       dockerfile: Dockerfile
+#     protocol: http
+#     httpPort: 8080
+#     capabilities:
+#       - tools
+#       - resources
+#     env:
+#       MY_VAR: "value"
+#     resources:
+#       limits:
+#         cpu: 500m
+#         memory: 512Mi
+#       requests:
+#         cpu: 100m
+#         memory: 128Mi
+
+# Networking
+networking:
+  # Create default network for MCP communication
+  createNetwork: true
+  networkName: "matey-net"
+
+# Resource quotas and limits
+resourceQuotas:
+  enabled: false
+  hard:
+    limits.cpu: "4"
+    limits.memory: "8Gi"
+    persistentvolumeclaims: "10"
+
+# RBAC configuration
+rbac:
+  create: true
+  
+# Service account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Security context for containers
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+# Node selector, tolerations, and affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: matey.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: proxy
+  tls: []
+
+# Monitoring and observability
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+
+# Autoscaling
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

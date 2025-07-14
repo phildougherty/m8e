@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/dashboard"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/dashboard"
 
 	"github.com/spf13/cobra"
 )
@@ -119,7 +119,7 @@ Then try starting the dashboard again`, cfg.ProxyAuth.APIKey)
 }
 
 func isProxyContainerRunning(runtime container.Runtime) bool {
-	status, err := runtime.GetContainerStatus("mcp-compose-http-proxy")
+	status, err := runtime.GetContainerStatus("matey-http-proxy")
 	if err != nil {
 
 		return false

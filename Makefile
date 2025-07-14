@@ -2,22 +2,22 @@
 .PHONY: build clean test test-coverage test-race lint fmt vet security-scan docker-build help
 
 # Build variables
-BINARY_NAME=mcp-compose
+BINARY_NAME=matey
 GO=go
 BUILD_DIR=build
-SRC_MAIN=cmd/mcp-compose/main.go
+SRC_MAIN=cmd/matey/main.go
 COVERAGE_DIR=coverage
 
 # Build the application
 build:
-	@echo "Building mcp-compose..."
+	@echo "Building matey..."
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(BINARY_NAME) $(SRC_MAIN)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 # Install the application
 install: build
-	@echo "Installing mcp-compose..."
+	@echo "Installing matey..."
 	cp $(BUILD_DIR)/$(BINARY_NAME) $(GOPATH)/bin/$(BINARY_NAME)
 	@echo "Installation complete"
 
@@ -61,8 +61,8 @@ security-scan:
 # Build Docker images
 docker-build:
 	@echo "Building Docker images..."
-	docker build -f Dockerfile.proxy -t mcp-compose-proxy:latest .
-	docker build -f Dockerfile.stdio-bridge -t mcp-compose-stdio-bridge:latest .
+	docker build -f Dockerfile.proxy -t matey-proxy:latest .
+	docker build -f Dockerfile.stdio-bridge -t matey-stdio-bridge:latest .
 
 # Run all quality checks
 quality: fmt vet lint test-race test-coverage security-scan

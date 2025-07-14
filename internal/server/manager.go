@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/logging"
-	"github.com/phildougherty/mcp-compose/internal/protocol"
-	"github.com/phildougherty/mcp-compose/internal/runtime"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/logging"
+	"github.com/phildougherty/m8e/internal/protocol"
+	"github.com/phildougherty/m8e/internal/runtime"
 
 	"github.com/fsnotify/fsnotify" // Keep if ResourcesWatcher uses it
 )
@@ -91,7 +91,7 @@ func NewManager(cfg *config.ComposeConfig, rt container.Runtime) (*Manager, erro
 		// Create task-scheduler server config
 		taskSchedulerConfig := config.ServerConfig{
 			// CRITICAL: Add image so validation passes
-			Image:        "mcp-compose-task-scheduler:latest",
+			Image:        "matey-task-scheduler:latest",
 			Protocol:     "sse",
 			HttpPort:     cfg.TaskScheduler.Port,
 			SSEPath:      "/sse",
@@ -117,9 +117,9 @@ func NewManager(cfg *config.ComposeConfig, rt container.Runtime) (*Manager, erro
 				"OPENROUTER_MODEL":                   cfg.TaskScheduler.OpenRouterModel,
 				"MCP_PROXY_URL":                      cfg.TaskScheduler.MCPProxyURL,
 				"MCP_PROXY_API_KEY":                  cfg.TaskScheduler.MCPProxyAPIKey,
-				"MCP_MEMORY_SERVER_URL":              "http://mcp-compose-memory:3001",
-				"MCP_FILESYSTEM_URL":                 "http://mcp-compose-filesystem:3000",
-				"MCP_OPENROUTER_GATEWAY_URL":         "http://mcp-compose-openrouter-gateway:8012",
+				"MCP_MEMORY_SERVER_URL":              "http://matey-memory:3001",
+				"MCP_FILESYSTEM_URL":                 "http://matey-filesystem:3000",
+				"MCP_OPENROUTER_GATEWAY_URL":         "http://matey-openrouter-gateway:8012",
 			},
 			Networks: []string{"mcp-net"},
 			Authentication: &config.ServerAuthConfig{
@@ -154,7 +154,7 @@ func NewManager(cfg *config.ComposeConfig, rt container.Runtime) (*Manager, erro
 		// Create memory server config
 		memoryConfig := config.ServerConfig{
 			// Use the built image name that will be created by the memory manager
-			Image:        "mcp-compose-memory:latest",
+			Image:        "matey-memory:latest",
 			Protocol:     "http",
 			HttpPort:     cfg.Memory.Port,
 			User:         "root",
@@ -270,7 +270,7 @@ func (m *Manager) StartServer(name string) error {
 	}
 
 	srvCfg := instance.Config
-	fixedIdentifier := fmt.Sprintf("mcp-compose-%s", name)
+	fixedIdentifier := fmt.Sprintf("matey-%s", name)
 	m.logger.Info("MANAGER: Determined fixedIdentifier for '%s' as '%s'", name, fixedIdentifier)
 
 	// Check current status
@@ -582,7 +582,7 @@ func (m *Manager) StopServer(name string) error {
 		return fmt.Errorf("server '%s' not found in manager", name)
 	}
 	srvCfg := instance.Config
-	fixedIdentifier := fmt.Sprintf("mcp-compose-%s", name)
+	fixedIdentifier := fmt.Sprintf("matey-%s", name)
 
 	currentStatus, _ := m.getServerStatusUnsafe(name, fixedIdentifier)
 	if currentStatus != "running" {
@@ -644,7 +644,7 @@ func (m *Manager) StopServer(name string) error {
 func (m *Manager) GetServerStatus(name string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	fixedIdentifier := fmt.Sprintf("mcp-compose-%s", name)
+	fixedIdentifier := fmt.Sprintf("matey-%s", name)
 
 	// Check if this is a built-in service that might have different container handling
 	if m.isBuiltInService(name) {
@@ -769,7 +769,7 @@ func (m *Manager) isLikelyContainer(serverName string, serverCfg config.ServerCo
 	}
 
 	// Check if there's a corresponding container name that exists
-	expectedContainerName := fmt.Sprintf("mcp-compose-%s", serverName)
+	expectedContainerName := fmt.Sprintf("matey-%s", serverName)
 	if m.containerRuntime != nil {
 		// Try to check if container exists (ignore errors, just check existence)
 		_, err := m.containerRuntime.GetContainerStatus(expectedContainerName)
@@ -790,7 +790,7 @@ func (m *Manager) ShowLogs(name string, follow bool) error {
 
 		return fmt.Errorf("server '%s' not found for showing logs", name)
 	}
-	fixedIdentifier := fmt.Sprintf("mcp-compose-%s", name)
+	fixedIdentifier := fmt.Sprintf("matey-%s", name)
 	m.logger.Debug("Requesting logs for server '%s' (identifier: %s)", name, fixedIdentifier)
 
 	if instance.IsContainer {

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/container"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/container"
 
 	"github.com/spf13/cobra"
 )
@@ -311,7 +311,7 @@ func disableTaskScheduler(configFile string, cfg *config.ComposeConfig) error {
 	}
 
 	// Stop the container if running
-	if err := runtime.StopContainer("mcp-compose-task-scheduler"); err != nil {
+	if err := runtime.StopContainer("matey-task-scheduler"); err != nil {
 		fmt.Printf("Warning: %v\n", err)
 	}
 
@@ -445,7 +445,7 @@ func runContainerizedTaskScheduler(_ *config.ComposeConfig, _ string, port int, 
 	}
 
 	// Stop existing container
-	_ = runtime.StopContainer("mcp-compose-task-scheduler")
+	_ = runtime.StopContainer("matey-task-scheduler")
 
 	// Ensure network exists
 	networkExists, _ := runtime.NetworkExists("mcp-net")
@@ -476,19 +476,19 @@ func runContainerizedTaskScheduler(_ *config.ComposeConfig, _ string, port int, 
 		"OPENROUTER_ENABLED": "true",
 		"OPENROUTER_MODEL":   "anthropic/claude-3.5-sonnet",
 		// Docker network endpoints - CRITICAL FIXES
-		"MCP_PROXY_URL":           "http://mcp-compose-http-proxy:9876", // Main HTTP proxy
+		"MCP_PROXY_URL":           "http://matey-http-proxy:9876", // Main HTTP proxy
 		"MCP_PROXY_TOOLS_ENABLED": "true",
-		"MCP_MEMORY_SERVER_URL":   "http://mcp-compose-memory:3001",              // Memory server
-		"MCP_TOOLS_BASE_URL":      "http://mcp-compose-memory:3001",              // Alternative env var
-		"MCP_TOOLS_ENDPOINT":      "http://mcp-compose-memory:3001/openapi.json", // Direct endpoint
+		"MCP_MEMORY_SERVER_URL":   "http://matey-memory:3001",              // Memory server
+		"MCP_TOOLS_BASE_URL":      "http://matey-memory:3001",              // Alternative env var
+		"MCP_TOOLS_ENDPOINT":      "http://matey-memory:3001/openapi.json", // Direct endpoint
 		// Fix hardcoded localhost:3001 in model router
-		"MCP_CRON_OPENROUTER_MCP_PROXY_URL": "http://mcp-compose-memory:3001", // Model router gateway
-		"MCP_GATEWAY_URL":                   "http://mcp-compose-memory:3001", // Alternative key
+		"MCP_CRON_OPENROUTER_MCP_PROXY_URL": "http://matey-memory:3001", // Model router gateway
+		"MCP_GATEWAY_URL":                   "http://matey-memory:3001", // Alternative key
 		// Additional MCP service endpoints on Docker network
-		"MCP_FILESYSTEM_URL":         "http://mcp-compose-filesystem:3000",
-		"MCP_OPENROUTER_GATEWAY_URL": "http://mcp-compose-openrouter-gateway:8012",
-		"MCP_MEAL_LOG_URL":           "http://mcp-compose-meal-log:8011",
-		"MCP_POSTGRES_MCP_URL":       "http://mcp-compose-postgres-mcp:8013",
+		"MCP_FILESYSTEM_URL":         "http://matey-filesystem:3000",
+		"MCP_OPENROUTER_GATEWAY_URL": "http://matey-openrouter-gateway:8012",
+		"MCP_MEAL_LOG_URL":           "http://matey-meal-log:8011",
+		"MCP_POSTGRES_MCP_URL":       "http://matey-postgres-mcp:8013",
 	}
 
 	// Override with provided values and fix network endpoints
@@ -508,13 +508,13 @@ func runContainerizedTaskScheduler(_ *config.ComposeConfig, _ string, port int, 
 	if mcpProxyURL != "" {
 		// Convert external URLs to Docker network URLs
 		if strings.Contains(mcpProxyURL, "192.168.86.201:9876") || strings.Contains(mcpProxyURL, "localhost:9876") {
-			env["MCP_PROXY_URL"] = "http://mcp-compose-http-proxy:9876"
+			env["MCP_PROXY_URL"] = "http://matey-http-proxy:9876"
 			fmt.Printf("Converting proxy URL from %s to Docker network address\n", mcpProxyURL)
 		} else {
 			env["MCP_PROXY_URL"] = mcpProxyURL
 		}
 	} else {
-		env["MCP_PROXY_URL"] = "http://mcp-compose-http-proxy:9876" // Default to internal network
+		env["MCP_PROXY_URL"] = "http://matey-http-proxy:9876" // Default to internal network
 	}
 
 	if mcpProxyAPIKey != "" {
@@ -542,7 +542,7 @@ func runContainerizedTaskScheduler(_ *config.ComposeConfig, _ string, port int, 
 		env["USE_OPENROUTER"] = "true"
 		env["OPENROUTER_ENABLED"] = "true"
 		// CRITICAL: Override the MCPProxyURL to use Docker network
-		env["MCP_CRON_OPENROUTER_MCP_PROXY_URL"] = "http://mcp-compose-memory:3001"
+		env["MCP_CRON_OPENROUTER_MCP_PROXY_URL"] = "http://matey-memory:3001"
 		env["MCP_CRON_OPENROUTER_MCP_PROXY_KEY"] = mcpProxyAPIKey
 		fmt.Println("OpenRouter enabled with Docker network proxy address")
 	} else {
@@ -567,8 +567,8 @@ func runContainerizedTaskScheduler(_ *config.ComposeConfig, _ string, port int, 
 
 	// Container options with correct field names
 	opts := &container.ContainerOptions{
-		Name:     "mcp-compose-task-scheduler",
-		Image:    "mcp-compose-task-scheduler:latest",
+		Name:     "matey-task-scheduler",
+		Image:    "matey-task-scheduler:latest",
 		Ports:    []string{fmt.Sprintf("%d:%d", port, port)}, // Map external port to same internal port
 		Env:      env,
 		Networks: []string{"mcp-net"},
@@ -603,10 +603,10 @@ func runContainerizedTaskScheduler(_ *config.ComposeConfig, _ string, port int, 
 	// Wait for container to be healthy
 	if healthCheck {
 		fmt.Printf("Waiting for task scheduler to become healthy...\n")
-		if err := waitForContainerHealth(runtime, "mcp-compose-task-scheduler", constants.ContainerHealthTimeout); err != nil {
+		if err := waitForContainerHealth(runtime, "matey-task-scheduler", constants.ContainerHealthTimeout); err != nil {
 			fmt.Printf("Warning: Health check failed: %v\n", err)
 			// Show logs to help debug
-			showRecentLogs(runtime, "mcp-compose-task-scheduler")
+			showRecentLogs(runtime, "matey-task-scheduler")
 		} else {
 			fmt.Printf("✅ Task scheduler is healthy!\n")
 		}
@@ -657,7 +657,7 @@ func buildTaskSchedulerImage(debug bool) error {
 		return fmt.Errorf("dockerfile not found at %s", dockerfilePath)
 	}
 
-	args := []string{"build", "-f", dockerfilePath, "-t", "mcp-compose-task-scheduler:latest", "."}
+	args := []string{"build", "-f", dockerfilePath, "-t", "matey-task-scheduler:latest", "."}
 	if debug {
 		args = append(args, "--progress=plain", "--no-cache")
 	}

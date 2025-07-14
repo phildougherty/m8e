@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/dashboard"
-	"github.com/phildougherty/mcp-compose/internal/protocol"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/dashboard"
+	"github.com/phildougherty/m8e/internal/protocol"
 )
 
 // MCPRequest, MCPResponse, MCPError structs (standard JSON-RPC definitions)

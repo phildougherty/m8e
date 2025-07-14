@@ -3,8 +3,8 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/compose"
-	"github.com/phildougherty/mcp-compose/internal/container"
+	"github.com/phildougherty/m8e/internal/compose"
+	"github.com/phildougherty/m8e/internal/container"
 
 	"github.com/spf13/cobra"
 )
@@ -15,11 +15,11 @@ func NewLogsCommand() *cobra.Command {
 		Short: "View logs from MCP servers",
 		Long: `View logs from MCP servers, proxy, dashboard, task-scheduler, or memory server.
 Special containers:
-  proxy          - Shows logs from mcp-compose-http-proxy container
-  dashboard      - Shows logs from mcp-compose-dashboard container
-  task-scheduler - Shows logs from mcp-compose-task-scheduler container
-  memory         - Shows logs from mcp-compose-memory container
-  postgres-memory - Shows logs from mcp-compose-postgres-memory container
+  proxy          - Shows logs from matey-http-proxy container
+  dashboard      - Shows logs from matey-dashboard container
+  task-scheduler - Shows logs from matey-task-scheduler container
+  memory         - Shows logs from matey-memory container
+  postgres-memory - Shows logs from matey-postgres-memory container
 
 Examples:
   mcp-compose logs                    # Show logs from all servers
@@ -49,15 +49,15 @@ func runLogsCommand(configFile string, serverNames []string, follow bool) error 
 	for _, name := range serverNames {
 		switch name {
 		case "proxy":
-			specialContainers["proxy"] = "mcp-compose-http-proxy"
+			specialContainers["proxy"] = "matey-http-proxy"
 		case "dashboard":
-			specialContainers["dashboard"] = "mcp-compose-dashboard"
+			specialContainers["dashboard"] = "matey-dashboard"
 		case "task-scheduler":
-			specialContainers["task-scheduler"] = "mcp-compose-task-scheduler"
+			specialContainers["task-scheduler"] = "matey-task-scheduler"
 		case "memory":
-			specialContainers["memory"] = "mcp-compose-memory"
+			specialContainers["memory"] = "matey-memory"
 		case "postgres-memory":
-			specialContainers["postgres-memory"] = "mcp-compose-postgres-memory"
+			specialContainers["postgres-memory"] = "matey-postgres-memory"
 		default:
 			regularServers = append(regularServers, name)
 		}

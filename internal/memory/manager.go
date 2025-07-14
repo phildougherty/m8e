@@ -3,8 +3,8 @@ package memory
 
 import (
 	"fmt"
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/container"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/container"
 	"os"
 	"os/exec"
 	"strings"
@@ -42,7 +42,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Check if postgres-memory is running first
-	postgresStatus, err := m.runtime.GetContainerStatus("mcp-compose-postgres-memory")
+	postgresStatus, err := m.runtime.GetContainerStatus("matey-postgres-memory")
 	if err != nil || postgresStatus != "running" {
 		if err := m.startPostgres(pgPassword); err != nil {
 
@@ -57,7 +57,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Stop existing container
-	_ = m.runtime.StopContainer("mcp-compose-memory")
+	_ = m.runtime.StopContainer("matey-memory")
 
 	// Ensure network exists
 	networkExists, _ := m.runtime.NetworkExists("mcp-net")
@@ -70,7 +70,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Get configuration values with defaults
-	dbURL := fmt.Sprintf("postgresql://postgres:%s@mcp-compose-postgres-memory:5432/memory_graph?sslmode=disable", pgPassword)
+	dbURL := fmt.Sprintf("postgresql://postgres:%s@matey-postgres-memory:5432/memory_graph?sslmode=disable", pgPassword)
 	if m.cfg.Memory.DatabaseURL != "" {
 		dbURL = m.cfg.Memory.DatabaseURL
 		// Ensure sslmode=disable is included if not present
@@ -96,8 +96,8 @@ func (m *Manager) Start() error {
 
 	// Start memory server
 	opts := &container.ContainerOptions{
-		Name:     "mcp-compose-memory",
-		Image:    "mcp-compose-memory:latest",
+		Name:     "matey-memory",
+		Image:    "matey-memory:latest",
 		Ports:    []string{"3001:3001"},
 		Networks: []string{"mcp-net"},
 		Env: map[string]string{
@@ -159,7 +159,7 @@ func (m *Manager) startPostgres(pgPassword string) error {
 	}
 
 	opts := &container.ContainerOptions{
-		Name:     "mcp-compose-postgres-memory",
+		Name:     "matey-postgres-memory",
 		Image:    "postgres:15-alpine",
 		Networks: []string{"mcp-net"},
 		Env: map[string]string{
@@ -204,7 +204,7 @@ func (m *Manager) buildMemoryImage() error {
 	fmt.Println("Building Go memory server image with fresh dependencies...")
 
 	// Build with no cache to force fresh download of git repo
-	buildCmd := exec.Command("docker", "build", "--no-cache", "-f", dockerfilePath, "-t", "mcp-compose-memory:latest", ".")
+	buildCmd := exec.Command("docker", "build", "--no-cache", "-f", dockerfilePath, "-t", "matey-memory:latest", ".")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 
@@ -221,11 +221,11 @@ func (m *Manager) buildMemoryImage() error {
 func (m *Manager) Stop() error {
 	fmt.Println("Stopping MCP memory server...")
 
-	if err := m.runtime.StopContainer("mcp-compose-memory"); err != nil {
+	if err := m.runtime.StopContainer("matey-memory"); err != nil {
 		fmt.Printf("Warning: Failed to stop memory container: %v\n", err)
 	}
 
-	if err := m.runtime.StopContainer("mcp-compose-postgres-memory"); err != nil {
+	if err := m.runtime.StopContainer("matey-postgres-memory"); err != nil {
 		fmt.Printf("Warning: Failed to stop postgres-memory container: %v\n", err)
 	}
 
@@ -246,5 +246,5 @@ func (m *Manager) Restart() error {
 
 func (m *Manager) Status() (string, error) {
 
-	return m.runtime.GetContainerStatus("mcp-compose-memory")
+	return m.runtime.GetContainerStatus("matey-memory")
 }

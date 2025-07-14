@@ -10,8 +10,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/logging"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/logging"
 )
 
 // STDIOBridge handles stdio communication for MCP hosts like Claude Desktop

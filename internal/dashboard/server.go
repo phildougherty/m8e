@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/phildougherty/mcp-compose/internal/config"
-	"github.com/phildougherty/mcp-compose/internal/constants"
-	"github.com/phildougherty/mcp-compose/internal/container"
-	"github.com/phildougherty/mcp-compose/internal/logging"
+	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/logging"
 
 	"github.com/gorilla/websocket"
 )
@@ -446,7 +446,7 @@ func (d *DashboardServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	containerName := "mcp-compose-" + path
+	containerName := "matey-" + path
 	tail := r.URL.Query().Get("tail")
 	if tail == "" {
 		tail = "100"
