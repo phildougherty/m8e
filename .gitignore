@@ -63,3 +63,5 @@ mcp-compose
 # Custom development files
 custom_mcp/
 find_code.sh
+
+CLAUDE.md
