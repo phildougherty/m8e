@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/constants"
-	"github.com/phildougherty/m8e/internal/container"
 	"github.com/phildougherty/m8e/internal/memory"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/phildougherty/m8e/internal/crd"
 )
 
 func NewMemoryCommand() *cobra.Command {
@@ -17,54 +22,52 @@ func NewMemoryCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "memory",
-		Short: "Manage the postgres-backed memory MCP server",
-		Long: `Start, stop, enable, or disable the postgres-backed memory MCP server.
+		Short: "Manage the postgres-backed memory MCP server (Kubernetes-native)",
+		Long: `Start, stop, enable, or disable the postgres-backed memory MCP server using Kubernetes.
 The memory server provides persistent knowledge graph storage with:
-- PostgreSQL backend for reliability
+- PostgreSQL backend for reliability  
 - Graph-based knowledge storage
 - Entity and relationship management
 - Observation tracking
 
+For direct Kubernetes control, use: matey k8s memory
+
 Examples:
-  mcp-compose memory                    # Start memory server
-  mcp-compose memory --enable           # Enable in config
-  mcp-compose memory --disable          # Disable service`,
+  matey memory                    # Start memory server via Kubernetes
+  matey memory --enable           # Enable in config
+  matey memory --disable          # Disable service`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configFile, _ := cmd.Flags().GetString("file")
+			namespace, _ := cmd.Flags().GetString("namespace")
+			
 			cfg, err := config.LoadConfig(configFile)
 			if err != nil {
-
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			runtime, err := container.DetectRuntime()
-			if err != nil {
-
-				return fmt.Errorf("failed to detect container runtime: %w", err)
-			}
-
-			memoryManager := memory.NewManager(cfg, runtime)
-			memoryManager.SetConfigFile(configFile)
-
 			if enable {
-
 				return enableMemoryServer(configFile, cfg)
 			}
 
 			if disable {
-
-				return disableMemoryServer(configFile, cfg, memoryManager)
+				return disableMemoryServer(configFile, cfg, namespace)
 			}
 
 			// Check if memory is enabled in config
 			if !cfg.Memory.Enabled {
 				fmt.Println("Memory server is not enabled in configuration.")
 				fmt.Println("Use --enable flag to enable it first.")
-
 				return nil
 			}
 
-			// Start the memory server
+			// Create Kubernetes client
+			k8sClient, err := createK8sClientWithScheme()
+			if err != nil {
+				return fmt.Errorf("failed to create Kubernetes client: %w", err)
+			}
+
+			// Start the memory server using Kubernetes-native manager
+			memoryManager := memory.NewK8sManager(cfg, k8sClient, namespace)
 
 			return memoryManager.Start()
 		},
@@ -195,10 +198,17 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 	return config.SaveConfig(configFile, cfg)
 }
 
-func disableMemoryServer(configFile string, cfg *config.ComposeConfig, memoryManager *memory.Manager) error {
+func disableMemoryServer(configFile string, cfg *config.ComposeConfig, namespace string) error {
 	fmt.Println("Disabling memory server...")
 
-	// Stop the containers
+	// Create Kubernetes client
+	k8sClient, err := createK8sClientWithScheme()
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	// Stop the Kubernetes resources
+	memoryManager := memory.NewK8sManager(cfg, k8sClient, namespace)
 	if err := memoryManager.Stop(); err != nil {
 		fmt.Printf("Warning: %v\n", err)
 	}
@@ -209,4 +219,31 @@ func disableMemoryServer(configFile string, cfg *config.ComposeConfig, memoryMan
 	fmt.Println("Memory server disabled.")
 
 	return config.SaveConfig(configFile, cfg)
+}
+
+// createK8sClientWithScheme creates a Kubernetes client with CRD scheme
+func createK8sClientWithScheme() (client.Client, error) {
+	// Try in-cluster config first
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		// Fall back to kubeconfig
+		config, err = clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create kubernetes config: %w", err)
+		}
+	}
+
+	// Create the scheme with CRDs
+	scheme := runtime.NewScheme()
+	if err := crd.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add CRD scheme: %w", err)
+	}
+
+	// Create the client
+	k8sClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	return k8sClient, nil
 }

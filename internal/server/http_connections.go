@@ -593,15 +593,9 @@ func (h *ProxyHandler) establishInitialHTTPConnections() {
 					return
 				}
 
-				// Check if container is running (if it's a container)
-				if instance.IsContainer && instance.ContainerID != "" {
-					status, err := h.Manager.containerRuntime.GetContainerStatus(instance.ContainerID)
-					if err != nil || status != "running" {
-						h.logger.Debug("Server %s container not running (%s), skipping initial connection", name, status)
-
-						return
-					}
-				}
+				// Skip connection check for Kubernetes-native servers
+				// Kubernetes will handle server lifecycle
+				_ = instance // Avoid unused variable warning
 
 				h.logger.Debug("Attempting to establish initial HTTP connection to %s", name)
 				_, err := h.getServerConnection(name)
@@ -649,15 +643,9 @@ func (h *ProxyHandler) ensureHTTPConnectionsEstablished() {
 					return
 				}
 
-				// Check if container is running (if it's a container)
-				if instance.IsContainer && instance.ContainerID != "" {
-					status, err := h.Manager.containerRuntime.GetContainerStatus(instance.ContainerID)
-					if err != nil || status != "running" {
-						h.logger.Debug("Server %s container not running (%s), skipping connection", name, status)
-
-						return
-					}
-				}
+				// Skip connection check for Kubernetes-native servers
+				// Kubernetes will handle server lifecycle
+				_ = instance // Avoid unused variable warning
 
 				h.logger.Debug("Establishing HTTP connection to %s", name)
 				_, err := h.getServerConnection(name)

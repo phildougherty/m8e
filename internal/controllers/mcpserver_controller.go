@@ -4,6 +4,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/phildougherty/m8e/internal/config"
 	mcpv1 "github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/discovery"
 )
@@ -28,6 +30,7 @@ type MCPServerReconciler struct {
 	Scheme               *runtime.Scheme
 	ServiceDiscovery     *discovery.K8sServiceDiscovery
 	ConnectionManager    *discovery.DynamicConnectionManager
+	Config               *config.ComposeConfig
 }
 
 // +kubebuilder:rbac:groups=mcp.matey.ai,resources=mcpservers,verbs=get;list;watch;create;update;patch;delete
@@ -177,11 +180,11 @@ func (r *MCPServerReconciler) reconcileService(ctx context.Context, mcpServer *m
 		service.Labels["mcp.matey.ai/server-name"] = mcpServer.Name
 		
 		if len(mcpServer.Spec.Capabilities) > 0 {
-			// Join capabilities with commas for discovery
+			// Join capabilities with dots for discovery (commas are invalid in Kubernetes labels)
 			caps := ""
 			for i, cap := range mcpServer.Spec.Capabilities {
 				if i > 0 {
-					caps += ","
+					caps += "."
 				}
 				caps += cap
 			}
@@ -285,9 +288,15 @@ func (r *MCPServerReconciler) buildDeploymentSpec(mcpServer *mcpv1.MCPServer) ap
 	// Set security context
 	if mcpServer.Spec.Security != nil {
 		container.SecurityContext = &corev1.SecurityContext{
-			AllowPrivilegeEscalation: &[]bool{false}[0],
-			RunAsNonRoot:             &[]bool{true}[0],
-			ReadOnlyRootFilesystem:   &mcpServer.Spec.Security.ReadOnlyRootFS,
+			ReadOnlyRootFilesystem: &mcpServer.Spec.Security.ReadOnlyRootFS,
+		}
+
+		// Only set RunAsNonRoot if not allowing privileged operations and no specific user is set
+		if !mcpServer.Spec.Security.AllowPrivilegedOps {
+			if mcpServer.Spec.Security.RunAsUser == nil || *mcpServer.Spec.Security.RunAsUser != 0 {
+				container.SecurityContext.RunAsNonRoot = &[]bool{true}[0]
+				container.SecurityContext.AllowPrivilegeEscalation = &[]bool{false}[0]
+			}
 		}
 
 		if mcpServer.Spec.Security.RunAsUser != nil {
@@ -327,6 +336,26 @@ func (r *MCPServerReconciler) buildDeploymentSpec(mcpServer *mcpv1.MCPServer) ap
 
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{container},
+	}
+
+	// Add volumes to pod spec
+	for _, vol := range mcpServer.Spec.Volumes {
+		// Create host path volumes for the volume mounts
+		// Use the hostPath from the volume spec, or fall back to the mountPath if not specified
+		hostPath := vol.HostPath
+		if hostPath == "" {
+			hostPath = vol.MountPath
+		}
+		
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
+			Name: vol.Name,
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: hostPath,
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+				},
+			},
+		})
 	}
 
 	// Set service account
@@ -395,6 +424,16 @@ func (r *MCPServerReconciler) buildServiceSpec(mcpServer *mcpv1.MCPServer) corev
 			Name:       "sse",
 			Port:       mcpServer.Spec.SSEPort,
 			TargetPort: intstr.FromInt(int(mcpServer.Spec.SSEPort)),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
+	// For stdio services without ports, add a dummy port to satisfy Kubernetes service requirements
+	if len(ports) == 0 && mcpServer.Spec.Protocol == "stdio" {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "dummy",
+			Port:       80,
+			TargetPort: intstr.FromInt(80),
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
@@ -508,7 +547,18 @@ func (r *MCPServerReconciler) setCondition(status *mcpv1.MCPServerStatus, newCon
 func convertResourceList(rl mcpv1.ResourceList) corev1.ResourceList {
 	result := make(corev1.ResourceList)
 	for key, value := range rl {
-		quantity, err := resource.ParseQuantity(value)
+		// Convert common Docker-style memory formats to Kubernetes format
+		convertedValue := value
+		if key == "memory" {
+			// Convert Docker-style memory (512m, 1g) to Kubernetes format (512Mi, 1Gi)
+			if strings.HasSuffix(value, "m") && !strings.HasSuffix(value, "Mi") {
+				convertedValue = strings.TrimSuffix(value, "m") + "Mi"
+			} else if strings.HasSuffix(value, "g") && !strings.HasSuffix(value, "Gi") {
+				convertedValue = strings.TrimSuffix(value, "g") + "Gi"
+			}
+		}
+		
+		quantity, err := resource.ParseQuantity(convertedValue)
 		if err == nil {
 			result[corev1.ResourceName(key)] = quantity
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	
 	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/openapi"
 	"github.com/phildougherty/m8e/internal/server"
 )
 
@@ -94,19 +95,9 @@ func runProxy(cmd *cobra.Command, port int, namespace, apiKey string) error {
 	// Create HTTP server with routes
 	mux := http.NewServeMux()
 	
-	// Main MCP proxy route
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		handleProxyRequest(w, r, proxyHandler)
-	})
-	
-	// Server-specific routes
-	mux.HandleFunc("/servers/", func(w http.ResponseWriter, r *http.Request) {
-		handleServerRequest(w, r, proxyHandler)
-	})
-	
-	// API routes
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		handleAPIRequest(w, r, proxyHandler)
+	// OpenAPI endpoints (must be first to avoid conflicts)
+	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		handleOpenAPISpec(w, r, proxyHandler)
 	})
 	
 	// Health check
@@ -117,6 +108,24 @@ func runProxy(cmd *cobra.Command, port int, namespace, apiKey string) error {
 	// Service discovery info
 	mux.HandleFunc("/discovery", func(w http.ResponseWriter, r *http.Request) {
 		handleDiscoveryInfo(w, r, proxyHandler)
+	})
+	
+	// API routes
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		handleAPIRequest(w, r, proxyHandler)
+	})
+	
+	// Server-specific routes
+	mux.HandleFunc("/servers/", func(w http.ResponseWriter, r *http.Request) {
+		handleServerRequest(w, r, proxyHandler)
+	})
+	
+	// Dynamic server-specific OpenAPI endpoints 
+	// (handled in the catch-all since server names are discovered at runtime)
+	
+	// Catch-all for dynamic routing (must be last)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		handleDynamicRequest(w, r, proxyHandler)
 	})
 
 	server := &http.Server{
@@ -294,7 +303,279 @@ func handleDiscoveryInfo(w http.ResponseWriter, r *http.Request, handler *server
 	})
 }
 
+func handleOpenAPISpec(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler) {
+	// Check authentication
+	if !handler.CheckAuth(r) {
+		handler.CorsError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Collect all tools from all discovered services
+	servers := handler.GetDiscoveredServers()
+	var allTools []openapi.Tool
+	
+	for _, server := range servers {
+		if server.Name == "" {
+			continue
+		}
+		
+		// Get tools for this server and convert to openapi.Tool format
+		serverTools, err := handler.DiscoverServerTools(server.Name)
+		if err != nil {
+			handler.Logger.Warning("Failed to discover tools for %s: %v", server.Name, err)
+			// Add a generic tool for this server
+			allTools = append(allTools, openapi.Tool{
+				Name:        fmt.Sprintf("%s_default", server.Name),
+				Description: fmt.Sprintf("Default tool for %s server", server.Name),
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"action": map[string]interface{}{
+							"type":        "string",
+							"description": "Action to perform on the server",
+						},
+					},
+				},
+			})
+			continue
+		}
+		
+		// Convert server.Tool to openapi.Tool
+		for _, tool := range serverTools {
+			openAPITool := openapi.Tool{
+				Name:        tool.Name,
+				Description: tool.Description,
+				InputSchema: tool.Parameters,
+			}
+			allTools = append(allTools, openAPITool)
+		}
+	}
+	
+	// If no tools found, add a default one
+	if len(allTools) == 0 {
+		allTools = append(allTools, openapi.Tool{
+			Name:        "proxy_status",
+			Description: "Get proxy status and available servers",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"include_details": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include detailed server information",
+						"default":     false,
+					},
+				},
+			},
+		})
+	}
+	
+	// Generate OpenAPI schema using the proper openapi module
+	schema, err := openapi.GenerateOpenAPISchema("MCP Proxy", allTools)
+	if err != nil {
+		handler.Logger.Error("Failed to generate OpenAPI schema: %v", err)
+		writeErrorResponse(w, "Failed to generate OpenAPI spec", http.StatusInternalServerError)
+		return
+	}
+	
+	// Update the schema to match our proxy
+	schema.Info.Title = "MCP Server Functions"
+	schema.Info.Description = "Automatically generated API from MCP Tool Schemas via Kubernetes service discovery"
+	schema.Servers = []openapi.Server{
+		{
+			URL:         fmt.Sprintf("http://%s", r.Host),
+			Description: "Kubernetes-native MCP Proxy Server",
+		},
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(schema); err != nil {
+		writeErrorResponse(w, "Failed to encode OpenAPI spec", http.StatusInternalServerError)
+	}
+}
+
 // Helper functions
+
+func formatToolTitle(toolName string) string {
+	// Convert snake_case or kebab-case to Title Case
+	words := strings.FieldsFunc(toolName, func(c rune) bool {
+		return c == '_' || c == '-'
+	})
+	
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(string(word[0])) + strings.ToLower(word[1:])
+		}
+	}
+	
+	return strings.Join(words, " ")
+}
+
+func getServerNames(handler *server.ProxyHandler) []string {
+	servers := handler.GetDiscoveredServers()
+	names := make([]string, 0, len(servers))
+	for _, srv := range servers {
+		if srv.Name != "" {
+			names = append(names, srv.Name)
+		}
+	}
+	return names
+}
+
+func handleServerOpenAPISpec(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler, serverName string) {
+	// Check authentication
+	if !handler.CheckAuth(r) {
+		handler.CorsError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get tools for this specific server
+	serverTools, err := handler.DiscoverServerTools(serverName)
+	var tools []openapi.Tool
+	
+	if err != nil {
+		handler.Logger.Warning("Failed to discover tools for %s: %v", serverName, err)
+		// Add a generic tool for this server
+		tools = append(tools, openapi.Tool{
+			Name:        fmt.Sprintf("%s_default", serverName),
+			Description: fmt.Sprintf("Default tool for %s server", serverName),
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"action": map[string]interface{}{
+						"type":        "string",
+						"description": "Action to perform on the server",
+					},
+				},
+			},
+		})
+	} else {
+		// Convert server.Tool to openapi.Tool
+		for _, tool := range serverTools {
+			openAPITool := openapi.Tool{
+				Name:        tool.Name,
+				Description: tool.Description,
+				InputSchema: tool.Parameters,
+			}
+			tools = append(tools, openAPITool)
+		}
+	}
+	
+	// Generate OpenAPI schema using the proper openapi module
+	schema, err := openapi.GenerateOpenAPISchema(serverName, tools)
+	if err != nil {
+		handler.Logger.Error("Failed to generate OpenAPI schema for %s: %v", serverName, err)
+		writeErrorResponse(w, "Failed to generate server OpenAPI spec", http.StatusInternalServerError)
+		return
+	}
+	
+	// Update the schema to match our proxy
+	schema.Servers = []openapi.Server{
+		{
+			URL:         fmt.Sprintf("http://%s", r.Host),
+			Description: fmt.Sprintf("%s MCP Server via Kubernetes proxy", serverName),
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(schema); err != nil {
+		writeErrorResponse(w, "Failed to encode server OpenAPI spec", http.StatusInternalServerError)
+	}
+}
+
+func handleDynamicRequest(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	
+	// Skip if it's a root request
+	if path == "" {
+		writeErrorResponse(w, "Proxy ready - use /openapi.json for API documentation", http.StatusOK)
+		return
+	}
+	
+	// Handle server-specific OpenAPI endpoints: /{server}/openapi.json
+	if strings.HasSuffix(path, "/openapi.json") {
+		serverName := strings.TrimSuffix(path, "/openapi.json")
+		if serverName != "" {
+			// Check if this server exists
+			servers := handler.GetDiscoveredServers()
+			for _, server := range servers {
+				if server.Name == serverName {
+					handleServerOpenAPISpec(w, r, handler, serverName)
+					return
+				}
+			}
+		}
+		writeErrorResponse(w, fmt.Sprintf("Server not found: %s", serverName), http.StatusNotFound)
+		return
+	}
+	
+	// Skip if it contains other slashes
+	if strings.Contains(path, "/") {
+		writeErrorResponse(w, "Path not found", http.StatusNotFound)
+		return
+	}
+	
+	// Skip known endpoints
+	knownEndpoints := map[string]bool{
+		"api":          true,
+		"servers":      true,
+		"openapi.json": true,
+		"health":       true,
+		"discovery":    true,
+	}
+	
+	if knownEndpoints[path] {
+		writeErrorResponse(w, "Endpoint already handled", http.StatusNotFound)
+		return
+	}
+	
+	// Check if it's a server name
+	servers := handler.GetDiscoveredServers()
+	for _, server := range servers {
+		if server.Name == path {
+			// Route to server handler with proper path setup
+			// Create a new request with proper server routing
+			newPath := "/servers/" + path + "/"
+			r.URL.Path = newPath
+			handleServerRequest(w, r, handler)
+			return
+		}
+	}
+	
+	// Check if it's a tool name (for direct tool calls)
+	if r.Method == "POST" {
+		handleDirectToolCall(w, r, handler, path)
+		return
+	}
+	
+	// Nothing matches
+	writeErrorResponse(w, fmt.Sprintf("Unknown endpoint: %s", path), http.StatusNotFound)
+}
+
+func handleDirectToolCall(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler, toolName string) {
+	// Check authentication
+	if !handler.CheckAuth(r) {
+		handler.CorsError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Set CORS headers
+	handler.SetCORSHeaders(w)
+
+	// Handle OPTIONS requests
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Only allow POST for tool calls
+	if r.Method != "POST" {
+		writeErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Delegate to the proxy handler's direct tool call method
+	handler.HandleDirectToolCall(w, r, toolName)
+}
 
 func extractServerName(r *http.Request) string {
 	// First try X-MCP-Server header

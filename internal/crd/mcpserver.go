@@ -280,6 +280,7 @@ type ServiceDiscoveryConfig struct {
 type VolumeSpec struct {
 	Name       string `json:"name"`
 	MountPath  string `json:"mountPath"`
+	HostPath   string `json:"hostPath,omitempty"`
 	Size       string `json:"size,omitempty"`
 	AccessMode string `json:"accessMode,omitempty"`
 	SubPath    string `json:"subPath,omitempty"`
@@ -449,6 +450,10 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&MCPServerList{},
 		&MCPTaskScheduler{},
 		&MCPTaskSchedulerList{},
+		&MCPMemory{},
+		&MCPMemoryList{},
+		&MCPProxy{},
+		&MCPProxyList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

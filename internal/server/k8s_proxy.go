@@ -450,6 +450,195 @@ func (h *ProxyHandler) discoverTools() {
 	h.Logger.Info(fmt.Sprintf("Discovered %d tools from %d servers", len(h.toolCache), len(connections)))
 }
 
+// Tool structure for OpenAPI generation
+type Tool struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+// DiscoverServerTools discovers tools from a specific server (public method for cmd/proxy.go)
+func (h *ProxyHandler) DiscoverServerTools(serverName string) ([]Tool, error) {
+	conn, err := h.ConnectionManager.GetConnection(serverName)
+	if err != nil {
+		return nil, fmt.Errorf("no connection available for server %s: %w", serverName, err)
+	}
+
+	// Make MCP tools/list call to discover actual tools
+	tools, err := h.makeToolsListRequest(serverName, conn)
+	if err != nil {
+		h.Logger.Warning("Failed to discover tools for %s: %v", serverName, err)
+		// Return placeholder tools based on capabilities
+		return h.createPlaceholderTools(serverName, conn), nil
+	}
+
+	return tools, nil
+}
+
+// makeToolsListRequest makes an MCP tools/list request to discover tools
+func (h *ProxyHandler) makeToolsListRequest(serverName string, conn *discovery.MCPConnection) ([]Tool, error) {
+	// Create MCP tools/list request
+	request := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "tools/list",
+		"params":  map[string]interface{}{},
+		"id":      h.getNextRequestID(),
+	}
+
+	// Send request based on protocol
+	switch conn.Endpoint.Protocol {
+	case "http":
+		return h.makeHTTPToolsListRequest(conn, request)
+	case "sse":
+		return h.makeSSEToolsListRequest(conn, request)
+	default:
+		return nil, fmt.Errorf("unsupported protocol for tools discovery: %s", conn.Endpoint.Protocol)
+	}
+}
+
+// makeHTTPToolsListRequest makes HTTP tools/list request
+func (h *ProxyHandler) makeHTTPToolsListRequest(conn *discovery.MCPConnection, request map[string]interface{}) ([]Tool, error) {
+	if conn.HTTPConnection == nil {
+		return nil, fmt.Errorf("no HTTP connection available")
+	}
+
+	// Marshal request
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Make HTTP request
+	req, err := http.NewRequest("POST", conn.HTTPConnection.BaseURL, strings.NewReader(string(payload)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	
+	resp, err := conn.HTTPConnection.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var mcpResponse map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&mcpResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return h.parseToolsFromMCPResponse(mcpResponse)
+}
+
+// makeSSEToolsListRequest makes SSE tools/list request  
+func (h *ProxyHandler) makeSSEToolsListRequest(conn *discovery.MCPConnection, request map[string]interface{}) ([]Tool, error) {
+	// For SSE, we'd need to implement the full SSE protocol
+	// For now, return error and fall back to placeholder tools
+	return nil, fmt.Errorf("SSE tools discovery not yet implemented")
+}
+
+// parseToolsFromMCPResponse parses tools from MCP response
+func (h *ProxyHandler) parseToolsFromMCPResponse(response map[string]interface{}) ([]Tool, error) {
+	result, ok := response["result"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid MCP response format")
+	}
+
+	toolsArray, ok := result["tools"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("no tools array in response")
+	}
+
+	var tools []Tool
+	for _, toolItem := range toolsArray {
+		toolMap, ok := toolItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		tool := Tool{
+			Name:        getString(toolMap, "name"),
+			Description: getString(toolMap, "description"),
+			Parameters:  getMap(toolMap, "inputSchema"),
+		}
+
+		if tool.Name != "" {
+			tools = append(tools, tool)
+		}
+	}
+
+	return tools, nil
+}
+
+// createPlaceholderTools creates placeholder tools based on server capabilities
+func (h *ProxyHandler) createPlaceholderTools(serverName string, conn *discovery.MCPConnection) []Tool {
+	var tools []Tool
+
+	// Create placeholder tools based on capabilities
+	for _, capability := range conn.Endpoint.Capabilities {
+		switch capability {
+		case "tools":
+			tools = append(tools, Tool{
+				Name:        fmt.Sprintf("%s_tool", serverName),
+				Description: fmt.Sprintf("Generic tool from %s server", serverName),
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"input": map[string]interface{}{
+							"type":        "string",
+							"description": "Input for the tool",
+						},
+					},
+				},
+			})
+		case "resources":
+			tools = append(tools, Tool{
+				Name:        fmt.Sprintf("%s_read_resource", serverName),
+				Description: fmt.Sprintf("Read resources from %s server", serverName),
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"uri": map[string]interface{}{
+							"type":        "string",
+							"description": "Resource URI to read",
+						},
+					},
+				},
+			})
+		}
+	}
+
+	// If no tools found, add a default one
+	if len(tools) == 0 {
+		tools = append(tools, Tool{
+			Name:        fmt.Sprintf("%s_default", serverName),
+			Description: fmt.Sprintf("Default endpoint for %s server", serverName),
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		})
+	}
+
+	return tools
+}
+
+// Helper functions for parsing JSON
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func getMap(m map[string]interface{}, key string) map[string]interface{} {
+	if val, ok := m[key].(map[string]interface{}); ok {
+		return val
+	}
+	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+}
+
 // discoverK8sServerTools discovers tools from a specific server
 func (h *ProxyHandler) discoverK8sServerTools(serverName string, conn *discovery.MCPConnection) map[string]string {
 	tools := make(map[string]string)
@@ -475,11 +664,26 @@ func (h *ProxyHandler) corsError(w http.ResponseWriter, message string, statusCo
 	h.writeErrorResponse(w, message, statusCode)
 }
 
+// CorsError writes a CORS-enabled error response (public method for cmd/proxy.go)
+func (h *ProxyHandler) CorsError(w http.ResponseWriter, message string, statusCode int) {
+	h.corsError(w, message, statusCode)
+}
+
+// SetCORSHeaders sets CORS headers for cross-origin requests (public method for cmd/proxy.go)
+func (h *ProxyHandler) SetCORSHeaders(w http.ResponseWriter) {
+	h.setCORSHeaders(w)
+}
+
 // setCORSHeaders sets CORS headers for cross-origin requests
 func (h *ProxyHandler) setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-MCP-Server, Mcp-Session-Id")
+}
+
+// CheckAuth validates API key authentication (public method for cmd/proxy.go)
+func (h *ProxyHandler) CheckAuth(r *http.Request) bool {
+	return h.checkAuth(r)
 }
 
 // checkAuth validates API key authentication

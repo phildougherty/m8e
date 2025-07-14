@@ -1,1151 +1,685 @@
-// internal/compose/compose.go
+// internal/compose/k8s_composer.go
 package compose
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"text/tabwriter"
 	"time"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
+	"k8s.io/apimachinery/pkg/runtime"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/phildougherty/m8e/internal/config"
-	"github.com/phildougherty/m8e/internal/constants"
-	"github.com/phildougherty/m8e/internal/container"
+	"github.com/phildougherty/m8e/internal/controllers"
+	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
-	"github.com/phildougherty/m8e/internal/protocol"
-	"github.com/phildougherty/m8e/internal/runtime"
-	"github.com/phildougherty/m8e/internal/server"
-
-	"github.com/fatih/color"
+	"github.com/phildougherty/m8e/internal/memory"
+	"github.com/phildougherty/m8e/internal/task_scheduler"
 )
 
-// Composer orchestrates the entire MCP compose environment
-type Composer struct {
-	config           *config.ComposeConfig
-	manager          *server.Manager
-	lifecycleManager *LifecycleManager
-	protocolManagers map[string]*ProtocolManagerSet
-	logger           *logging.Logger
-	mu               sync.RWMutex
+// K8sComposer orchestrates MCP services using Kubernetes resources
+type K8sComposer struct {
+	config     *config.ComposeConfig
+	k8sClient  client.Client
+	namespace  string
+	logger     *logging.Logger
+	mu         sync.RWMutex
+	
+	// Service managers
+	memoryManager       *memory.K8sManager
+	taskSchedulerManager *task_scheduler.K8sManager
+	
+	// Controller manager
+	controllerManager   *controllers.ControllerManager
 }
 
-// ProtocolManagerSet contains all protocol managers for a server
-type ProtocolManagerSet struct {
-	Progress     *protocol.ProgressManager
-	Resource     *protocol.ResourceManager
-	Sampling     *protocol.SamplingManager
-	Subscription *protocol.SubscriptionManager
-	Change       *protocol.ChangeNotificationManager
-}
-
-// NewComposer creates a new composer instance
-func NewComposer(configPath string) (*Composer, error) {
+// NewK8sComposer creates a new Kubernetes-native composer instance
+func NewK8sComposer(configPath string, namespace string) (*K8sComposer, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Use DetectRuntime instead of NewRuntime
-	containerRuntime, err := container.DetectRuntime()
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	logger := logging.NewLogger("info")
+	if cfg.Logging.Level != "" {
+		logger = logging.NewLogger(cfg.Logging.Level)
+	}
+
+	// Create Kubernetes client
+	k8sClient, err := createK8sClient()
 	if err != nil {
-
-		return nil, fmt.Errorf("failed to detect container runtime: %w", err)
+		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	mgr, err := server.NewManager(cfg, containerRuntime)
-	if err != nil {
+	// Create service managers
+	memoryManager := memory.NewK8sManager(cfg, k8sClient, namespace)
+	taskSchedulerManager := task_scheduler.NewK8sManager(cfg, k8sClient, namespace)
 
-		return nil, fmt.Errorf("failed to create server manager: %w", err)
-	}
-
-	logger := logging.NewLogger(cfg.Logging.Level)
-	lifecycleManager := NewLifecycleManager(cfg, logger, ".")
-
-	composer := &Composer{
-		config:           cfg,
-		manager:          mgr,
-		lifecycleManager: lifecycleManager,
-		protocolManagers: make(map[string]*ProtocolManagerSet),
-		logger:           logger,
-	}
-
-	// Initialize protocol managers for each server
-	for serverName := range cfg.Servers {
-		composer.protocolManagers[serverName] = &ProtocolManagerSet{
-			Progress:     protocol.NewProgressManager(),
-			Resource:     protocol.NewResourceManager(),
-			Sampling:     protocol.NewSamplingManager(),
-			Subscription: protocol.NewSubscriptionManager(),
-			Change:       protocol.NewChangeNotificationManager(),
-		}
-
-		// Register default transformer
-		composer.protocolManagers[serverName].Resource.RegisterTransformer(
-			"default",
-			&protocol.DefaultTextTransformer{},
-		)
-	}
-
-	return composer, nil
+	return &K8sComposer{
+		config:               cfg,
+		k8sClient:            k8sClient,
+		namespace:            namespace,
+		logger:               logger,
+		memoryManager:        memoryManager,
+		taskSchedulerManager: taskSchedulerManager,
+	}, nil
 }
 
-// GetProtocolManagers returns protocol managers for a server
-func (c *Composer) GetProtocolManagers(serverName string) *ProtocolManagerSet {
+// Up starts all enabled services
+func (c *K8sComposer) Up(serviceNames []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Info("Starting Kubernetes-native MCP services")
+	
+	// FIRST: Ensure controller manager is running
+	if err := c.ensureControllerManagerRunning(); err != nil {
+		return fmt.Errorf("failed to start controller manager: %w", err)
+	}
+
+	// If no specific services requested, start all enabled services
+	if len(serviceNames) == 0 {
+		return c.startAllEnabledServices()
+	}
+
+	// Start specific services
+	return c.startSpecificServices(serviceNames)
+}
+
+// Down stops all services
+func (c *K8sComposer) Down(serviceNames []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Info("Stopping Kubernetes-native MCP services")
+	
+
+	// If no specific services requested, stop all services
+	if len(serviceNames) == 0 {
+		return c.stopAllServices()
+	}
+
+	// Stop specific services
+	return c.stopSpecificServices(serviceNames)
+}
+
+// Start starts specific services
+func (c *K8sComposer) Start(serviceNames []string) error {
+	if len(serviceNames) == 0 {
+		return fmt.Errorf("no services specified")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.startSpecificServices(serviceNames)
+}
+
+// Stop stops specific services
+func (c *K8sComposer) Stop(serviceNames []string) error {
+	if len(serviceNames) == 0 {
+		return fmt.Errorf("no services specified")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.stopSpecificServices(serviceNames)
+}
+
+// Restart restarts specific services
+func (c *K8sComposer) Restart(serviceNames []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Stop first
+	if err := c.stopSpecificServices(serviceNames); err != nil {
+		c.logger.Warning(fmt.Sprintf("Warning during stop: %v", err))
+	}
+
+	// Wait a moment for cleanup
+	time.Sleep(2 * time.Second)
+
+	// Start again
+	return c.startSpecificServices(serviceNames)
+}
+
+// Status returns the status of all services
+func (c *K8sComposer) Status() (*ComposeStatus, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	return c.protocolManagers[serverName]
-}
+	status := &ComposeStatus{
+		Services: make(map[string]*ServiceStatus),
+	}
 
-// StartServer starts a specific server with protocol integration
-func (c *Composer) StartServer(serverName string) error {
-
-	return c.manager.StartServer(serverName)
-}
-
-// StopServer stops a specific server
-func (c *Composer) StopServer(serverName string) error {
-
-	return c.manager.StopServer(serverName)
-}
-
-// StartAll starts all configured servers
-func (c *Composer) StartAll() error {
-	for serverName := range c.config.Servers {
-		if err := c.StartServer(serverName); err != nil {
-			c.logger.Error("Failed to start server %s: %v", serverName, err)
-
-			return err
+	// Check memory service status
+	if c.config.Memory.Enabled {
+		memStatus, err := c.memoryManager.Status()
+		if err != nil {
+			memStatus = "error"
 		}
+		status.Services["memory"] = &ServiceStatus{
+			Name:   "memory",
+			Status: memStatus,
+			Type:   "memory",
+		}
+	}
+
+	// Check task scheduler status
+	if c.config.TaskScheduler.Enabled {
+		tsStatus, err := c.taskSchedulerManager.GetStatus()
+		if err != nil {
+			tsStatus = "error"
+		}
+		status.Services["task-scheduler"] = &ServiceStatus{
+			Name:   "task-scheduler",
+			Status: tsStatus,
+			Type:   "task-scheduler",
+		}
+	}
+
+	return status, nil
+}
+
+// startAllEnabledServices starts all services that are enabled in config
+func (c *K8sComposer) startAllEnabledServices() error {
+	var errors []string
+
+	// Start memory service if enabled
+	if c.config.Memory.Enabled {
+		c.logger.Info("Starting memory service")
+		if err := c.memoryManager.Start(); err != nil {
+			errors = append(errors, fmt.Sprintf("memory: %v", err))
+		}
+	}
+
+	// Start task scheduler if enabled
+	if c.config.TaskScheduler.Enabled {
+		c.logger.Info("Starting task scheduler service")
+		if err := c.taskSchedulerManager.Start(); err != nil {
+			errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
+		}
+	}
+
+	// Start all configured servers
+	for serverName, serverConfig := range c.config.Servers {
+		c.logger.Info("Starting server: %s", serverName)
+		if err := c.startMCPServer(serverName, serverConfig); err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", serverName, err))
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to start services: %s", strings.Join(errors, ", "))
 	}
 
 	return nil
 }
 
-// StopAll stops all running servers
-func (c *Composer) StopAll() error {
-	for serverName := range c.config.Servers {
-		if err := c.StopServer(serverName); err != nil {
-			c.logger.Warning("Failed to stop server %s: %v", serverName, err)
-		}
-	}
+// startSpecificServices starts the specified services
+func (c *K8sComposer) startSpecificServices(serviceNames []string) error {
+	var errors []string
 
-	return nil
-}
-
-// Shutdown gracefully shuts down the composer
-func (c *Composer) Shutdown() error {
-	c.logger.Info("Shutting down composer...")
-
-	// Stop all servers
-	if err := c.StopAll(); err != nil {
-		c.logger.Warning("Error stopping servers during shutdown: %v", err)
-	}
-
-	// Shutdown protocol managers
-	c.mu.Lock()
-	for serverName, managers := range c.protocolManagers {
-		c.logger.Debug("Cleaning up protocol managers for %s", serverName)
-		managers.Subscription.CleanupExpiredSubscriptions(0)
-		managers.Change.CleanupInactiveSubscribers(0)
-	}
-	c.mu.Unlock()
-
-	// Shutdown server manager
-	if err := c.manager.Shutdown(); err != nil {
-		c.logger.Warning("Error shutting down server manager: %v", err)
-	}
-
-	return nil
-}
-
-func Up(configFile string, serverNames []string) error {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-
-		return fmt.Errorf("failed to load config from %s: %w", configFile, err)
-	}
-
-	cRuntime, err := container.DetectRuntime()
-	if err != nil {
-
-		return fmt.Errorf("failed to detect container runtime: %w", err)
-	}
-
-	serversToStart := getServersToStart(cfg, serverNames)
-	if len(serversToStart) == 0 {
-		fmt.Println("No servers selected or defined to start.")
-
-		return nil
-	}
-
-	fmt.Printf("Starting %d MCP server(s) in parallel...\n", len(serversToStart))
-
-	// Collect all networks needed by servers
-	requiredNetworks := collectRequiredNetworks(cfg, serversToStart)
-
-	// Ensure all required networks exist
-	if cRuntime.GetRuntimeName() != "none" {
-		for networkName := range requiredNetworks {
-			networkExists, _ := cRuntime.NetworkExists(networkName)
-			if !networkExists {
-				fmt.Printf("Network '%s' does not exist, attempting to create it...\n", networkName)
-				if err := cRuntime.CreateNetwork(networkName); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: Failed to create network '%s': %v. Some inter-server communication might fail.\n", networkName, err)
-				} else {
-					fmt.Printf("✅ Created network '%s'\n", networkName)
-				}
+	for _, serviceName := range serviceNames {
+		switch serviceName {
+		case "memory":
+			c.logger.Info("Starting memory service")
+			if err := c.memoryManager.Start(); err != nil {
+				errors = append(errors, fmt.Sprintf("memory: %v", err))
 			}
-		}
-	}
-
-	// Channel to collect results
-	type startResult struct {
-		serverName string
-		err        error
-		duration   time.Duration
-	}
-
-	results := make(chan startResult, len(serversToStart))
-	var wg sync.WaitGroup
-
-	// Start all servers in parallel
-	for _, serverName := range serversToStart {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-
-			startTime := time.Now()
-			fmt.Printf("Processing server '%s'...\n", name)
-
-			serverCfg, exists := cfg.Servers[name]
-			if !exists {
-				results <- startResult{name, fmt.Errorf("not found in config"), time.Since(startTime)}
-
-				return
+		case "task-scheduler":
+			c.logger.Info("Starting task scheduler service")
+			if err := c.taskSchedulerManager.Start(); err != nil {
+				errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
 			}
-
-			// Log transport mode
-			if serverCfg.Image != "" {
-				isHTTPIntended := serverCfg.Protocol == "http" || serverCfg.HttpPort > 0
-				hasHTTPArgs := false
-				for _, arg := range serverCfg.Args {
-					if strings.Contains(strings.ToLower(arg), "http") || strings.Contains(arg, "--port") {
-						hasHTTPArgs = true
-
-						break
-					}
+		default:
+			// Check if it's a configured server
+			if serverConfig, exists := c.config.Servers[serviceName]; exists {
+				c.logger.Info("Starting server: %s", serviceName)
+				if err := c.startMCPServer(serviceName, serverConfig); err != nil {
+					errors = append(errors, fmt.Sprintf("%s: %v", serviceName, err))
 				}
-
-				if !isHTTPIntended && !hasHTTPArgs {
-					fmt.Printf("[i] Server %-30s will start in STDIO mode (no HTTP config detected).\n", name)
-				} else if isHTTPIntended || hasHTTPArgs {
-					fmt.Printf("[i] Server %-30s will start in HTTP mode.\n", name)
-				}
-			}
-
-			var err error
-			if isContainerServer(serverCfg) {
-				err = startServerContainer(name, serverCfg, cRuntime)
 			} else {
-				err = startServerProcess(name, serverCfg)
+				errors = append(errors, fmt.Sprintf("unknown service: %s", serviceName))
 			}
-			duration := time.Since(startTime)
-			results <- startResult{name, err, duration}
-		}(serverName)
-	}
-
-	// Wait for all goroutines to complete
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect and display results
-	var composeErrors []string
-	var successfulServers []string
-	successCount := 0
-
-	for result := range results {
-		if result.err != nil {
-			errMsg := fmt.Sprintf("Server '%s' failed to start: %v", result.serverName, result.err)
-			composeErrors = append(composeErrors, errMsg)
-			fmt.Printf("[✖] Server %-30s Error: %v (%s)\n", result.serverName, result.err, ShortDuration(result.duration))
-		} else {
-			successCount++
-			successfulServers = append(successfulServers, result.serverName)
-			fmt.Printf("[✔] Server %-30s Started (%s). Proxy will attempt HTTP connection.\n", result.serverName, ShortDuration(result.duration))
 		}
 	}
 
-	// Summary
-	fmt.Printf("\n=== PARALLEL STARTUP SUMMARY ===\n")
-	fmt.Printf("Servers processed: %d\n", len(serversToStart))
-	fmt.Printf("Successfully started: %d\n", successCount)
-	fmt.Printf("Failed: %d\n", len(composeErrors))
-
-	if len(composeErrors) > 0 {
-		fmt.Printf("\nErrors encountered:\n")
-		for _, e := range composeErrors {
-			fmt.Printf("- %s\n", e)
-		}
-		if successCount == 0 {
-
-			return fmt.Errorf("failed to start any servers. Check server configurations and ensure commands/images are correct")
-		}
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to start services: %s", strings.Join(errors, ", "))
 	}
 
-	if successCount > 0 {
-		// Generate dynamic network description
-		networkDesc := generateNetworkDescription(requiredNetworks)
-		fmt.Printf("\n✅ Startup completed. %d/%d servers are running.\n", successCount, len(serversToStart))
-		fmt.Printf("Servers are accessible%s\n", networkDesc)
-
-		// Show detailed network topology
-		showNetworkTopology(cfg, successfulServers)
-
-		fmt.Printf("Use 'mcp-compose down' to stop them.\n")
-	}
 
 	return nil
 }
 
-// collectRequiredNetworks gathers all networks used by the container servers being started
-func collectRequiredNetworks(cfg *config.ComposeConfig, serverNames []string) map[string][]string {
-	networkToServers := make(map[string][]string)
+// stopAllServices stops all services
+func (c *K8sComposer) stopAllServices() error {
+	var errors []string
 
-	for _, serverName := range serverNames {
-		serverCfg, exists := cfg.Servers[serverName]
-		if !exists {
-			continue
+	// Stop memory service
+	c.logger.Info("Stopping memory service")
+	if err := c.memoryManager.Stop(); err != nil {
+		errors = append(errors, fmt.Sprintf("memory: %v", err))
+	}
+
+	// Stop task scheduler
+	c.logger.Info("Stopping task scheduler service")
+	if err := c.taskSchedulerManager.Stop(); err != nil {
+		errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
+	}
+
+	// Stop controller manager last
+	if c.controllerManager != nil {
+		c.logger.Info("Stopping controller manager")
+		if err := c.controllerManager.Stop(); err != nil {
+			errors = append(errors, fmt.Sprintf("controller-manager: %v", err))
 		}
-
-		// Only process container servers for network requirements
-		if !isContainerServer(serverCfg) {
-			continue
-		}
-
-		// Skip if using network mode instead of networks
-		if serverCfg.NetworkMode != "" {
-			continue
-		}
-
-		networks := determineServerNetworks(serverCfg)
-
-		// Track which servers use which networks
-		for _, network := range networks {
-			if networkToServers[network] == nil {
-				networkToServers[network] = make([]string, 0)
-			}
-			networkToServers[network] = append(networkToServers[network], serverName)
-		}
+		c.controllerManager = nil
 	}
 
-	return networkToServers
-}
-
-// generateNetworkDescription creates a human-readable description of network configuration
-func generateNetworkDescription(networkToServers map[string][]string) string {
-	if len(networkToServers) == 0 {
-
-		return " via localhost (for process-based servers) or host networking"
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to stop services: %s", strings.Join(errors, ", "))
 	}
 
-	if len(networkToServers) == 1 {
-		for networkName := range networkToServers {
-			if networkName == "host" {
-
-				return " via host networking"
-			}
-
-			return fmt.Sprintf(" via Docker network '%s'", networkName)
-		}
-	}
-
-	// Multiple networks
-	networks := make([]string, 0, len(networkToServers))
-	for networkName := range networkToServers {
-		if networkName == "host" {
-			networks = append(networks, "host networking")
-		} else {
-			networks = append(networks, fmt.Sprintf("'%s'", networkName))
-		}
-	}
-
-	return fmt.Sprintf(" via Docker networks: %s", strings.Join(networks, ", "))
-}
-
-// showNetworkTopology displays which servers are on which networks
-func showNetworkTopology(cfg *config.ComposeConfig, serversStarted []string) {
-	fmt.Printf("\n=== NETWORK TOPOLOGY ===\n")
-
-	networkToServers := make(map[string][]string)
-
-	for _, serverName := range serversStarted {
-		serverCfg, exists := cfg.Servers[serverName]
-		if !exists {
-			continue
-		}
-
-		var networks []string
-		if serverCfg.NetworkMode != "" {
-			networks = []string{fmt.Sprintf("mode:%s", serverCfg.NetworkMode)}
-		} else {
-			networks = determineServerNetworks(serverCfg)
-		}
-
-		for _, network := range networks {
-			if networkToServers[network] == nil {
-				networkToServers[network] = make([]string, 0)
-			}
-			networkToServers[network] = append(networkToServers[network], serverName)
-		}
-	}
-
-	if len(networkToServers) == 0 {
-		fmt.Printf("No network information available (process-based servers)\n")
-
-		return
-	}
-
-	for networkName, servers := range networkToServers {
-		fmt.Printf("Network '%s': %s\n", networkName, strings.Join(servers, ", "))
-	}
-}
-
-// determineServerNetworks determines which networks a server should join
-func determineServerNetworks(serverCfg config.ServerConfig) []string {
-	// If NetworkMode is set, don't use Networks (they're mutually exclusive)
-	if serverCfg.NetworkMode != "" {
-
-		return nil
-	}
-
-	// Start with configured networks
-	networks := make([]string, 0)
-	if len(serverCfg.Networks) > 0 {
-		networks = append(networks, serverCfg.Networks...)
-	}
-
-	// Ensure default network is included unless explicitly using custom networks only
-	hasDefaultNetwork := false
-	for _, net := range networks {
-		if net == "mcp-net" {
-			hasDefaultNetwork = true
-
-			break
-		}
-	}
-
-	if !hasDefaultNetwork && len(networks) == 0 {
-		// No networks specified, use default
-		networks = append(networks, "mcp-net")
-	} else if !hasDefaultNetwork && len(serverCfg.Networks) > 0 {
-		// Custom networks specified, but ensure connectivity with other MCP services
-		// Add mcp-net for proxy connectivity unless user explicitly excluded it
-		networks = append(networks, "mcp-net")
-	}
-
-	// Remove duplicates
-	uniqueNetworks := make([]string, 0, len(networks))
-	seen := make(map[string]bool)
-	for _, network := range networks {
-		if !seen[network] {
-			uniqueNetworks = append(uniqueNetworks, network)
-			seen[network] = true
-		}
-	}
-
-	return uniqueNetworks
-}
-
-// isContainerServer determines if a server should run as a container
-func isContainerServer(serverCfg config.ServerConfig) bool {
-	// If it has an image, it's definitely a container
-	if serverCfg.Image != "" {
-
-		return true
-	}
-
-	// If it has a build context, it's definitely a container
-	if serverCfg.Build.Context != "" {
-
-		return true
-	}
-
-	// If it has container-specific configuration, it's a container
-	if len(serverCfg.Volumes) > 0 {
-
-		return true
-	}
-
-	if len(serverCfg.Networks) > 0 {
-
-		return true
-	}
-
-	if serverCfg.NetworkMode != "" {
-
-		return true
-	}
-
-	// If it has HTTP/SSE protocol settings, likely a container
-	if serverCfg.HttpPort > 0 || serverCfg.StdioHosterPort > 0 {
-
-		return true
-	}
-
-	// If it has container security settings, it's a container
-	if serverCfg.User != "" || serverCfg.Privileged || len(serverCfg.CapAdd) > 0 || len(serverCfg.CapDrop) > 0 {
-
-		return true
-	}
-
-	// If it has resource limits (deploy section), it's a container
-	if serverCfg.Deploy.Resources.Limits.CPUs != "" ||
-		serverCfg.Deploy.Resources.Limits.Memory != "" ||
-		serverCfg.Deploy.Resources.Limits.PIDs > 0 {
-
-		return true
-	}
-
-	// If command starts with container-style paths, it's a container
-	if strings.HasPrefix(serverCfg.Command, "/app/") {
-
-		return true
-	}
-
-	// If it has Docker/container specific environment or settings
-	if serverCfg.RestartPolicy != "" || len(serverCfg.SecurityOpt) > 0 {
-
-		return true
-	}
-
-	// If none of the above, it's a process-based server
-
-	return false
-}
-
-// startServerProcess handles process-based server startup
-func startServerProcess(serverName string, serverCfg config.ServerConfig) error {
-	fmt.Printf("Starting process '%s' for server '%s'.\n", serverCfg.Command, serverName)
-
-	env := make(map[string]string)
-	if serverCfg.Env != nil {
-		for k, v := range serverCfg.Env {
-			env[k] = v
-		}
-	}
-	// Add standard MCP environment variables
-	env["MCP_SERVER_NAME"] = serverName
-
-	proc, err := runtime.NewProcess(serverCfg.Command, serverCfg.Args, runtime.ProcessOptions{
-		Env:     env,
-		WorkDir: serverCfg.WorkDir,
-		Name:    fmt.Sprintf("matey-%s", serverName),
-	})
-	if err != nil {
-
-		return fmt.Errorf("failed to create process structure for server '%s': %w", serverName, err)
-	}
-	if err := proc.Start(); err != nil {
-
-		return fmt.Errorf("failed to start process for server '%s': %w", serverName, err)
-	}
 
 	return nil
 }
 
-func ShortDuration(d time.Duration) string {
-	if d < time.Millisecond {
+// stopSpecificServices stops the specified services
+func (c *K8sComposer) stopSpecificServices(serviceNames []string) error {
+	var errors []string
 
-		return fmt.Sprintf("%dns", d.Nanoseconds())
+	for _, serviceName := range serviceNames {
+		switch serviceName {
+		case "memory":
+			c.logger.Info("Stopping memory service")
+			if err := c.memoryManager.Stop(); err != nil {
+				errors = append(errors, fmt.Sprintf("memory: %v", err))
+			}
+		case "task-scheduler":
+			c.logger.Info("Stopping task scheduler service")
+			if err := c.taskSchedulerManager.Stop(); err != nil {
+				errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
+			}
+		default:
+			errors = append(errors, fmt.Sprintf("unknown service: %s", serviceName))
+		}
 	}
-	if d < time.Second {
 
-		return fmt.Sprintf("%.2fms", float64(d.Nanoseconds())/constants.NanosecondsToMilliseconds)
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to stop services: %s", strings.Join(errors, ", "))
 	}
 
-	return fmt.Sprintf("%.2fs", d.Seconds())
+
+	return nil
 }
 
-func Down(configFile string, serverNames []string) error {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-
-		return fmt.Errorf("failed to load config from %s: %w", configFile, err)
-	}
-	cRuntime, err := container.DetectRuntime()
-	if err != nil {
-
-		return fmt.Errorf("failed to detect container runtime: %w", err)
-	}
-	if cRuntime.GetRuntimeName() == "none" {
-		fmt.Println("No container runtime detected. 'down' command primarily targets containers.")
-
+// ensureControllerManagerRunning ensures the controller manager is running
+func (c *K8sComposer) ensureControllerManagerRunning() error {
+	// Check if we already have a controller manager running
+	if c.controllerManager != nil && c.controllerManager.IsReady() {
+		c.logger.Info("Controller manager already running")
 		return nil
 	}
 
-	fmt.Println("Stopping MCP servers...")
-	var serversToStop []string
-	if len(serverNames) > 0 {
-		serversToStop = serverNames
+	c.logger.Info("Starting Matey controller manager...")
+	
+	// Start the controller manager in the background
+	cm, err := controllers.StartControllerManagerInBackground(c.namespace, c.config)
+	if err != nil {
+		return fmt.Errorf("failed to start controller manager: %w", err)
+	}
+
+	c.controllerManager = cm
+	c.logger.Info("Controller manager started successfully")
+	
+	return nil
+}
+
+// createK8sClient creates a Kubernetes client
+func createK8sClient() (client.Client, error) {
+	// Try in-cluster config first
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		// Fall back to kubeconfig
+		config, err = clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create kubernetes config: %w", err)
+		}
+	}
+
+	// Create the scheme
+	scheme := runtime.NewScheme()
+	if err := crd.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add CRD scheme: %w", err)
+	}
+
+	// Create the client
+	k8sClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	return k8sClient, nil
+}
+
+// startMCPServer creates and deploys an MCPServer resource
+func (c *K8sComposer) startMCPServer(name string, serverConfig config.ServerConfig) error {
+	ctx := context.Background()
+	
+	// Convert server config to MCPServer CRD
+	mcpServer := c.convertServerConfigToMCPServer(name, serverConfig)
+	if mcpServer == nil {
+		// Conversion failed - skip this server
+		return nil
+	}
+	
+	// Check if MCPServer already exists
+	existingServer := &crd.MCPServer{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      name,
+		Namespace: c.namespace,
+	}, existingServer)
+	
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// Server doesn't exist, create it
+			c.logger.Info("Creating MCPServer resource: %s", name)
+			if err := c.k8sClient.Create(ctx, mcpServer); err != nil {
+				return fmt.Errorf("failed to create MCPServer %s: %w", name, err)
+			}
+		} else {
+			return fmt.Errorf("failed to check if MCPServer %s exists: %w", name, err)
+		}
 	} else {
-		for name, srvCfg := range cfg.Servers {
-			if srvCfg.Image != "" || srvCfg.Runtime != "" {
-				serversToStop = append(serversToStop, name)
-			}
+		// Server exists, update it
+		c.logger.Info("Updating MCPServer resource: %s", name)
+		mcpServer.ResourceVersion = existingServer.ResourceVersion
+		if err := c.k8sClient.Update(ctx, mcpServer); err != nil {
+			return fmt.Errorf("failed to update MCPServer %s: %w", name, err)
 		}
 	}
-
-	if len(serversToStop) == 0 {
-		fmt.Println("No containerized servers specified or defined to stop.")
-
-		return nil
-	}
-
-	successCount := 0
-	var composeErrors []string
-	for _, serverName := range serversToStop {
-		srvCfg, exists := cfg.Servers[serverName]
-		if !exists || (srvCfg.Image == "" && srvCfg.Runtime == "") {
-			fmt.Printf("Skipping '%s' as it's not defined as a containerized server.\n", serverName)
-
-			continue
-		}
-
-		containerName := fmt.Sprintf("matey-%s", serverName)
-		if err := cRuntime.StopContainer(containerName); err != nil {
-			if !strings.Contains(err.Error(), "No such container") {
-				composeErrors = append(composeErrors, fmt.Sprintf("Failed to stop %s: %v", serverName, err))
-				fmt.Printf("[✖] Server %-30s Error stopping: %v\n", serverName, err)
-			} else {
-				fmt.Printf("[✔] Server %-30s (container %s) already stopped or removed.\n", serverName, containerName)
-				successCount++
-			}
-		} else {
-			successCount++
-			fmt.Printf("[✔] Server %-30s (container %s) stopped and removed.\n", serverName, containerName)
-		}
-	}
-
-	fmt.Printf("\n=== SHUTDOWN SUMMARY ===\n")
-	fmt.Printf("Containerized servers processed for shutdown: %d\n", len(serversToStop))
-	fmt.Printf("Successfully stopped/ensured stopped: %d\n", successCount)
-	fmt.Printf("Failed operations: %d\n", len(composeErrors))
-	if len(composeErrors) > 0 {
-		fmt.Printf("\nErrors encountered during stop operations:\n")
-		for _, e := range composeErrors {
-			fmt.Printf("- %s\n", e)
-		}
-	}
-
+	
 	return nil
 }
 
-func Start(configFile string, serverNames []string) error {
-	if len(serverNames) == 0 {
-
-		return fmt.Errorf("no server names specified to start")
+// convertServerConfigToMCPServer converts a ServerConfig to an MCPServer CRD
+func (c *K8sComposer) convertServerConfigToMCPServer(name string, serverConfig config.ServerConfig) *crd.MCPServer {
+	mcpServer := &crd.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "mcp-server",
+				"app.kubernetes.io/instance":   name,
+				"app.kubernetes.io/component":  "mcp-server",
+				"app.kubernetes.io/managed-by": "matey",
+				"mcp.matey.ai/role":           "server",
+			},
+		},
+		Spec: crd.MCPServerSpec{
+			Capabilities: serverConfig.Capabilities,
+			Protocol:     serverConfig.Protocol,
+		},
 	}
-	fmt.Printf("Starting specified MCP servers (and their dependencies): %v\n", serverNames)
-
-	return Up(configFile, serverNames)
+	
+	// Handle image - either from image field or build-based image from registry
+	if serverConfig.Image != "" {
+		// For standard Docker Hub images (like postgres:15-alpine), don't add registry prefix
+		if strings.Contains(serverConfig.Image, ":") && !strings.Contains(serverConfig.Image, "/") {
+			// Standard image like "postgres:15-alpine" - use as-is
+			mcpServer.Spec.Image = serverConfig.Image
+		} else {
+			// Custom image - use registry
+			mcpServer.Spec.Image = c.config.GetRegistryImage(serverConfig.Image)
+		}
+	} else if serverConfig.Build.Context != "" {
+		// For build configs, use the image we just built and pushed
+		mcpServer.Spec.Image = fmt.Sprintf("%s/%s:latest", c.config.Registry.URL, name)
+	} else {
+		c.logger.Warning("No image or build config found for server %s, skipping", name)
+		return nil
+	}
+	
+	// Handle command - only set if not empty
+	if serverConfig.Command != "" {
+		mcpServer.Spec.Command = []string{serverConfig.Command}
+	}
+	
+	// Handle args
+	if len(serverConfig.Args) > 0 {
+		mcpServer.Spec.Args = serverConfig.Args
+	}
+	
+	// Handle environment variables
+	if len(serverConfig.Env) > 0 {
+		mcpServer.Spec.Env = serverConfig.Env
+	}
+	
+	// Handle ports - HttpPort is required for services that need networking
+	if serverConfig.HttpPort > 0 {
+		mcpServer.Spec.HttpPort = int32(serverConfig.HttpPort)
+	} else if serverConfig.StdioHosterPort > 0 {
+		// Services using stdio_hoster_port are actually HTTP services
+		mcpServer.Spec.HttpPort = int32(serverConfig.StdioHosterPort)
+		mcpServer.Spec.Protocol = "http"  // Override protocol to http
+	} else if serverConfig.Protocol == "http" || serverConfig.Protocol == "sse" {
+		// Default port for HTTP/SSE services
+		mcpServer.Spec.HttpPort = 8080
+	} else if len(serverConfig.Ports) > 0 {
+		// Try to extract port from ports array (e.g., "8007:8007")
+		portStr := serverConfig.Ports[0]
+		if strings.Contains(portStr, ":") {
+			// Format like "8007:8007"
+			parts := strings.Split(portStr, ":")
+			if len(parts) >= 2 {
+				if port, err := strconv.Atoi(parts[1]); err == nil {
+					mcpServer.Spec.HttpPort = int32(port)
+				}
+			}
+		}
+	}
+	
+	// Set protocol default if not specified
+	if mcpServer.Spec.Protocol == "" {
+		if mcpServer.Spec.HttpPort > 0 {
+			mcpServer.Spec.Protocol = "http"
+		} else {
+			mcpServer.Spec.Protocol = "stdio"
+		}
+	}
+	
+	// Set authentication if configured
+	if serverConfig.Authentication != nil {
+		mcpServer.Spec.Authentication = &crd.AuthenticationConfig{
+			Enabled:       serverConfig.Authentication.Enabled,
+			RequiredScope: serverConfig.Authentication.RequiredScope,
+			OptionalAuth:  serverConfig.Authentication.OptionalAuth,
+			AllowAPIKey:   serverConfig.Authentication.AllowAPIKey,
+		}
+	}
+	
+	// Set security configuration
+	mcpServer.Spec.Security = &crd.SecurityConfig{
+		AllowPrivilegedOps: serverConfig.Privileged,
+		ReadOnlyRootFS:     serverConfig.ReadOnly,
+		CapAdd:             serverConfig.CapAdd,
+		CapDrop:            serverConfig.CapDrop,
+		// Set from Security field if available
+		AllowDockerSocket:  serverConfig.Security.AllowDockerSocket,
+		AllowHostMounts:    serverConfig.Security.AllowHostMounts,
+		TrustedImage:       serverConfig.Security.TrustedImage,
+		NoNewPrivileges:    serverConfig.Security.NoNewPrivileges,
+	}
+	
+	// Override privileged setting if explicitly set in Security field
+	if serverConfig.Security.AllowPrivilegedOps {
+		mcpServer.Spec.Security.AllowPrivilegedOps = true
+	}
+	
+	// Parse user configuration (e.g., "1000:1000" or "root")
+	if serverConfig.User != "" {
+		if serverConfig.User == "root" {
+			// Root user
+			mcpServer.Spec.Security.RunAsUser = &[]int64{0}[0]
+			mcpServer.Spec.Security.RunAsGroup = &[]int64{0}[0]
+		} else if strings.Contains(serverConfig.User, ":") {
+			// Format like "1000:1000"
+			parts := strings.Split(serverConfig.User, ":")
+			if len(parts) >= 2 {
+				if uid, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+					mcpServer.Spec.Security.RunAsUser = &uid
+				}
+				if gid, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					mcpServer.Spec.Security.RunAsGroup = &gid
+				}
+			}
+		} else {
+			// Just user ID
+			if uid, err := strconv.ParseInt(serverConfig.User, 10, 64); err == nil {
+				mcpServer.Spec.Security.RunAsUser = &uid
+			}
+		}
+	}
+	
+	// Set resource limits if configured
+	if serverConfig.Deploy.Resources.Limits.CPUs != "" || serverConfig.Deploy.Resources.Limits.Memory != "" {
+		limits := make(crd.ResourceList)
+		if serverConfig.Deploy.Resources.Limits.CPUs != "" {
+			limits["cpu"] = serverConfig.Deploy.Resources.Limits.CPUs
+		}
+		if serverConfig.Deploy.Resources.Limits.Memory != "" {
+			limits["memory"] = serverConfig.Deploy.Resources.Limits.Memory
+		}
+		mcpServer.Spec.Resources.Limits = limits
+	}
+	
+	// Set volumes if configured
+	for _, volume := range serverConfig.Volumes {
+		// Parse volume mount (e.g., "/host/path:/container/path:rw")
+		parts := strings.Split(volume, ":")
+		if len(parts) >= 2 {
+			mcpServer.Spec.Volumes = append(mcpServer.Spec.Volumes, crd.VolumeSpec{
+				Name:      fmt.Sprintf("volume-%d", len(mcpServer.Spec.Volumes)),
+				MountPath: parts[1],
+				HostPath:  parts[0],
+			})
+		}
+	}
+	
+	return mcpServer
 }
 
-func Stop(configFile string, serverNames []string) error {
-	if len(serverNames) == 0 {
-
-		return fmt.Errorf("no server names specified to stop")
-	}
-
-	return Down(configFile, serverNames)
+// ComposeStatus represents the status of all services
+type ComposeStatus struct {
+	Services map[string]*ServiceStatus `json:"services"`
 }
 
+// ServiceStatus represents the status of a single service
+type ServiceStatus struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Type   string `json:"type"`
+}
+
+// Public API functions for backwards compatibility
+
+// Up starts services using Kubernetes-native approach
+func Up(configFile string, serviceNames []string) error {
+	composer, err := NewK8sComposer(configFile, "default")
+	if err != nil {
+		return err
+	}
+	return composer.Up(serviceNames)
+}
+
+// Down stops services using Kubernetes-native approach
+func Down(configFile string, serviceNames []string) error {
+	composer, err := NewK8sComposer(configFile, "default")
+	if err != nil {
+		return err
+	}
+	return composer.Down(serviceNames)
+}
+
+// Start starts specific services using Kubernetes-native approach
+func Start(configFile string, serviceNames []string) error {
+	composer, err := NewK8sComposer(configFile, "default")
+	if err != nil {
+		return err
+	}
+	return composer.Start(serviceNames)
+}
+
+// Stop stops specific services using Kubernetes-native approach
+func Stop(configFile string, serviceNames []string) error {
+	composer, err := NewK8sComposer(configFile, "default")
+	if err != nil {
+		return err
+	}
+	return composer.Stop(serviceNames)
+}
+
+// Restart restarts specific services using Kubernetes-native approach
+func Restart(configFile string, serviceNames []string) error {
+	composer, err := NewK8sComposer(configFile, "default")
+	if err != nil {
+		return err
+	}
+	return composer.Restart(serviceNames)
+}
+
+// Status returns the status of all services using Kubernetes-native approach
+func Status(configFile string) (*ComposeStatus, error) {
+	composer, err := NewK8sComposer(configFile, "default")
+	if err != nil {
+		return nil, err
+	}
+	return composer.Status()
+}
+
+// List lists all services and their status (alias for Status but outputs to console)
 func List(configFile string) error {
-	cfg, err := config.LoadConfig(configFile)
+	status, err := Status(configFile)
 	if err != nil {
-
-		return fmt.Errorf("failed to load config from %s: %w", configFile, err)
+		return err
 	}
 
-	cRuntime, err := container.DetectRuntime()
-	if err != nil {
-		fmt.Printf("Warning: failed to detect container runtime: %v. Container statuses will be 'Unknown'.\n", err)
-	}
+	fmt.Printf("%-20s %-15s %-10s\n", "SERVICE", "STATUS", "TYPE")
+	fmt.Println(strings.Repeat("-", 50))
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, constants.TableColumnSpacing, ' ', 0)
-	if _, err := fmt.Fprintln(w, "SERVER NAME\tSTATUS\tTRANSPORT\tCONTAINER/PROCESS NAME\tPORTS\tCAPABILITIES"); err != nil {
-
-		return fmt.Errorf("failed to write header: %w", err)
-	}
-
-	runningColor := color.New(color.FgGreen).SprintFunc()
-	stoppedColor := color.New(color.FgRed).SprintFunc()
-	unknownColor := color.New(color.FgYellow).SprintFunc()
-	processColor := color.New(color.FgCyan).SprintFunc()
-
-	for serverName, srvConfig := range cfg.Servers {
-		identifier := fmt.Sprintf("matey-%s", serverName)
-		var statusStr string
-
-		// USE THE SAME DETECTION LOGIC AS STARTUP
-		isContainer := isContainerServer(srvConfig)
-
-		if isContainer {
-			if cRuntime != nil && cRuntime.GetRuntimeName() != "none" {
-				rawStatus, statusErr := cRuntime.GetContainerStatus(identifier)
-				if statusErr != nil {
-					statusStr = stoppedColor("Stopped")
-				} else {
-					switch strings.ToLower(rawStatus) {
-					case "running":
-						statusStr = runningColor("Running")
-					case "exited", "dead", "stopped":
-						caser := cases.Title(language.English)
-						statusStr = stoppedColor(caser.String(strings.ToLower(rawStatus)))
-					default:
-						statusStr = unknownColor(rawStatus)
-					}
-				}
-			} else {
-				statusStr = stoppedColor("No Runtime")
-			}
-		} else {
-			// This is actually a process-based server
-			identifier = fmt.Sprintf("process-%s", serverName)
-			statusStr = processColor("Process")
-		}
-
-		transport := "stdio (default)"
-		if srvConfig.Protocol == "http" {
-			transport = fmt.Sprintf("http (:%d)", srvConfig.HttpPort)
-		} else if srvConfig.HttpPort > 0 {
-			transport = fmt.Sprintf("http (:%d)", srvConfig.HttpPort)
-		} else if serverCfgHasHTTPArg(srvConfig.Args) {
-			transport = "http (inferred)"
-		}
-
-		ports := "-"
-		if len(srvConfig.Ports) > 0 {
-			ports = strings.Join(srvConfig.Ports, ", ")
-		}
-
-		capabilities := strings.Join(srvConfig.Capabilities, ", ")
-		if capabilities == "" {
-			capabilities = "-"
-		}
-
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			serverName, statusStr, transport, identifier, ports, capabilities)
-	}
-
-	if err := w.Flush(); err != nil {
-
-		return fmt.Errorf("failed to flush output: %w", err)
+	for name, svc := range status.Services {
+		fmt.Printf("%-20s %-15s %-10s\n", name, svc.Status, svc.Type)
 	}
 
 	return nil
 }
 
-func serverCfgHasHTTPArg(args []string) bool {
-	for i, arg := range args {
-		if arg == "--transport" && i+1 < len(args) && strings.ToLower(args[i+1]) == "http" {
-
-			return true
-		}
-		if strings.HasPrefix(arg, "--port") {
-
-			return true
-		}
-	}
-
-	return false
-}
-
-func Logs(configFile string, serverNames []string, follow bool) error {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-
-		return fmt.Errorf("failed to load config from %s: %w", configFile, err)
-	}
-	cRuntime, err := container.DetectRuntime()
-	if err != nil {
-
-		return fmt.Errorf("failed to detect container runtime: %w", err)
-	}
-	if cRuntime.GetRuntimeName() == "none" {
-		fmt.Println("No container runtime detected. 'logs' command is for containerized servers.")
-
-		return nil
-	}
-
-	var serversToLog []string
-	if len(serverNames) == 0 {
-		for name, srvCfg := range cfg.Servers {
-			if srvCfg.Image != "" || srvCfg.Runtime != "" {
-				serversToLog = append(serversToLog, name)
-			}
-		}
-		if len(serversToLog) == 0 {
-			fmt.Println("No containerized servers defined in configuration to show logs for.")
-
-			return nil
-		}
-	} else {
-		for _, name := range serverNames {
-			srvCfg, exists := cfg.Servers[name]
-			if !exists {
-				fmt.Fprintf(os.Stderr, "Warning: server '%s' not found in configuration, skipping logs.\n", name)
-			} else if srvCfg.Image == "" && srvCfg.Runtime == "" {
-				_, _ = fmt.Fprintf(os.Stdout, "Info: Server '%s' is process-based. View its logs directly.\n", name)
-			} else {
-				serversToLog = append(serversToLog, name)
-			}
-		}
-		if len(serversToLog) == 0 {
-			fmt.Println("None of the specified servers were found or are containerized.")
-
-			return nil
-		}
-	}
-
-	for i, name := range serversToLog {
-		if len(serversToLog) > 1 && i > 0 && !follow {
-			fmt.Println("\n---")
-		}
-		if len(serversToLog) > 1 || len(serverNames) > 1 {
-			fmt.Printf("=== Logs for server '%s' ===\n", name)
-		}
-		containerName := fmt.Sprintf("matey-%s", name)
-		if err := cRuntime.ShowContainerLogs(containerName, follow); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to show logs for server '%s' (container %s): %v\n", name, containerName, err)
-		}
-	}
-
+// Logs returns logs from services (placeholder for future implementation)
+func Logs(configFile string, serviceNames []string, follow bool) error {
+	fmt.Println("Kubernetes-native logs - use kubectl logs to view pod logs")
+	fmt.Printf("Example: kubectl logs -n default -l app.kubernetes.io/name=memory\n")
 	return nil
 }
 
+// Validate validates the configuration
 func Validate(configFile string) error {
 	_, err := config.LoadConfig(configFile)
 	if err != nil {
-
-		return fmt.Errorf("configuration file '%s' is invalid: %w", configFile, err)
+		return fmt.Errorf("configuration validation failed: %w", err)
 	}
-	fmt.Printf("Configuration file '%s' is valid.\n", configFile)
-
-	return nil
-}
-
-func getServersToStart(cfg *config.ComposeConfig, serverNames []string) []string {
-	allServerNames := make([]string, 0, len(cfg.Servers))
-	for name := range cfg.Servers {
-		allServerNames = append(allServerNames, name)
-	}
-
-	targetServers := serverNames
-	if len(targetServers) == 0 {
-		targetServers = allServerNames
-	}
-
-	// Build dependency graph
-	adj := make(map[string][]string)
-	inDegree := make(map[string]int)
-	for _, name := range allServerNames {
-		adj[name] = []string{}
-		inDegree[name] = 0
-	}
-
-	for name, srvConfig := range cfg.Servers {
-		for _, dep := range srvConfig.DependsOn {
-			if _, exists := cfg.Servers[dep]; !exists {
-				fmt.Fprintf(os.Stderr, "Warning: Server '%s' depends on '%s', which is not defined. Skipping dependency.\n", name, dep)
-
-				continue
-			}
-			adj[dep] = append(adj[dep], name)
-			inDegree[name]++
-		}
-	}
-
-	// Initialize queue with nodes having in-degree 0
-	queue := make([]string, 0)
-	for _, name := range allServerNames {
-		if inDegree[name] == 0 {
-			queue = append(queue, name)
-		}
-	}
-
-	var sortedOrder []string
-	for len(queue) > 0 {
-		u := queue[0]
-		queue = queue[1:]
-		sortedOrder = append(sortedOrder, u)
-
-		for _, v := range adj[u] {
-			inDegree[v]--
-			if inDegree[v] == 0 {
-				queue = append(queue, v)
-			}
-		}
-	}
-
-	if len(sortedOrder) != len(allServerNames) {
-		fmt.Fprintf(os.Stderr, "Warning: Cycle detected in server dependencies or some servers are unreachable. Startup order might be incorrect.\n")
-
-		return buildFallbackOrder(cfg, targetServers)
-	}
-
-	// Filter the sorted order to include only target servers and their transitive dependencies
-	finalOrderMap := make(map[string]bool)
-	for _, name := range targetServers {
-		if _, exists := cfg.Servers[name]; !exists {
-			fmt.Fprintf(os.Stderr, "Warning: Specified server '%s' not found in configuration, skipping.\n", name)
-
-			continue
-		}
-		addDependenciesRecursive(cfg, name, finalOrderMap)
-	}
-
-	finalSortedOrder := make([]string, 0, len(finalOrderMap))
-	for _, name := range sortedOrder {
-		if finalOrderMap[name] {
-			finalSortedOrder = append(finalSortedOrder, name)
-		}
-	}
-
-	return finalSortedOrder
-}
-
-func addDependenciesRecursive(cfg *config.ComposeConfig, serverName string, result map[string]bool) {
-	if result[serverName] {
-
-		return
-	}
-	result[serverName] = true
-	serverConf, exists := cfg.Servers[serverName]
-	if !exists {
-
-		return
-	}
-	for _, depName := range serverConf.DependsOn {
-		if _, depExists := cfg.Servers[depName]; !depExists {
-			fmt.Fprintf(os.Stderr, "Warning: Dependency '%s' for server '%s' not found. Skipping this dependency.\n", depName, serverName)
-
-			continue
-		}
-		addDependenciesRecursive(cfg, depName, result)
-	}
-}
-
-func buildFallbackOrder(cfg *config.ComposeConfig, serverNames []string) []string {
-	toProcessSet := make(map[string]bool)
-	for _, name := range serverNames {
-		if _, exists := cfg.Servers[name]; !exists {
-			fmt.Fprintf(os.Stderr, "Warning: specified server '%s' not found in configuration, skipping.\n", name)
-
-			continue
-		}
-		addDependenciesRecursive(cfg, name, toProcessSet)
-	}
-
-	fallbackOrder := make([]string, 0, len(toProcessSet))
-
-	var processingList []string
-	for name := range toProcessSet {
-		processingList = append(processingList, name)
-	}
-
-	added := make(map[string]bool)
-	for len(fallbackOrder) < len(processingList) {
-		addedThisIteration := 0
-		for _, name := range processingList {
-			if added[name] {
-
-				continue
-			}
-			depsMet := true
-			srvCfg := cfg.Servers[name]
-			for _, depName := range srvCfg.DependsOn {
-				if toProcessSet[depName] && !added[depName] {
-					depsMet = false
-
-					break
-				}
-			}
-			if depsMet {
-				fallbackOrder = append(fallbackOrder, name)
-				added[name] = true
-				addedThisIteration++
-			}
-		}
-		if addedThisIteration == 0 && len(fallbackOrder) < len(processingList) {
-			fmt.Fprintf(os.Stderr, "Error: Unable to resolve full dependency order, possibly due to a cycle or unstartable dependency. Remaining servers:\n")
-			for _, name := range processingList {
-				if !added[name] {
-					fmt.Fprintf(os.Stderr, "- %s\n", name)
-				}
-			}
-			for _, name := range processingList {
-				if !added[name] {
-					fallbackOrder = append(fallbackOrder, name)
-				}
-			}
-
-			break
-		}
-	}
-
-	return fallbackOrder
-}
-
-func convertSecurityConfig(serverName string, serverCfg config.ServerConfig) container.ContainerOptions {
-	opts := container.ContainerOptions{
-		Name:        fmt.Sprintf("matey-%s", serverName),
-		Image:       serverCfg.Image,
-		Build:       serverCfg.Build,
-		Command:     serverCfg.Command,
-		Args:        serverCfg.Args,
-		Env:         config.MergeEnv(serverCfg.Env, map[string]string{"MCP_SERVER_NAME": serverName}),
-		Pull:        serverCfg.Pull,
-		Volumes:     serverCfg.Volumes,
-		Ports:       serverCfg.Ports,
-		Networks:    determineServerNetworks(serverCfg),
-		WorkDir:     serverCfg.WorkDir,
-		NetworkMode: serverCfg.NetworkMode,
-
-		// Security configuration
-		Privileged:  serverCfg.Privileged,
-		User:        serverCfg.User,
-		Groups:      serverCfg.Groups,
-		ReadOnly:    serverCfg.ReadOnly,
-		Tmpfs:       serverCfg.Tmpfs,
-		CapAdd:      serverCfg.CapAdd,
-		CapDrop:     serverCfg.CapDrop,
-		SecurityOpt: serverCfg.SecurityOpt,
-
-		// Resource limits
-		PidsLimit: serverCfg.Deploy.Resources.Limits.PIDs,
-
-		// Lifecycle
-		RestartPolicy: serverCfg.RestartPolicy,
-		StopSignal:    serverCfg.StopSignal,
-		StopTimeout:   serverCfg.StopTimeout,
-
-		// Runtime options (removed Runtime field)
-		Platform:   serverCfg.Platform,
-		Hostname:   serverCfg.Hostname,
-		DomainName: serverCfg.DomainName,
-		DNS:        serverCfg.DNS,
-		DNSSearch:  serverCfg.DNSSearch,
-		ExtraHosts: serverCfg.ExtraHosts,
-
-		// Logging
-		LogDriver:  serverCfg.LogDriver,
-		LogOptions: serverCfg.LogOptions,
-
-		// Labels and metadata
-		Labels:      serverCfg.Labels,
-		Annotations: serverCfg.Annotations,
-
-		// Security config for validation
-		Security: container.SecurityConfig{
-			AllowDockerSocket:  serverCfg.Security.AllowDockerSocket,
-			AllowHostMounts:    serverCfg.Security.AllowHostMounts,
-			AllowPrivilegedOps: serverCfg.Security.AllowPrivilegedOps,
-			TrustedImage:       serverCfg.Security.TrustedImage,
-		},
-	}
-
-	// Resource limits
-	if serverCfg.Deploy.Resources.Limits.CPUs != "" {
-		opts.CPUs = serverCfg.Deploy.Resources.Limits.CPUs
-	}
-	if serverCfg.Deploy.Resources.Limits.Memory != "" {
-		opts.Memory = serverCfg.Deploy.Resources.Limits.Memory
-	}
-	if serverCfg.Deploy.Resources.Limits.MemorySwap != "" {
-		opts.MemorySwap = serverCfg.Deploy.Resources.Limits.MemorySwap
-	}
-
-	// Restart policy
-	if serverCfg.Deploy.RestartPolicy != "" {
-		opts.RestartPolicy = serverCfg.Deploy.RestartPolicy
-	}
-
-	// Convert health check if present
-	if serverCfg.HealthCheck != nil {
-		opts.HealthCheck = &container.HealthCheck{
-			Test:        serverCfg.HealthCheck.Test,
-			Interval:    serverCfg.HealthCheck.Interval,
-			Timeout:     serverCfg.HealthCheck.Timeout,
-			Retries:     serverCfg.HealthCheck.Retries,
-			StartPeriod: serverCfg.HealthCheck.StartPeriod,
-		}
-	}
-
-	// Security options based on configuration
-	if serverCfg.Security.NoNewPrivileges {
-		opts.SecurityOpt = append(opts.SecurityOpt, "no-new-privileges:true")
-	}
-
-	if serverCfg.Security.AppArmor != "" {
-		opts.SecurityOpt = append(opts.SecurityOpt, fmt.Sprintf("apparmor:%s", serverCfg.Security.AppArmor))
-	}
-
-	if serverCfg.Security.Seccomp != "" {
-		opts.SecurityOpt = append(opts.SecurityOpt, fmt.Sprintf("seccomp:%s", serverCfg.Security.Seccomp))
-	}
-
-	return opts
-}
-
-// UPDATE the startServerContainer function to use the new converter:
-func startServerContainer(serverName string, serverCfg config.ServerConfig, cRuntime container.Runtime) error {
-	opts := convertSecurityConfig(serverName, serverCfg)
-
-	// Transport-specific configuration
-	isSocatHostedStdio := serverCfg.StdioHosterPort > 0
-	isHttp := serverCfg.Protocol == "http" || serverCfg.HttpPort > 0
-
-	if isSocatHostedStdio {
-		fmt.Printf("Starting container '%s' for server '%s' (Socat STDIO Hoster mode on internal port %d).\n",
-			opts.Name, serverName, serverCfg.StdioHosterPort)
-		opts.Env["MCP_SOCAT_INTERNAL_PORT"] = strconv.Itoa(serverCfg.StdioHosterPort)
-	} else if isHttp {
-		fmt.Printf("Starting container '%s' for server '%s' (HTTP mode on internal port %d).\n",
-			opts.Name, serverName, serverCfg.HttpPort)
-		if serverCfg.HttpPort > 0 {
-			opts.Env["MCP_HTTP_PORT"] = strconv.Itoa(serverCfg.HttpPort)
-		}
-		opts.Env["MCP_TRANSPORT"] = "http"
-	} else {
-		fmt.Printf("Starting container '%s' for server '%s' (Direct STDIO mode).\n",
-			opts.Name, serverName)
-	}
-
-	// Log security configuration
-	if len(opts.CapAdd) > 0 {
-		fmt.Printf("Container '%s' adding capabilities: %s\n", opts.Name, strings.Join(opts.CapAdd, ", "))
-	}
-	if len(opts.CapDrop) > 0 {
-		fmt.Printf("Container '%s' dropping capabilities: %s\n", opts.Name, strings.Join(opts.CapDrop, ", "))
-	}
-	if opts.Privileged {
-		fmt.Printf("Container '%s' running in privileged mode\n", opts.Name)
-	}
-
-	_, err := cRuntime.StartContainer(&opts)
-	if err != nil {
-
-		return fmt.Errorf("failed to start container for server '%s': %w", serverName, err)
-	}
-
+	fmt.Println("Configuration is valid")
 	return nil
 }

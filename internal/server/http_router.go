@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/phildougherty/m8e/internal/constants"
-	"github.com/phildougherty/m8e/internal/dashboard"
 	"github.com/phildougherty/m8e/internal/protocol"
 )
 
@@ -38,12 +37,6 @@ type MCPError struct {
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	dashboard.BroadcastActivity("INFO", "request", getServerNameFromPath(r.URL.Path), getClientIP(r),
-		fmt.Sprintf("Request: %s to %s", r.Method, r.URL.Path),
-		map[string]interface{}{
-			"method":   r.Method,
-			"endpoint": r.URL.Path,
-		})
 
 	h.logger.Info("Request: %s %s from %s (User-Agent: %s)", r.Method, r.URL.Path, r.RemoteAddr, r.Header.Get("User-Agent"))
 
@@ -343,13 +336,6 @@ func (h *ProxyHandler) handleMCPMethodForwarding(w http.ResponseWriter, r *http.
 	reqIDVal := requestPayload["id"]
 	reqMethodVal, _ := requestPayload["method"].(string)
 
-	dashboard.BroadcastActivity("INFO", "request", serverName, getClientIP(r),
-		fmt.Sprintf("MCP Request: %s", reqMethodVal),
-		map[string]interface{}{
-			"method":   reqMethodVal,
-			"id":       reqIDVal,
-			"endpoint": r.URL.Path,
-		})
 
 	// Handle notification-related methods first
 	switch reqMethodVal {
@@ -535,11 +521,6 @@ func (h *ProxyHandler) handleHTTPServerRequestWithBody(w http.ResponseWriter, r 
 	// Use the pre-read body bytes directly
 	responsePayload, err := h.forwardHTTPRequest(conn, body, mcpCallTimeout)
 	if err != nil {
-		dashboard.BroadcastActivity("ERROR", "request", serverName, getClientIP(r),
-			fmt.Sprintf("Error: %s failed: %v", reqMethodVal, err),
-			map[string]interface{}{"error": err.Error()})
-
-		h.logger.Error("MCP request to %s (method: %s) failed: %v", serverName, reqMethodVal, err)
 		errData := map[string]interface{}{"details": err.Error()}
 		if conn != nil {
 			conn.mu.Lock()
@@ -564,12 +545,7 @@ func (h *ProxyHandler) handleHTTPServerRequestWithBody(w http.ResponseWriter, r 
 
 	if err := json.NewEncoder(w).Encode(responsePayload); err != nil {
 		h.logger.Error("Failed to encode/send response for %s: %v", serverName, err)
-	} else {
-		dashboard.BroadcastActivity("INFO", "request", serverName, getClientIP(r),
-			fmt.Sprintf("Response: %s completed successfully", reqMethodVal), nil)
 	}
-
-	h.logger.Info("Successfully forwarded HTTP request to %s (method: %s, ID: %v)", serverName, reqMethodVal, reqIDVal)
 }
 
 func (h *ProxyHandler) handleSSEServerRequest(w http.ResponseWriter, r *http.Request, serverName string, _ *ServerInstance, requestPayload map[string]interface{}, reqIDVal interface{}, reqMethodVal string) {
@@ -609,11 +585,6 @@ func (h *ProxyHandler) handleSSEServerRequest(w http.ResponseWriter, r *http.Req
 	// Send request via optimal SSE connection
 	responsePayload, err := h.sendOptimalSSERequest(serverName, requestPayload)
 	if err != nil {
-		dashboard.BroadcastActivity("ERROR", "request", serverName, getClientIP(r),
-			fmt.Sprintf("Error: %s failed: %v", reqMethodVal, err),
-			map[string]interface{}{"error": err.Error()})
-
-		h.logger.Error("SSE request to %s (method: %s) failed: %v", serverName, reqMethodVal, err)
 		errData := map[string]interface{}{"details": err.Error()}
 		if enhancedConn, ok := conn.(*EnhancedMCPSSEConnection); ok {
 			enhancedConn.mu.Lock()
@@ -646,12 +617,7 @@ func (h *ProxyHandler) handleSSEServerRequest(w http.ResponseWriter, r *http.Req
 
 	if err := json.NewEncoder(w).Encode(responsePayload); err != nil {
 		h.logger.Error("Failed to encode/send response for %s: %v", serverName, err)
-	} else {
-		dashboard.BroadcastActivity("INFO", "request", serverName, getClientIP(r),
-			fmt.Sprintf("Response: %s completed successfully", reqMethodVal), nil)
 	}
-
-	h.logger.Info("Successfully forwarded SSE request to %s (method: %s, ID: %v)", serverName, reqMethodVal, reqIDVal)
 }
 
 func (h *ProxyHandler) handleSessionTermination(w http.ResponseWriter, r *http.Request, serverName string) {

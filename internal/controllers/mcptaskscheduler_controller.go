@@ -10,6 +10,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -19,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
 )
@@ -28,6 +30,7 @@ type MCPTaskSchedulerReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	Logger *logging.Logger
+	Config *config.ComposeConfig
 }
 
 //+kubebuilder:rbac:groups=mcp.matey.ai,resources=mcptaskschedulers,verbs=get;list;watch;create;update;patch;delete
@@ -412,15 +415,20 @@ func (r *MCPTaskSchedulerReconciler) reconcileDeployment(ctx context.Context, ta
 func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskScheduler) corev1.PodSpec {
 	image := taskScheduler.Spec.Image
 	if image == "" {
-		image = "ghcr.io/phildougherty/matey/task-scheduler:latest"
+		image = "mcpcompose/task-scheduler:latest"
+	}
+	if r.Config != nil {
+		image = r.Config.GetRegistryImage(image)
 	}
 
 	// Build environment variables
 	env := []corev1.EnvVar{
-		{Name: "PORT", Value: fmt.Sprintf("%d", taskScheduler.Spec.Port)},
-		{Name: "HOST", Value: taskScheduler.Spec.Host},
-		{Name: "LOG_LEVEL", Value: taskScheduler.Spec.LogLevel},
-		{Name: "DATABASE_PATH", Value: taskScheduler.Spec.DatabasePath},
+		{Name: "MCP_CRON_SERVER_PORT", Value: fmt.Sprintf("%d", taskScheduler.Spec.Port)},
+		{Name: "MCP_CRON_SERVER_ADDRESS", Value: taskScheduler.Spec.Host},
+		{Name: "MCP_CRON_SERVER_TRANSPORT", Value: "sse"},
+		{Name: "MCP_CRON_LOGGING_LEVEL", Value: taskScheduler.Spec.LogLevel},
+		{Name: "MCP_CRON_DATABASE_PATH", Value: taskScheduler.Spec.DatabasePath},
+		{Name: "MCP_CRON_DATABASE_ENABLED", Value: "true"},
 		{Name: "KUBERNETES_MODE", Value: "true"},
 		{Name: "NAMESPACE", Value: taskScheduler.Namespace},
 	}
@@ -438,10 +446,10 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		env = append(env, corev1.EnvVar{Name: "OPENROUTER_MODEL", Value: taskScheduler.Spec.OpenRouterModel})
 	}
 	if taskScheduler.Spec.OllamaURL != "" {
-		env = append(env, corev1.EnvVar{Name: "OLLAMA_URL", Value: taskScheduler.Spec.OllamaURL})
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_OLLAMA_BASE_URL", Value: taskScheduler.Spec.OllamaURL})
 	}
 	if taskScheduler.Spec.OllamaModel != "" {
-		env = append(env, corev1.EnvVar{Name: "OLLAMA_MODEL", Value: taskScheduler.Spec.OllamaModel})
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_OLLAMA_DEFAULT_MODEL", Value: taskScheduler.Spec.OllamaModel})
 	}
 
 	// Add MCP configuration
@@ -475,7 +483,7 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/health",
-					Port: intOrString(taskScheduler.Spec.Port),
+					Port: intOrString(taskScheduler.Spec.Port + 1000),
 				},
 			},
 			InitialDelaySeconds: 30,
@@ -485,7 +493,7 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/ready",
-					Port: intOrString(taskScheduler.Spec.Port),
+					Port: intOrString(taskScheduler.Spec.Port + 1000),
 				},
 			},
 			InitialDelaySeconds: 5,
@@ -496,8 +504,8 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 	// Apply resource requirements
 	if taskScheduler.Spec.Resources.Limits != nil || taskScheduler.Spec.Resources.Requests != nil {
 		container.Resources = corev1.ResourceRequirements{
-			Limits:   convertResourceList(taskScheduler.Spec.Resources.Limits),
-			Requests: convertResourceList(taskScheduler.Spec.Resources.Requests),
+			Limits:   convertTaskSchedulerResourceList(taskScheduler.Spec.Resources.Limits),
+			Requests: convertTaskSchedulerResourceList(taskScheduler.Spec.Resources.Requests),
 		}
 	}
 
@@ -535,10 +543,9 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		if taskScheduler.Spec.Security.RunAsGroup != nil {
 			podSpec.SecurityContext.RunAsGroup = taskScheduler.Spec.Security.RunAsGroup
 		}
-		if taskScheduler.Spec.Security.RunAsNonRoot {
-			runAsNonRoot := true
-			podSpec.SecurityContext.RunAsNonRoot = &runAsNonRoot
-		}
+		// Set runAsNonRoot to true for security
+		runAsNonRoot := true
+		podSpec.SecurityContext.RunAsNonRoot = &runAsNonRoot
 	}
 
 	// Apply node selector
@@ -697,14 +704,19 @@ func intOrString(val int32) intstr.IntOrString {
 	return intstr.FromInt32(val)
 }
 
-func convertResourceList(resources crd.ResourceList) corev1.ResourceList {
+func convertTaskSchedulerResourceList(resources crd.ResourceList) corev1.ResourceList {
 	if resources == nil {
 		return nil
 	}
 	
 	result := make(corev1.ResourceList)
 	for key, value := range resources {
-		result[corev1.ResourceName(key)] = value
+		quantity, err := resource.ParseQuantity(value)
+		if err != nil {
+			// Skip invalid quantities
+			continue
+		}
+		result[corev1.ResourceName(key)] = quantity
 	}
 	return result
 }

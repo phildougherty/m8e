@@ -14,6 +14,14 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
+// RegistryConfig defines container registry configuration
+type RegistryConfig struct {
+	URL      string `yaml:"url,omitempty"`      // Registry URL (e.g., "localhost:5000", "192.168.1.100:5000", "registry.example.com")
+	Username string `yaml:"username,omitempty"` // Registry username for authentication
+	Password string `yaml:"password,omitempty"` // Registry password for authentication
+	Insecure bool   `yaml:"insecure,omitempty"` // Allow insecure connections to registry
+}
+
 // ProxyAuthConfig defines authentication settings for the proxy itself
 type ProxyAuthConfig struct {
 	Enabled       bool   `yaml:"enabled,omitempty"`
@@ -24,6 +32,7 @@ type ProxyAuthConfig struct {
 // ComposeConfig represents the entire mcp-compose.yaml file
 type ComposeConfig struct {
 	Version       string                       `yaml:"version"`
+	Registry      RegistryConfig               `yaml:"registry,omitempty"`
 	ProxyAuth     ProxyAuthConfig              `yaml:"proxy_auth,omitempty"`
 	OAuth         *OAuthConfig                 `yaml:"oauth,omitempty"`
 	Audit         *AuditConfig                 `yaml:"audit,omitempty"`
@@ -1286,6 +1295,25 @@ func ConvertToEnvList(env map[string]string) []string {
 	}
 
 	return result
+}
+
+// GetRegistryImage returns the full image name with registry prefix
+func (c *ComposeConfig) GetRegistryImage(imageName string) string {
+	if c.Registry.URL == "" {
+		return imageName
+	}
+	
+	// If image already has a registry prefix (contains : indicating host:port), return as-is
+	if strings.Contains(imageName, "/") && strings.Contains(strings.Split(imageName, "/")[0], ":") {
+		return imageName
+	}
+	
+	// If image already has the registry prefix, return as-is
+	if strings.HasPrefix(imageName, c.Registry.URL+"/") {
+		return imageName
+	}
+	
+	return c.Registry.URL + "/" + imageName
 }
 
 // SaveConfig saves the configuration to a file

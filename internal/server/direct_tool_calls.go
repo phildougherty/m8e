@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/phildougherty/m8e/internal/constants"
-	"github.com/phildougherty/m8e/internal/dashboard"
 )
 
 // mcpResponseRecorder captures HTTP responses for MCP tool calls
@@ -76,11 +75,6 @@ func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Reque
 
 	h.logger.Info("Routing tool %s to server %s", toolName, serverName)
 
-	dashboard.BroadcastActivity("INFO", "tool", serverName, getClientIP(r),
-		fmt.Sprintf("Tool called: %s", toolName),
-		map[string]interface{}{"tool": toolName, "arguments": arguments})
-
-	// Create MCP tools/call request
 	mcpRequest := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      h.getNextRequestID(),
@@ -188,14 +182,6 @@ func (h *ProxyHandler) handleServerForward(w http.ResponseWriter, r *http.Reques
 
 	reqIDVal := requestPayload["id"]
 	reqMethodVal, _ := requestPayload["method"].(string)
-
-	dashboard.BroadcastActivity("INFO", "request", serverName, getClientIP(r),
-		fmt.Sprintf("MCP Request: %s", reqMethodVal),
-		map[string]interface{}{
-			"method":   reqMethodVal,
-			"id":       reqIDVal,
-			"endpoint": r.URL.Path,
-		})
 
 	// ONLY handle proxy-specific standard methods, NOT server methods
 	if isProxyStandardMethod(reqMethodVal) {

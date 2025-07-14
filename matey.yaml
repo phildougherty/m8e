@@ -4,6 +4,9 @@ proxy_auth:
   enabled: true
   api_key: "${MCP_API_KEY}"
   oauth_fallback: true  # Allow OAuth as fallback
+registry:
+  url: "mcp.robotrad.io"
+  insecure: false   
 # OAuth 2.1 Configuration
 oauth:
   enabled: true
@@ -119,7 +122,6 @@ memory:
   enabled: true
   port: 3001
   host: "0.0.0.0"
-  database_url: "postgresql://postgres:${POSTGRES_PASSWORD}@mcp-compose-postgres-memory:5432/memory_graph?sslmode=disable"
   postgres_enabled: true
   postgres_port: 5432
   postgres_db: "memory_graph"
@@ -266,7 +268,7 @@ servers:
           memory: "512m"
           pids: 100
     env:
-      DATABASE_URI: "postgresql://postgres:${POSTGRES_PASSWORD}@mcp-compose-postgres-memory:5432/memory_graph"
+      DATABASE_URI: "postgresql://postgres:${POSTGRES_PASSWORD}@memory-postgres:5432/memory_graph"
       TZ: "America/New_York"
     capabilities: [tools]
     authentication:
@@ -403,7 +405,6 @@ servers:
     networks: [mcp-net]
 
   dexcom:
-    image: dexcom-mcp-http:local
     build:
       context: ./custom_mcp/dexcom
       dockerfile: Dockerfile

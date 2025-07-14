@@ -1,0 +1,375 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpservers.mcp.matey.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+spec:
+  group: mcp.matey.ai
+  names:
+    kind: MCPServer
+    listKind: MCPServerList
+    plural: mcpservers
+    shortNames:
+    - mcpsrv
+    singular: mcpserver
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.protocol
+      name: Protocol
+      type: string
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: MCPServer represents an MCP server deployment
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MCPServerSpec defines the desired state of MCPServer
+            properties:
+              # Container configuration
+              image:
+                description: Container image for the MCP server
+                type: string
+              command:
+                description: Container command
+                items:
+                  type: string
+                type: array
+              args:
+                description: Container arguments
+                items:
+                  type: string
+                type: array
+              env:
+                description: Environment variables
+                additionalProperties:
+                  type: string
+                type: object
+              workingDir:
+                description: Working directory
+                type: string
+              
+              # MCP-specific configuration
+              protocol:
+                description: MCP protocol (http, sse, stdio)
+                type: string
+              httpPort:
+                description: HTTP port for the MCP server
+                format: int32
+                type: integer
+              httpPath:
+                description: HTTP path for the MCP server
+                type: string
+              ssePath:
+                description: SSE path for the MCP server
+                type: string
+              ssePort:
+                description: SSE port for the MCP server
+                format: int32
+                type: integer
+              sseHeartbeat:
+                description: SSE heartbeat interval
+                format: int32
+                type: integer
+              capabilities:
+                description: MCP capabilities
+                items:
+                  type: string
+                type: array
+              
+              # Dependencies
+              dependsOn:
+                description: Service dependencies
+                items:
+                  type: string
+                type: array
+              
+              # Resource requirements
+              resources:
+                description: Resource requirements
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    description: Resource limits
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    description: Resource requests
+                    type: object
+                type: object
+              
+              # Authentication configuration
+              authentication:
+                description: Authentication configuration
+                properties:
+                  enabled:
+                    description: Whether authentication is enabled
+                    type: boolean
+                  requiredScope:
+                    description: Required OAuth scope
+                    type: string
+                  optionalAuth:
+                    description: Whether authentication is optional
+                    type: boolean
+                  scopes:
+                    description: Allowed scopes
+                    items:
+                      type: string
+                    type: array
+                  allowAPIKey:
+                    description: Whether API key authentication is allowed
+                    type: boolean
+                type: object
+              
+              # Security configuration
+              security:
+                description: Security configuration
+                properties:
+                  allowDockerSocket:
+                    description: Allow access to Docker socket
+                    type: boolean
+                  allowHostMounts:
+                    description: Allowed host mount paths
+                    items:
+                      type: string
+                    type: array
+                  allowPrivilegedOps:
+                    description: Allow privileged operations
+                    type: boolean
+                  trustedImage:
+                    description: Whether image is trusted
+                    type: boolean
+                  noNewPrivileges:
+                    description: No new privileges
+                    type: boolean
+                  runAsUser:
+                    description: User ID to run as
+                    format: int64
+                    type: integer
+                  runAsGroup:
+                    description: Group ID to run as
+                    format: int64
+                    type: integer
+                  readOnlyRootFS:
+                    description: Read-only root filesystem
+                    type: boolean
+                  capAdd:
+                    description: Capabilities to add
+                    items:
+                      type: string
+                    type: array
+                  capDrop:
+                    description: Capabilities to drop
+                    items:
+                      type: string
+                    type: array
+                type: object
+              
+              # Deployment configuration
+              replicas:
+                description: Number of replicas
+                format: int32
+                type: integer
+              nodeSelector:
+                description: Node selector
+                additionalProperties:
+                  type: string
+                type: object
+              serviceAccount:
+                description: Service account
+                type: string
+              imagePullSecrets:
+                description: Image pull secrets
+                items:
+                  type: string
+                type: array
+              podAnnotations:
+                description: Pod annotations
+                additionalProperties:
+                  type: string
+                type: object
+              labels:
+                description: Additional labels
+                additionalProperties:
+                  type: string
+                type: object
+              
+              # Service configuration
+              serviceType:
+                description: Service type (ClusterIP, NodePort, LoadBalancer)
+                type: string
+              serviceAnnotations:
+                description: Service annotations
+                additionalProperties:
+                  type: string
+                type: object
+              
+              # Storage configuration
+              volumes:
+                description: Volume specifications
+                items:
+                  properties:
+                    name:
+                      description: Volume name
+                      type: string
+                    mountPath:
+                      description: Mount path in container
+                      type: string
+                    hostPath:
+                      description: Host path for host path volumes
+                      type: string
+                    size:
+                      description: Volume size
+                      type: string
+                    accessMode:
+                      description: Access mode
+                      type: string
+                    subPath:
+                      description: Sub path
+                      type: string
+                  required:
+                  - name
+                  - mountPath
+                  type: object
+                type: array
+              storageClass:
+                description: Storage class
+                type: string
+              
+              # Service discovery
+              serviceDiscovery:
+                description: Service discovery configuration
+                properties:
+                  enabled:
+                    description: Whether service discovery is enabled
+                    type: boolean
+                  serviceName:
+                    description: Service name override
+                    type: string
+                  discoveryLabels:
+                    description: Discovery labels
+                    additionalProperties:
+                      type: string
+                    type: object
+                  crossNamespace:
+                    description: Allow cross-namespace discovery
+                    type: boolean
+                type: object
+            type: object
+          status:
+            description: MCPServerStatus defines the observed state of MCPServer
+            properties:
+              phase:
+                description: Phase represents the current phase of the MCPServer
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations of an object's state
+                items:
+                  properties:
+                    type:
+                      description: Type of condition
+                      type: string
+                    status:
+                      description: Status of the condition
+                      type: string
+                    lastTransitionTime:
+                      description: Last transition time
+                      format: date-time
+                      type: string
+                    reason:
+                      description: Reason for the condition
+                      type: string
+                    message:
+                      description: Human readable message
+                      type: string
+                  required:
+                  - type
+                  - status
+                  type: object
+                type: array
+              connectionInfo:
+                description: Connection information
+                properties:
+                  endpoint:
+                    description: Connection endpoint
+                    type: string
+                  protocol:
+                    description: Connection protocol
+                    type: string
+                  port:
+                    description: Connection port
+                    format: int32
+                    type: integer
+                  path:
+                    description: Connection path
+                    type: string
+                  sseEndpoint:
+                    description: SSE endpoint
+                    type: string
+                type: object
+              healthStatus:
+                description: Health status
+                type: string
+              discoveredCapabilities:
+                description: Discovered capabilities
+                items:
+                  type: string
+                type: array
+              replicas:
+                description: Total number of replicas
+                format: int32
+                type: integer
+              readyReplicas:
+                description: Number of ready replicas
+                format: int32
+                type: integer
+              serviceEndpoints:
+                description: Service endpoints
+                items:
+                  properties:
+                    name:
+                      description: Endpoint name
+                      type: string
+                    port:
+                      description: Endpoint port
+                      format: int32
+                      type: integer
+                    url:
+                      description: Endpoint URL
+                      type: string
+                  required:
+                  - name
+                  - port
+                  - url
+                  type: object
+                type: array
+              observedGeneration:
+                description: Observed generation
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

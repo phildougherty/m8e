@@ -17,7 +17,6 @@ import (
 
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/constants"
-	"github.com/phildougherty/m8e/internal/container"
 	"github.com/phildougherty/m8e/internal/logging"
 	"github.com/phildougherty/m8e/internal/protocol"
 	"github.com/phildougherty/m8e/internal/runtime"
@@ -49,7 +48,6 @@ type ServerInstance struct {
 // Manager handles server lifecycle operations
 type Manager struct {
 	config           *config.ComposeConfig
-	containerRuntime container.Runtime
 	projectDir       string // For running lifecycle hooks and resolving relative paths
 	servers          map[string]*ServerInstance
 	networks         map[string]bool // Tracks networks known/created by this manager instance
@@ -63,7 +61,7 @@ type Manager struct {
 	healthCheckMu    sync.Mutex
 }
 
-func NewManager(cfg *config.ComposeConfig, rt container.Runtime) (*Manager, error) {
+func NewManager(cfg *config.ComposeConfig) (*Manager, error) {
 	if cfg == nil {
 
 		return nil, fmt.Errorf("config cannot be nil")
@@ -210,7 +208,6 @@ func NewManager(cfg *config.ComposeConfig, rt container.Runtime) (*Manager, erro
 
 	manager := &Manager{
 		config:           cfg,
-		containerRuntime: rt,
 		projectDir:       wd,
 		servers:          make(map[string]*ServerInstance),
 		networks:         make(map[string]bool),
@@ -313,8 +310,9 @@ func (m *Manager) StartServer(name string) error {
 
 	var startErr error
 	if instance.IsContainer {
-		m.logger.Info("MANAGER: Server '%s' is container. Calling startContainerServer with identifier '%s'.", name, fixedIdentifier)
-		startErr = m.startContainerServer(name, fixedIdentifier, &srvCfg)
+		m.logger.Info("MANAGER: Server '%s' is Kubernetes-native container. Using Kubernetes manager.", name)
+		// Kubernetes containers are managed by the K8sManager
+		startErr = fmt.Errorf("server '%s' is configured as container but Kubernetes-native mode is enabled - use 'matey up' instead", name)
 	} else if srvCfg.Command != "" {
 		m.logger.Info("MANAGER: Server '%s' is process. Calling startProcessServer with identifier '%s'.", name, fixedIdentifier)
 		startErr = m.startProcessServer(name, fixedIdentifier, &srvCfg)
@@ -389,15 +387,16 @@ func (m *Manager) StartServer(name string) error {
 	return nil
 }
 
-func (m *Manager) startContainerServer(serverKeyName, containerNameToUse string, srvCfg *config.ServerConfig) error {
+// startContainerServer was removed - Kubernetes-native containers are managed by K8sManager
+func (m *Manager) removedStartContainerServer(serverKeyName, containerNameToUse string, srvCfg *config.ServerConfig) error {
 	// Check if we need to use docker runtime by default
 	if srvCfg.Runtime == "" && srvCfg.Image != "" {
 		// Default to docker if image is specified but no runtime type set
 		m.logger.Debug("Using default docker runtime for server '%s' with image '%s'", serverKeyName, srvCfg.Image)
 	}
-	if m.containerRuntime.GetRuntimeName() == "none" && srvCfg.Image != "" {
-
-		return fmt.Errorf("server '%s' requires container runtime but none available", serverKeyName)
+	// Container runtime not available in Kubernetes-native mode
+	if srvCfg.Image != "" {
+		return fmt.Errorf("server '%s' requires container runtime but Kubernetes mode is enabled - use 'matey up'", serverKeyName)
 	}
 	if srvCfg.Image == "" {
 
@@ -405,17 +404,7 @@ func (m *Manager) startContainerServer(serverKeyName, containerNameToUse string,
 	}
 	m.logger.Info("Preparing to start container '%s' for server '%s' with image '%s'", containerNameToUse, serverKeyName, srvCfg.Image)
 
-	// Ensure mcp-net network exists FIRST
-	if m.containerRuntime != nil && m.containerRuntime.GetRuntimeName() != "none" {
-		networkExists, _ := m.containerRuntime.NetworkExists("mcp-net")
-		if !networkExists {
-			if err := m.containerRuntime.CreateNetwork("mcp-net"); err != nil {
-				m.logger.Warning("Failed to create mcp-net network: %v", err)
-			} else {
-				m.logger.Info("Created mcp-net network")
-			}
-		}
-	}
+	// Network management is handled by Kubernetes
 
 	var volumes []string
 	if srvCfg.Volumes != nil {
@@ -434,8 +423,8 @@ func (m *Manager) startContainerServer(serverKeyName, containerNameToUse string,
 		}
 	}
 
-	// Prepare environment variables, including MCP_SERVER_NAME
-	envVars := config.MergeEnv(srvCfg.Env, map[string]string{"MCP_SERVER_NAME": serverKeyName})
+	// Environment variables are no longer used in Kubernetes mode
+	_ = config.MergeEnv(srvCfg.Env, map[string]string{"MCP_SERVER_NAME": serverKeyName}) // Avoid unused warning
 
 	// Use existing ports from config (no auto HTTP port exposure)
 	ports := make([]string, len(srvCfg.Ports))
@@ -472,6 +461,10 @@ func (m *Manager) startContainerServer(serverKeyName, containerNameToUse string,
 		}
 	}
 
+	// Container options - not used in Kubernetes mode
+	_ = containerNameToUse // Avoid unused variable warning
+	return fmt.Errorf("container operations not supported in Kubernetes-native mode")
+	/*
 	opts := &container.ContainerOptions{
 		Name:        containerNameToUse, // This is the name Docker/Podman will use
 		Image:       srvCfg.Image,
@@ -501,27 +494,9 @@ func (m *Manager) startContainerServer(serverKeyName, containerNameToUse string,
 	m.logger.Info("Starting container with options: Name=%s, Image=%s, Command=%s, Args=%v, Ports=%v, Networks=%v, Protocol=%s",
 		opts.Name, opts.Image, opts.Command, opts.Args, opts.Ports, opts.Networks, srvCfg.Protocol)
 
-	// Start the container
-	containerID, err := m.containerRuntime.StartContainer(opts)
-	if err != nil {
-
-		return fmt.Errorf("failed to start container '%s' for server '%s': %w", containerNameToUse, serverKeyName, err)
-	}
-
-	// Store the actual container ID provided by the runtime
-	m.mu.RLock()
-	instance := m.servers[serverKeyName]
-	m.mu.RUnlock()
-
-	if instance != nil {
-		instance.mu.Lock()
-		instance.ContainerID = containerID
-		instance.mu.Unlock()
-	}
-
-	m.logger.Info("Container '%s' (ID: %s) for server '%s' started - accessible via Docker network", containerNameToUse, containerID, serverKeyName)
-
-	return nil
+	// Container starting disabled in Kubernetes mode
+	return fmt.Errorf("container operations not supported in Kubernetes-native mode")
+	*/
 }
 
 // startProcessServer uses processIdentifier for log/pid files
@@ -609,7 +584,8 @@ func (m *Manager) StopServer(name string) error {
 	var stopErr error
 	if instance.IsContainer {
 		m.logger.Info("Stopping container '%s' for server '%s'", fixedIdentifier, name)
-		stopErr = m.containerRuntime.StopContainer(fixedIdentifier) // Stop by fixed name
+		// Container stop not supported in Kubernetes mode
+		stopErr = fmt.Errorf("container operations not supported in Kubernetes-native mode")
 		if stopErr != nil {
 			m.logger.Error("Failed to stop container '%s' for server '%s': %v", fixedIdentifier, name, stopErr)
 		}
@@ -669,11 +645,13 @@ func (m *Manager) getServerStatusUnsafe(name string, fixedIdentifier string) (st
 	if instance.IsContainer {
 		// Always try by name first since it's more reliable, then by ContainerID as fallback
 		m.logger.Debug("Checking container status for '%s' (identifier: %s, ContainerID: %s)", name, fixedIdentifier, instance.ContainerID)
-		currentRuntimeStatus, err = m.containerRuntime.GetContainerStatus(fixedIdentifier)
+		// Container status not available in Kubernetes mode
+	currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
 		if err != nil && instance.ContainerID != "" {
 			// If name lookup failed but we have a ContainerID, try that
 			m.logger.Debug("Failed to get status by name for %s (%s), trying by ID %s: %v", name, fixedIdentifier, instance.ContainerID, err)
-			currentRuntimeStatus, err = m.containerRuntime.GetContainerStatus(instance.ContainerID)
+			// Container status not available in Kubernetes mode
+			currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
 		}
 		if err != nil {
 			m.logger.Warning("Error getting container status for '%s' (identifier: %s): %v", name, fixedIdentifier, err)
@@ -729,11 +707,13 @@ func (m *Manager) getBuiltInServiceStatus(name string, fixedIdentifier string) (
 
 	if instance.IsContainer {
 		// Always try by name first since it's more reliable, then by ContainerID as fallback
-		currentRuntimeStatus, err = m.containerRuntime.GetContainerStatus(fixedIdentifier)
+		// Container status not available in Kubernetes mode
+	currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
 		if err != nil && instance.ContainerID != "" {
 			// If name lookup failed but we have a ContainerID, try that
 			m.logger.Debug("Failed to get status by name for built-in service %s (%s), trying by ID %s: %v", name, fixedIdentifier, instance.ContainerID, err)
-			currentRuntimeStatus, err = m.containerRuntime.GetContainerStatus(instance.ContainerID)
+			// Container status not available in Kubernetes mode
+			currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
 		}
 
 		if err != nil {
@@ -770,9 +750,11 @@ func (m *Manager) isLikelyContainer(serverName string, serverCfg config.ServerCo
 
 	// Check if there's a corresponding container name that exists
 	expectedContainerName := fmt.Sprintf("matey-%s", serverName)
-	if m.containerRuntime != nil {
+	// Container runtime not available in Kubernetes mode
+	_ = expectedContainerName // Avoid unused variable warning
+	if false { // Disabled in Kubernetes mode
 		// Try to check if container exists (ignore errors, just check existence)
-		_, err := m.containerRuntime.GetContainerStatus(expectedContainerName)
+		err := fmt.Errorf("not supported")
 		if err == nil {
 			m.logger.Debug("Found container %s for server %s, marking as container", expectedContainerName, serverName)
 
@@ -798,7 +780,8 @@ func (m *Manager) ShowLogs(name string, follow bool) error {
 		// using fixedIdentifier aligns with how the proxy would refer to it and how Start/Stop work.
 		// If the container was recreated with the same fixed name, this would get logs from the new one.
 
-		return m.containerRuntime.ShowContainerLogs(fixedIdentifier, follow)
+		// Container logs not available through runtime in Kubernetes mode
+		return fmt.Errorf("container logs not available - use kubectl logs for Kubernetes pods")
 	} else { // Process-based server
 		proc, err := runtime.FindProcess(fixedIdentifier)
 		if err != nil {
@@ -1431,82 +1414,13 @@ func (m *Manager) runLifecycleHook(hookScript string) error {
 // If called only from StartServer (which is locked), internal lock might not be needed.
 // Let's assume it might be called externally or by multiple StartServer goroutines in future.
 func (m *Manager) ensureNetworkExists(networkName string, lockedByCaller bool) error {
-	if !lockedByCaller {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-	}
-
-	if m.networks[networkName] {
-		m.logger.Debug("Network '%s' already processed in this session", networkName)
-
-		return nil
-	}
-
-	if m.containerRuntime == nil || m.containerRuntime.GetRuntimeName() == "none" {
-		m.logger.Debug("No container runtime, skipping network creation for '%s'", networkName)
-
-		return nil
-	}
-
-	m.logger.Info("Ensuring network '%s' exists...", networkName)
-
-	exists, err := m.containerRuntime.NetworkExists(networkName)
-	if err != nil {
-
-		return fmt.Errorf("failed to check if network '%s' exists: %w", networkName, err)
-	}
-
-	if !exists {
-		m.logger.Info("Creating network '%s'...", networkName)
-		if err := m.containerRuntime.CreateNetwork(networkName); err != nil {
-
-			return fmt.Errorf("failed to create network '%s': %w", networkName, err)
-		}
-		m.logger.Info("Network '%s' created successfully", networkName)
-	} else {
-		m.logger.Debug("Network '%s' already exists", networkName)
-	}
-
-	m.networks[networkName] = true
-
+	// Network management is handled by Kubernetes
+	m.logger.Debug("Network management handled by Kubernetes, skipping network creation for '%s'", networkName)
 	return nil
 }
 
 func (m *Manager) cleanupNetworks() error {
-	if m.containerRuntime == nil || m.containerRuntime.GetRuntimeName() == "none" {
-
-		return nil
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for networkName := range m.networks {
-		// Only clean up networks we created (exclude default ones)
-		if networkName == "mcp-net" || strings.HasPrefix(networkName, "mcp-") {
-			exists, err := m.containerRuntime.NetworkExists(networkName)
-			if err != nil {
-				m.logger.Warning("Failed to check network '%s' during cleanup: %v", networkName, err)
-
-				continue
-			}
-
-			if exists {
-				// Check if the runtime supports RemoveNetwork
-				if remover, ok := m.containerRuntime.(interface{ RemoveNetwork(string) error }); ok {
-					if err := remover.RemoveNetwork(networkName); err != nil {
-						m.logger.Warning("Failed to remove network '%s': %v", networkName, err)
-					} else {
-						m.logger.Info("Cleaned up network '%s'", networkName)
-					}
-				} else {
-					m.logger.Debug("Runtime doesn't support network removal, skipping cleanup of '%s'", networkName)
-				}
-			}
-		}
-		delete(m.networks, networkName)
-	}
-
+	// Network cleanup is handled by Kubernetes
 	return nil
 }
 

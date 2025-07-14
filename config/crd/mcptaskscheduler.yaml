@@ -1,0 +1,134 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcptaskschedulers.mcp.matey.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.12.0
+spec:
+  group: mcp.matey.ai
+  names:
+    kind: MCPTaskScheduler
+    listKind: MCPTaskSchedulerList
+    plural: mcptaskschedulers
+    shortNames:
+    - mcpts
+    singular: mcptaskscheduler
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: MCPTaskScheduler represents a task scheduler deployment
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MCPTaskSchedulerSpec defines the desired state of MCPTaskScheduler
+            properties:
+              databasePath:
+                description: Database path for task storage
+                type: string
+              host:
+                description: Host interface
+                type: string
+              image:
+                description: Container image
+                type: string
+              logLevel:
+                description: Log level
+                type: string
+              mcpProxyAPIKey:
+                description: MCP Proxy API key
+                type: string
+              mcpProxyURL:
+                description: MCP Proxy URL
+                type: string
+              ollamaModel:
+                description: Ollama model
+                type: string
+              ollamaURL:
+                description: Ollama URL
+                type: string
+              openRouterAPIKey:
+                description: OpenRouter API key
+                type: string
+              openRouterModel:
+                description: OpenRouter model
+                type: string
+              port:
+                description: Service port
+                format: int32
+                type: integer
+              replicas:
+                description: Number of replicas
+                format: int32
+                type: integer
+              resources:
+                description: Resource requirements
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    type: object
+                type: object
+            type: object
+          status:
+            description: MCPTaskSchedulerStatus defines the observed state of MCPTaskScheduler
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations of an object's state
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              phase:
+                description: Phase represents the current phase of the MCPTaskScheduler
+                type: string
+              readyReplicas:
+                description: Number of ready replicas
+                format: int32
+                type: integer
+              replicas:
+                description: Total number of replicas
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

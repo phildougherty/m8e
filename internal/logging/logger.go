@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	
+	"github.com/go-logr/logr"
 )
 
 // LogLevel represents the severity of a log message
@@ -165,6 +167,61 @@ func (l *Logger) WithFields(fields map[string]interface{}) *FieldLogger {
 	return &FieldLogger{
 		logger: l,
 		fields: fields,
+	}
+}
+
+// GetLogr returns a logr.Logger compatible interface for controller-runtime
+func (l *Logger) GetLogr() logr.Logger {
+	return logr.New(&logrSink{logger: l})
+}
+
+// logrSink implements logr.LogSink to bridge our logger to logr
+type logrSink struct {
+	logger *Logger
+	name   string
+	values []interface{}
+}
+
+func (s *logrSink) Init(info logr.RuntimeInfo) {}
+
+func (s *logrSink) Enabled(level int) bool {
+	// Convert logr level to our level (logr uses 0=info, 1=debug, etc.)
+	ourLevel := INFO
+	if level > 0 {
+		ourLevel = DEBUG
+	}
+	return s.logger.shouldLog(ourLevel)
+}
+
+func (s *logrSink) Info(level int, msg string, keysAndValues ...interface{}) {
+	if level > 0 {
+		s.logger.Debug("%s", msg)
+	} else {
+		s.logger.Info("%s", msg)
+	}
+}
+
+func (s *logrSink) Error(err error, msg string, keysAndValues ...interface{}) {
+	if err != nil {
+		s.logger.Error("%s: %v", msg, err)
+	} else {
+		s.logger.Error("%s", msg)
+	}
+}
+
+func (s *logrSink) WithValues(keysAndValues ...interface{}) logr.LogSink {
+	return &logrSink{
+		logger: s.logger,
+		name:   s.name,
+		values: append(s.values, keysAndValues...),
+	}
+}
+
+func (s *logrSink) WithName(name string) logr.LogSink {
+	return &logrSink{
+		logger: s.logger,
+		name:   s.name + "." + name,
+		values: s.values,
 	}
 }
 

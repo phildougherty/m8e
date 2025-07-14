@@ -1,238 +1,139 @@
 # Default values for matey
 # This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
 
 # Global configuration
 global:
-  imageRegistry: ""
-  imagePullSecrets: []
-
-# Registry configuration
-registry:
-  enabled: true
-  endpoint: "localhost:5000"
-  # For external registries:
-  # endpoint: "my-registry.com"
-  # username: "user"
-  # password: ""
-  
-  # Built-in registry settings
-  builtin:
-    enabled: true
-    image:
-      repository: registry
-      tag: "2.8.3"
-      pullPolicy: IfNotPresent
-    service:
-      type: ClusterIP
-      port: 5000
-    persistence:
-      enabled: true
-      size: 10Gi
-      storageClass: ""
-    resources:
-      limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
-        cpu: 100m
-        memory: 128Mi
-
-# Proxy service configuration
-proxy:
-  enabled: true
-  image:
-    repository: matey-proxy
-    tag: latest
-    pullPolicy: IfNotPresent
-  
-  service:
-    type: ClusterIP
-    port: 9876
-    targetPort: 9876
-  
-  resources:
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-    requests:
-      cpu: 200m
-      memory: 256Mi
-  
-  # Authentication settings
-  auth:
-    enabled: true
-    apiKey: ""
-    oauth:
-      enabled: false
-
-# Dashboard service configuration  
-dashboard:
-  enabled: true
-  image:
-    repository: matey-dashboard
-    tag: latest
-    pullPolicy: IfNotPresent
-    
-  service:
-    type: ClusterIP
-    port: 3001
-    targetPort: 3001
-    
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
-
-# Task scheduler configuration
-taskScheduler:
-  enabled: true
-  image:
-    repository: matey-task-scheduler
-    tag: latest
-    pullPolicy: IfNotPresent
-    
-  service:
-    type: ClusterIP
-    port: 8080
-    targetPort: 8080
-    
-  resources:
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-    requests:
-      cpu: 200m
-      memory: 256Mi
-      
-  env:
-    TZ: "America/New_York"
-    MCP_CRON_LOGGING_LEVEL: "info"
+  namespace: default
+  imageRegistry: ghcr.io/phildougherty/matey
 
 # Memory service configuration
 memory:
   enabled: true
   image:
-    repository: matey-memory
+    repository: "{{ .Values.global.imageRegistry }}/memory"
     tag: latest
     pullPolicy: IfNotPresent
-    
+  
   service:
     type: ClusterIP
     port: 3001
-    targetPort: 3001
-    
+    annotations: {}
+  
+  postgres:
+    enabled: true
+    port: 5432
+    database: memory_graph
+    username: postgres
+    password: password
+  
   resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 1Gi
+  
+  postgresResources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  authentication:
+    enabled: true
+    requiredScope: "mcp:tools"
+
+# Task Scheduler service configuration  
+taskScheduler:
+  enabled: true
+  image:
+    repository: "{{ .Values.global.imageRegistry }}/task-scheduler"
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8084
+    annotations: {}
+  
+  resources:
     requests:
       cpu: 100m
       memory: 128Mi
-      
-  # PostgreSQL for memory service
-  postgresql:
-    enabled: true
-    image:
-      repository: postgres
-      tag: "15-alpine"
-      pullPolicy: IfNotPresent
-    auth:
-      database: matey_memory
-      username: postgres
-      password: ""
-    persistence:
-      enabled: true
-      size: 5Gi
-    resources:
-      limits:
-        cpu: 500m
-        memory: 512Mi
-      requests:
-        cpu: 100m
-        memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  config:
+    defaultTimeout: "5m"
+    maxConcurrentTasks: 10
+    retryPolicy:
+      maxRetries: 3
+      retryDelay: "30s"
+      backoffStrategy: "exponential"
+    taskStorageEnabled: true
+    taskHistoryLimit: 100
+    taskCleanupPolicy: "auto"
+  
+  llm:
+    openRouter:
+      apiKey: ""
+      model: "anthropic/claude-3.5-sonnet"
+    ollama:
+      url: ""
+      model: "llama3.2"
+  
+  mcp:
+    proxyUrl: ""
+    proxyApiKey: ""
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
-# MCP servers configuration
-servers: {}
-# Example server configuration:
-# servers:
-#   my-server:
-#     image: my-mcp-server:latest
-#     build:
-#       context: ./my-server
-#       dockerfile: Dockerfile
-#     protocol: http
-#     httpPort: 8080
-#     capabilities:
-#       - tools
-#       - resources
-#     env:
-#       MY_VAR: "value"
-#     resources:
-#       limits:
-#         cpu: 500m
-#         memory: 512Mi
-#       requests:
-#         cpu: 100m
-#         memory: 128Mi
+# Service Account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
 
-# Networking
-networking:
-  # Create default network for MCP communication
-  createNetwork: true
-  networkName: "matey-net"
+# Pod Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
 
-# Resource quotas and limits
-resourceQuotas:
-  enabled: false
-  hard:
-    limits.cpu: "4"
-    limits.memory: "8Gi"
-    persistentvolumeclaims: "10"
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
 
 # RBAC configuration
 rbac:
   create: true
-  
-# Service account
-serviceAccount:
-  create: true
-  name: ""
-  annotations: {}
 
-# Pod security context
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
-
-# Security context for containers
-securityContext:
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-    - ALL
-  readOnlyRootFilesystem: true
-
-# Node selector, tolerations, and affinity
-nodeSelector: {}
-tolerations: []
-affinity: {}
-
-# Ingress configuration
-ingress:
+# Network Policies
+networkPolicy:
   enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: matey.local
-      paths:
-        - path: /
-          pathType: Prefix
-          service: proxy
-  tls: []
 
 # Monitoring and observability
 monitoring:
@@ -240,14 +141,12 @@ monitoring:
   serviceMonitor:
     enabled: false
     labels: {}
-  prometheusRule:
-    enabled: false
-    labels: {}
+    annotations: {}
 
-# Autoscaling
-autoscaling:
+# Ingress configuration
+ingress:
   enabled: false
-  minReplicas: 1
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 80
-  targetMemoryUtilizationPercentage: 80
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
