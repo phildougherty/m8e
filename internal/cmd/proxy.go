@@ -23,8 +23,8 @@ func NewProxyCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "proxy",
-		Short: "Run a Kubernetes-native MCP proxy server",
-		Long: `Run a Kubernetes-native proxy server that automatically discovers and routes to MCP services
+		Short: "Run a system MCP proxy server",
+		Long: `Run a system proxy server that automatically discovers and routes to MCP services
 using Kubernetes service discovery. The proxy uses cluster DNS and Kubernetes APIs to find and
 connect to MCP servers without requiring static configuration.
 
@@ -63,7 +63,7 @@ func runProxy(cmd *cobra.Command, port int, namespace, apiKey string) error {
 		apiKey = os.Getenv("MCP_API_KEY")
 	}
 
-	fmt.Printf("Creating Kubernetes-native MCP proxy...\n")
+	fmt.Printf("Creating system MCP proxy...\n")
 	fmt.Printf("Namespace: %s\n", namespace)
 	fmt.Printf("Port: %d\n", port)
 	if apiKey != "" {

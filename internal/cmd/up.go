@@ -11,7 +11,7 @@ func NewUpCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up [SERVICE...]",
 		Short: "Create and start MCP services using Kubernetes resources",
-		Long: `Create and start MCP services using Kubernetes-native resources.
+		Long: `Create and start MCP services using system resources.
 
 This command deploys services as Kubernetes Deployments, Services, and ConfigMaps.
 If no services are specified, all enabled services in the configuration will be started.

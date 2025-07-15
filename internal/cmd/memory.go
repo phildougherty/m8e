@@ -23,7 +23,7 @@ func NewMemoryCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "memory",
-		Short: "Manage the postgres-backed memory MCP server (Kubernetes-native)",
+		Short: "Manage the postgres-backed memory MCP server (system)",
 		Long: `Start, stop, enable, or disable the postgres-backed memory MCP server using Kubernetes.
 The memory server provides persistent knowledge graph storage with:
 - PostgreSQL backend for reliability  
@@ -32,7 +32,7 @@ The memory server provides persistent knowledge graph storage with:
 - Observation tracking
 - Full-text search capabilities
 
-This is a Kubernetes-native implementation that uses CRDs and controllers.
+This is a system implementation that uses CRDs and controllers.
 
 Examples:
   matey memory                    # Start memory server via Kubernetes
@@ -62,7 +62,7 @@ Examples:
 				return nil
 			}
 
-			// Always use Kubernetes mode (this is a Kubernetes-native system)
+			// Always use Kubernetes mode (this is a system system)
 			return startK8sMemoryServer(cfg, namespace)
 		},
 	}
@@ -218,7 +218,7 @@ func disableMemoryServer(configFile string, cfg *config.ComposeConfig, namespace
 
 // startK8sMemoryServer starts the memory server using Kubernetes
 func startK8sMemoryServer(cfg *config.ComposeConfig, namespace string) error {
-	fmt.Println("Creating Kubernetes-native MCP memory server...")
+	fmt.Println("Creating system MCP memory server...")
 	fmt.Printf("Namespace: %s\n", namespace)
 	
 	// Create Kubernetes client

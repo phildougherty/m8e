@@ -294,16 +294,11 @@ func (m *Manager) StartServer(name string) error {
 		m.logger.Info("MANAGER: Pre-start hook for server '%s' completed.", name)
 	}
 
-	// Network management is handled by Kubernetes
-	if len(srvCfg.Networks) > 0 {
-		m.logger.Debug("MANAGER: Networks for server '%s' will be managed by Kubernetes: %v", name, srvCfg.Networks)
-	}
+	// Network management handled by system
 
 	var startErr error
 	if instance.IsContainer {
-		m.logger.Info("MANAGER: Server '%s' is Kubernetes-native container. Using Kubernetes manager.", name)
-		// Kubernetes containers are managed by the K8sManager
-		startErr = fmt.Errorf("server '%s' is configured as container but Kubernetes-native mode is enabled - use 'matey up' instead", name)
+		startErr = fmt.Errorf("server '%s' is configured as container - use 'matey up' instead", name)
 	} else if srvCfg.Command != "" {
 		m.logger.Info("MANAGER: Server '%s' is process. Calling startProcessServer with identifier '%s'.", name, fixedIdentifier)
 		startErr = m.startProcessServer(name, fixedIdentifier, &srvCfg)
@@ -378,117 +373,6 @@ func (m *Manager) StartServer(name string) error {
 	return nil
 }
 
-// startContainerServer was removed - Kubernetes-native containers are managed by K8sManager
-func (m *Manager) removedStartContainerServer(serverKeyName, containerNameToUse string, srvCfg *config.ServerConfig) error {
-	// Check if we need to use docker runtime by default
-	if srvCfg.Runtime == "" && srvCfg.Image != "" {
-		// Default to docker if image is specified but no runtime type set
-		m.logger.Debug("Using default docker runtime for server '%s' with image '%s'", serverKeyName, srvCfg.Image)
-	}
-	// Container runtime not available in Kubernetes-native mode
-	if srvCfg.Image != "" {
-		return fmt.Errorf("server '%s' requires container runtime but Kubernetes mode is enabled - use 'matey up'", serverKeyName)
-	}
-	if srvCfg.Image == "" {
-
-		return fmt.Errorf("server '%s' (container: %s) has no image specified", serverKeyName, containerNameToUse)
-	}
-	m.logger.Info("Preparing to start container '%s' for server '%s' with image '%s'", containerNameToUse, serverKeyName, srvCfg.Image)
-
-	// Network management is handled by Kubernetes
-
-	var volumes []string
-	if srvCfg.Volumes != nil {
-		volumes = append([]string{}, srvCfg.Volumes...) // Copy existing volumes
-	}
-	for _, resourcePath := range srvCfg.Resources.Paths {
-		absPath, err := filepath.Abs(resourcePath.Source)
-		if err == nil {
-			volumeMapping := fmt.Sprintf("%s:%s", absPath, resourcePath.Target)
-			if resourcePath.ReadOnly {
-				volumeMapping += ":ro"
-			}
-			volumes = append(volumes, volumeMapping)
-		} else {
-			m.logger.Warning("Could not make path absolute for volume mount '%s' for server '%s': %v", resourcePath.Source, serverKeyName, err)
-		}
-	}
-
-	// Environment variables are no longer used in Kubernetes mode
-	_ = config.MergeEnv(srvCfg.Env, map[string]string{"MCP_SERVER_NAME": serverKeyName}) // Avoid unused warning
-
-	// Use existing ports from config (no auto HTTP port exposure)
-	ports := make([]string, len(srvCfg.Ports))
-	copy(ports, srvCfg.Ports)
-
-	// LOG: Explain why we don't expose HTTP ports for HTTP protocol servers
-	if srvCfg.Protocol == "http" {
-		m.logger.Info("Server '%s' uses HTTP protocol - accessible via Docker network only (no host port exposure needed)", serverKeyName)
-	} else {
-		m.logger.Info("Server '%s' uses protocol '%s'", serverKeyName, srvCfg.Protocol)
-	}
-
-	// CRITICAL FIX: For HTTP wrapper images, don't override the command
-	var command string
-	var args []string
-
-	if srvCfg.Protocol == "http" && strings.Contains(srvCfg.Image, "mcp-http-server") {
-		// HTTP wrapper images have their own built-in command, don't override it
-		m.logger.Info("Using built-in command for HTTP wrapper image '%s'", srvCfg.Image)
-		command = "" // Let the image use its default CMD
-		args = nil
-	} else {
-		// Use the configured command for other servers
-		command = srvCfg.Command
-		args = srvCfg.Args
-		m.logger.Info("Using configured command '%s' with args %v", command, args)
-	}
-
-	// Ensure networks include mcp-net
-	networks := []string{"mcp-net"} // Always include mcp-net
-	for _, net := range srvCfg.Networks {
-		if net != "mcp-net" { // Don't duplicate
-			networks = append(networks, net)
-		}
-	}
-
-	// Container options - not used in Kubernetes mode
-	_ = containerNameToUse // Avoid unused variable warning
-	return fmt.Errorf("container operations not supported in Kubernetes-native mode")
-	/*
-	opts := &container.ContainerOptions{
-		Name:        containerNameToUse, // This is the name Docker/Podman will use
-		Image:       srvCfg.Image,
-		Command:     command, // Don't override for HTTP wrappers
-		Args:        args,    // Don't override for HTTP wrappers
-		Env:         envVars,
-		Pull:        srvCfg.Pull,
-		Volumes:     volumes,
-		Ports:       ports,    // Only explicitly configured ports, no auto HTTP ports
-		NetworkMode: "",       // Don't use NetworkMode, use Networks instead
-		Networks:    networks, // Ensure mcp-net is included
-		WorkDir:     srvCfg.WorkDir,
-	}
-
-	// Add globally defined connection ports if exposed
-	for connKey, connCfg := range m.config.Connections {
-		if connCfg.Expose && connCfg.Port > 0 {
-			portMapping := fmt.Sprintf("%d:%d", connCfg.Port, connCfg.Port) // hostPort:containerPort
-			if !contains(opts.Ports, portMapping) {
-				opts.Ports = append(opts.Ports, portMapping)
-				m.logger.Debug("Adding exposed port %s from connection '%s' for server '%s'", portMapping, connKey, serverKeyName)
-			}
-		}
-	}
-
-	// Log final container options for debugging
-	m.logger.Info("Starting container with options: Name=%s, Image=%s, Command=%s, Args=%v, Ports=%v, Networks=%v, Protocol=%s",
-		opts.Name, opts.Image, opts.Command, opts.Args, opts.Ports, opts.Networks, srvCfg.Protocol)
-
-	// Container starting disabled in Kubernetes mode
-	return fmt.Errorf("container operations not supported in Kubernetes-native mode")
-	*/
-}
 
 // startProcessServer uses processIdentifier for log/pid files
 func (m *Manager) startProcessServer(serverKeyName, processIdentifier string, srvCfg *config.ServerConfig) error {
@@ -574,16 +458,10 @@ func (m *Manager) StopServer(name string) error {
 
 	var stopErr error
 	if instance.IsContainer {
-		m.logger.Info("Stopping container '%s' for server '%s'", fixedIdentifier, name)
-		// Container stop not supported in Kubernetes mode
-		stopErr = fmt.Errorf("container operations not supported in Kubernetes-native mode")
-		if stopErr != nil {
-			m.logger.Error("Failed to stop container '%s' for server '%s': %v", fixedIdentifier, name, stopErr)
-		}
-		instance.ContainerID = "" // Clear the runtime ID
+		stopErr = fmt.Errorf("container operations not supported - use 'matey down' instead")
 	} else if instance.Process != nil {
 		m.logger.Info("Stopping process '%s' for server '%s'", fixedIdentifier, name)
-		stopErr = instance.Process.Stop() // Assumes Process.Stop uses the name it was initialized with
+		stopErr = instance.Process.Stop()
 		if stopErr != nil {
 			m.logger.Error("Failed to stop process '%s' for server '%s': %v", fixedIdentifier, name, stopErr)
 		}
@@ -634,31 +512,12 @@ func (m *Manager) getServerStatusUnsafe(name string, fixedIdentifier string) (st
 	var err error
 
 	if instance.IsContainer {
-		// Always try by name first since it's more reliable, then by ContainerID as fallback
-		m.logger.Debug("Checking container status for '%s' (identifier: %s, ContainerID: %s)", name, fixedIdentifier, instance.ContainerID)
-		// Container status not available in Kubernetes mode
-	currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
-		if err != nil && instance.ContainerID != "" {
-			// If name lookup failed but we have a ContainerID, try that
-			m.logger.Debug("Failed to get status by name for %s (%s), trying by ID %s: %v", name, fixedIdentifier, instance.ContainerID, err)
-			// Container status not available in Kubernetes mode
-			currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
-		}
-		if err != nil {
-			m.logger.Warning("Error getting container status for '%s' (identifier: %s): %v", name, fixedIdentifier, err)
-			// If the runtime returns "stopped" or "exited" along with an error (e.g. "No such container"),
-			// then currentRuntimeStatus might already be set correctly by GetContainerStatus.
-			// If currentRuntimeStatus is still empty, set to "unknown".
-			if currentRuntimeStatus == "" {
-				currentRuntimeStatus = "unknown"
-			}
-		} else {
-			m.logger.Debug("Container status for '%s': %s", name, currentRuntimeStatus)
-		}
+		currentRuntimeStatus = "unknown"
+		err = fmt.Errorf("container operations not supported - use 'matey ps' instead")
 	} else { // Process-based server
 		proc, findErr := runtime.FindProcess(fixedIdentifier)
 		if findErr != nil {
-			currentRuntimeStatus = "stopped" // Process not found (e.g., PID file missing)
+			currentRuntimeStatus = "stopped"
 		} else {
 			isRunning, runErr := proc.IsRunning()
 			if runErr != nil || !isRunning {
@@ -697,33 +556,10 @@ func (m *Manager) getBuiltInServiceStatus(name string, fixedIdentifier string) (
 	var err error
 
 	if instance.IsContainer {
-		// Always try by name first since it's more reliable, then by ContainerID as fallback
-		// Container status not available in Kubernetes mode
-	currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
-		if err != nil && instance.ContainerID != "" {
-			// If name lookup failed but we have a ContainerID, try that
-			m.logger.Debug("Failed to get status by name for built-in service %s (%s), trying by ID %s: %v", name, fixedIdentifier, instance.ContainerID, err)
-			// Container status not available in Kubernetes mode
-			currentRuntimeStatus, err = "unknown", fmt.Errorf("container operations not supported in Kubernetes-native mode")
-		}
-
-		if err != nil {
-			// For built-in services, if container doesn't exist, it's likely stopped/not started
-			if strings.Contains(strings.ToLower(err.Error()), "no such container") ||
-				strings.Contains(strings.ToLower(err.Error()), "no such object") {
-				m.logger.Debug("Built-in service %s container not found, marking as stopped", name)
-				currentRuntimeStatus = "stopped"
-				err = nil
-			} else {
-				m.logger.Warning("Error getting container status for built-in service '%s' (identifier: %s): %v", name, fixedIdentifier, err)
-				if currentRuntimeStatus == "" {
-					currentRuntimeStatus = "unknown"
-				}
-			}
-		}
+		currentRuntimeStatus = "unknown"
+		err = fmt.Errorf("container operations not supported - use 'matey ps' instead")
 	} else {
-		// Process-based built-in service (unlikely but handle it)
-		currentRuntimeStatus = "stopped" // Most built-in services are containerized
+		currentRuntimeStatus = "stopped"
 	}
 
 	instance.Status = currentRuntimeStatus
@@ -739,19 +575,7 @@ func (m *Manager) isLikelyContainer(serverName string, serverCfg config.ServerCo
 		return true
 	}
 
-	// Check if there's a corresponding container name that exists
-	expectedContainerName := fmt.Sprintf("matey-%s", serverName)
-	// Container runtime not available in Kubernetes mode
-	_ = expectedContainerName // Avoid unused variable warning
-	if false { // Disabled in Kubernetes mode
-		// Try to check if container exists (ignore errors, just check existence)
-		err := fmt.Errorf("not supported")
-		if err == nil {
-			m.logger.Debug("Found container %s for server %s, marking as container", expectedContainerName, serverName)
-
-			return true
-		}
-	}
+	// Container detection removed
 
 	return false
 }
@@ -767,19 +591,12 @@ func (m *Manager) ShowLogs(name string, follow bool) error {
 	m.logger.Debug("Requesting logs for server '%s' (identifier: %s)", name, fixedIdentifier)
 
 	if instance.IsContainer {
-		// While instance.ContainerID might be more precise if available and current,
-		// using fixedIdentifier aligns with how the proxy would refer to it and how Start/Stop work.
-		// If the container was recreated with the same fixed name, this would get logs from the new one.
-
-		// Container logs not available through runtime in Kubernetes mode
-		return fmt.Errorf("container logs not available - use kubectl logs for Kubernetes pods")
-	} else { // Process-based server
+		return fmt.Errorf("container logs not available - use kubectl logs for pods")
+	} else {
 		proc, err := runtime.FindProcess(fixedIdentifier)
 		if err != nil {
-
 			return fmt.Errorf("process for server '%s' (identifier: %s) not found: %w", name, fixedIdentifier, err)
 		}
-
 		return proc.ShowLogs(follow)
 	}
 }
@@ -1401,7 +1218,7 @@ func (m *Manager) runLifecycleHook(hookScript string) error {
 	return nil
 }
 
-// Network management functions removed - handled by Kubernetes
+// Network management functions removed
 
 func (m *Manager) Shutdown() error {
 	m.logger.Info("MANAGER: Starting graceful shutdown process")
@@ -1472,7 +1289,7 @@ func (m *Manager) Shutdown() error {
 		}
 	}
 
-	// Network cleanup handled by Kubernetes
+	// Network cleanup handled by system
 
 	// Wait for all background goroutines
 	waitDone := make(chan struct{})

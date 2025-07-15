@@ -12,7 +12,7 @@ func NewStartCommand() *cobra.Command {
 		Use:   "start [SERVICE...]",
 		Short: "Start specific MCP services using Kubernetes resources",
 		Args:  cobra.MinimumNArgs(1),
-		Long: `Start specific MCP services using Kubernetes-native resources.
+		Long: `Start specific MCP services using system resources.
 
 This command starts the specified services by creating or updating their 
 Kubernetes Deployments and related resources.

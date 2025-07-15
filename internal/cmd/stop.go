@@ -12,7 +12,7 @@ func NewStopCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop [SERVICE...]",
 		Short: "Stop specific MCP services using Kubernetes resources",
-		Long: `Stop specific MCP services using Kubernetes-native resources.
+		Long: `Stop specific MCP services using system resources.
 
 This command stops the specified services by scaling down their Kubernetes 
 Deployments and removing related resources.

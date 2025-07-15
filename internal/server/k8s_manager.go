@@ -18,7 +18,7 @@ import (
 	"github.com/phildougherty/m8e/internal/logging"
 )
 
-// K8sServerInstance represents a Kubernetes-native server instance
+// K8sServerInstance represents a system server instance
 type K8sServerInstance struct {
 	Name      string
 	Config    config.ServerConfig
@@ -29,7 +29,7 @@ type K8sServerInstance struct {
 	cancel    context.CancelFunc
 }
 
-// K8sManager handles Kubernetes-native server lifecycle operations
+// K8sManager handles system server lifecycle operations
 type K8sManager struct {
 	config     *config.ComposeConfig
 	projectDir string
@@ -43,7 +43,7 @@ type K8sManager struct {
 	wg         sync.WaitGroup
 }
 
-// NewK8sManager creates a new Kubernetes-native server manager
+// NewK8sManager creates a new system server manager
 func NewK8sManager(cfg *config.ComposeConfig, namespace string) (*K8sManager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")

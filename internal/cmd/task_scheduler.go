@@ -16,7 +16,7 @@ func NewTaskSchedulerCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "task-scheduler",
-		Short: "Manage the task scheduler service (Kubernetes-native)",
+		Short: "Manage the task scheduler service (system)",
 		Long: `Start, stop, enable, or disable the task scheduler service using Kubernetes.
 The task scheduler provides intelligent task automation with:
 - Built-in cron scheduling with AI-powered expression generation
@@ -25,7 +25,7 @@ The task scheduler provides intelligent task automation with:
 - OpenRouter and Ollama integration for LLM-powered workflows
 - Workflow templates and dependency management
 
-This is a Kubernetes-native implementation that uses CRDs and controllers.
+This is a system implementation that uses CRDs and controllers.
 
 Examples:
   matey task-scheduler               # Start task scheduler via Kubernetes
@@ -55,7 +55,7 @@ Examples:
 				return nil
 			}
 
-			// Always use Kubernetes mode (this is a Kubernetes-native system)
+			// Always use Kubernetes mode (this is a system system)
 			return startK8sTaskScheduler(cfg, namespace)
 		},
 	}
@@ -166,7 +166,7 @@ func disableTaskScheduler(configFile string, cfg *config.ComposeConfig, namespac
 
 // startK8sTaskScheduler starts the task scheduler using Kubernetes
 func startK8sTaskScheduler(cfg *config.ComposeConfig, namespace string) error {
-	fmt.Println("Creating Kubernetes-native MCP task scheduler...")
+	fmt.Println("Creating system MCP task scheduler...")
 	fmt.Printf("Namespace: %s\n", namespace)
 	
 	// Create Kubernetes client

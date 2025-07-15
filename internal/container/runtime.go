@@ -9,7 +9,7 @@ import (
 )
 
 // ContainerOptions holds container creation options
-// NOTE: This is deprecated in Kubernetes-native mode - use MCPServer CRDs instead
+// NOTE: This is deprecated in container mode - use MCPServer CRDs instead
 type ContainerOptions struct {
 	Name        string
 	Image       string
@@ -76,7 +76,7 @@ type HealthCheck struct {
 	StartPeriod string   `yaml:"start_period,omitempty"`
 }
 
-// SecurityConfig for container validation - deprecated in Kubernetes-native mode
+// SecurityConfig for container validation - deprecated in container mode
 type SecurityConfig struct {
 	AllowHostMounts    []string `yaml:"allow_host_mounts,omitempty"`
 	AllowPrivilegedOps bool     `yaml:"allow_privileged_ops,omitempty"`

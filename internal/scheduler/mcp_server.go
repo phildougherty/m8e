@@ -75,7 +75,7 @@ func (s *MCPServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	info := map[string]interface{}{
 		"name":        "matey-task-scheduler",
 		"version":     "0.0.4",
-		"description": "Kubernetes-native MCP Task Scheduler",
+		"description": "system MCP Task Scheduler",
 		"protocol":    "mcp",
 		"capabilities": []string{"tools", "sse", "websocket"},
 		"endpoints": map[string]string{

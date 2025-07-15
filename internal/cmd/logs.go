@@ -37,6 +37,6 @@ Examples:
 }
 
 func runLogsCommand(configFile string, serverNames []string, follow bool, namespace string) error {
-	// Use Kubernetes-native compose logs
+	// Use system compose logs
 	return compose.Logs(configFile, serverNames, follow)
 }

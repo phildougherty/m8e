@@ -15,7 +15,7 @@ import (
 	"github.com/phildougherty/m8e/internal/logging"
 )
 
-// K8sManager is a Kubernetes-native manager for the memory service
+// K8sManager is a system manager for the memory service
 type K8sManager struct {
 	client     client.Client
 	config     *config.ComposeConfig
@@ -24,7 +24,7 @@ type K8sManager struct {
 	namespace  string
 }
 
-// NewK8sManager creates a new Kubernetes-native memory manager
+// NewK8sManager creates a new system memory manager
 func NewK8sManager(cfg *config.ComposeConfig, k8sClient client.Client, namespace string) *K8sManager {
 	logger := logging.NewLogger("info")
 	if cfg != nil && cfg.Logging.Level != "" {
@@ -50,7 +50,7 @@ func (m *K8sManager) SetConfigFile(configFile string) {
 
 // Start starts the memory service using Kubernetes resources
 func (m *K8sManager) Start() error {
-	m.logger.Info("Starting Kubernetes-native memory service")
+	m.logger.Info("Starting memory service")
 
 
 	// Check if MCPMemory resource already exists
@@ -86,7 +86,7 @@ func (m *K8sManager) Start() error {
 
 // Stop stops the memory service
 func (m *K8sManager) Stop() error {
-	m.logger.Info("Stopping Kubernetes-native memory service")
+	m.logger.Info("Stopping memory service")
 
 
 	ctx := context.Background()
@@ -111,7 +111,7 @@ func (m *K8sManager) Stop() error {
 
 // Restart restarts the memory service
 func (m *K8sManager) Restart() error {
-	m.logger.Info("Restarting Kubernetes-native memory service")
+	m.logger.Info("Restarting memory service")
 
 	// Stop first
 	if err := m.Stop(); err != nil {
@@ -194,7 +194,7 @@ func (m *K8sManager) GetMemoryInfo() (*MemoryInfo, error) {
 func (m *K8sManager) GetLogs() (string, error) {
 	// This would need to be implemented to get logs from the deployment pods
 	// For now, return a placeholder
-	return "Kubernetes-native memory service - use kubectl logs to view pod logs", nil
+	return "Memory service - use kubectl logs to view pod logs", nil
 }
 
 // createMemoryResource creates a new MCPMemory resource

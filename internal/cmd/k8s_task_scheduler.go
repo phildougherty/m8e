@@ -33,10 +33,10 @@ func NewK8sTaskSchedulerCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "task-scheduler",
-		Short: "Manage the Kubernetes-native task scheduler service",
-		Long: `Manage the task scheduler service using Kubernetes-native resources.
+		Short: "Manage the system task scheduler service",
+		Long: `Manage the task scheduler service using system resources.
 
-The Kubernetes-native task scheduler provides:
+The system task scheduler provides:
 - Automatic task execution using Kubernetes Jobs
 - Built-in retry and timeout handling
 - Resource management and scaling
@@ -118,7 +118,7 @@ func newTaskSchedulerStartCommand(namespace, image string, replicas, port int32,
 			manager.SetConfigFile(configFile)
 
 			// Start the service
-			fmt.Printf("Starting Kubernetes-native task scheduler in namespace: %s\n", namespace)
+			fmt.Printf("Starting system task scheduler in namespace: %s\n", namespace)
 			if err := manager.Start(); err != nil {
 				return fmt.Errorf("failed to start task scheduler: %w", err)
 			}

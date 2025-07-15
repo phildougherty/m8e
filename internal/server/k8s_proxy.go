@@ -21,7 +21,7 @@ import (
 	"github.com/phildougherty/m8e/internal/protocol"
 )
 
-// ProxyHandler is a pure Kubernetes-native proxy handler
+// ProxyHandler is a proxy handler
 type ProxyHandler struct {
 	// Core K8s components
 	ServiceDiscovery      *discovery.K8sServiceDiscovery
@@ -89,7 +89,7 @@ type ConnectionStats struct {
 
 // MCP protocol types already defined in other files
 
-// NewProxyHandler creates a new Kubernetes-native proxy handler
+// NewProxyHandler creates a new proxy handler
 func NewProxyHandler(cfg *config.ComposeConfig, namespace, apiKey string) (*ProxyHandler, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	
@@ -145,7 +145,7 @@ func NewProxyHandler(cfg *config.ComposeConfig, namespace, apiKey string) (*Prox
 
 // Start begins the proxy handler operation
 func (h *ProxyHandler) Start() error {
-	h.Logger.Info("Starting Kubernetes-native proxy handler")
+	h.Logger.Info("Starting proxy handler")
 
 	// Start service discovery
 	if err := h.ServiceDiscovery.Start(); err != nil {
@@ -160,13 +160,13 @@ func (h *ProxyHandler) Start() error {
 	// Start tool discovery refresh
 	go h.toolDiscoveryLoop()
 
-	h.Logger.Info("Kubernetes-native proxy handler started successfully")
+	h.Logger.Info("Proxy handler started successfully")
 	return nil
 }
 
 // Stop stops the proxy handler
 func (h *ProxyHandler) Stop() {
-	h.Logger.Info("Stopping Kubernetes-native proxy handler")
+	h.Logger.Info("Stopping proxy handler")
 	
 	h.cancel()
 	h.wg.Wait()

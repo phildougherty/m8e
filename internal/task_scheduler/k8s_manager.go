@@ -15,7 +15,7 @@ import (
 	"github.com/phildougherty/m8e/internal/logging"
 )
 
-// K8sManager is a Kubernetes-native manager for the task scheduler service
+// K8sManager is a system manager for the task scheduler service
 type K8sManager struct {
 	client     client.Client
 	config     *config.ComposeConfig
@@ -25,7 +25,7 @@ type K8sManager struct {
 	jobManager *K8sJobManager
 }
 
-// NewK8sManager creates a new Kubernetes-native task scheduler manager
+// NewK8sManager creates a new system task scheduler manager
 func NewK8sManager(cfg *config.ComposeConfig, k8sClient client.Client, namespace string) *K8sManager {
 	logger := logging.NewLogger("info")
 	if cfg != nil && cfg.Logging.Level != "" {
@@ -59,7 +59,7 @@ func (m *K8sManager) SetConfigFile(configFile string) {
 
 // Start starts the task scheduler service using Kubernetes resources
 func (m *K8sManager) Start() error {
-	m.logger.Info("Starting Kubernetes-native task scheduler service")
+	m.logger.Info("Starting task scheduler service")
 
 
 	// Check if MCPTaskScheduler resource already exists
@@ -95,7 +95,7 @@ func (m *K8sManager) Start() error {
 
 // Stop stops the task scheduler service
 func (m *K8sManager) Stop() error {
-	m.logger.Info("Stopping Kubernetes-native task scheduler service")
+	m.logger.Info("Stopping task scheduler service")
 
 
 	ctx := context.Background()
@@ -120,7 +120,7 @@ func (m *K8sManager) Stop() error {
 
 // Restart restarts the task scheduler service
 func (m *K8sManager) Restart() error {
-	m.logger.Info("Restarting Kubernetes-native task scheduler service")
+	m.logger.Info("Restarting task scheduler service")
 
 	// Stop first
 	if err := m.Stop(); err != nil {
@@ -170,7 +170,7 @@ func (m *K8sManager) GetLogs() (string, error) {
 
 	// This would need to be implemented to get logs from the deployment pods
 	// For now, return a placeholder
-	return "Kubernetes-native task scheduler - use kubectl logs to view pod logs", nil
+	return "Task scheduler - use kubectl logs to view pod logs", nil
 }
 
 // ExecuteTask executes a task using Kubernetes Jobs

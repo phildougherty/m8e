@@ -11,7 +11,7 @@ func NewRestartCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restart [SERVICE...]",
 		Short: "Restart MCP services using Kubernetes resources",
-		Long: `Restart MCP services using Kubernetes-native resources.
+		Long: `Restart MCP services using system resources.
 
 This command stops and then starts the specified services by updating their
 Kubernetes Deployments and related resources.

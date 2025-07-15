@@ -47,7 +47,7 @@ type ServiceDiscoveryHandler interface {
 	OnServiceDeleted(serviceName, namespace string)
 }
 
-// K8sServiceDiscovery provides Kubernetes-native service discovery for MCP servers
+// K8sServiceDiscovery provides system service discovery for MCP servers
 type K8sServiceDiscovery struct {
 	Client          kubernetes.Interface // Public for testing
 	Namespace       string               // Public for testing

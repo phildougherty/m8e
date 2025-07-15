@@ -593,7 +593,7 @@ func (h *ProxyHandler) establishInitialHTTPConnections() {
 					return
 				}
 
-				// Skip connection check for Kubernetes-native servers
+				// Skip connection check for system servers
 				// Kubernetes will handle server lifecycle
 				_ = instance // Avoid unused variable warning
 
@@ -643,7 +643,7 @@ func (h *ProxyHandler) ensureHTTPConnectionsEstablished() {
 					return
 				}
 
-				// Skip connection check for Kubernetes-native servers
+				// Skip connection check for system servers
 				// Kubernetes will handle server lifecycle
 				_ = instance // Avoid unused variable warning
 

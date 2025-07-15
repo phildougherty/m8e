@@ -66,7 +66,7 @@ func runServeProxy(cmd *cobra.Command, port int, namespace, apiKey string) error
 		apiKey = os.Getenv("MCP_API_KEY")
 	}
 
-	fmt.Printf("Starting Kubernetes-native MCP proxy server...\n")
+	fmt.Printf("Starting system MCP proxy server...\n")
 	fmt.Printf("Namespace: %s\n", namespace)
 	fmt.Printf("Port: %d\n", port)
 	if apiKey != "" {
@@ -75,7 +75,7 @@ func runServeProxy(cmd *cobra.Command, port int, namespace, apiKey string) error
 		fmt.Printf("Authentication: Disabled\n")
 	}
 
-	// Create Kubernetes-native proxy handler
+	// Create system proxy handler
 	proxyHandler, err := server.NewProxyHandler(cfg, namespace, apiKey)
 	if err != nil {
 		return fmt.Errorf("failed to create proxy handler: %w", err)
@@ -132,7 +132,7 @@ func runServeProxy(cmd *cobra.Command, port int, namespace, apiKey string) error
 
 	// Start server in a goroutine
 	go func() {
-		fmt.Printf("Kubernetes-native MCP proxy server listening on :%d\n", port)
+		fmt.Printf("system MCP proxy server listening on :%d\n", port)
 		fmt.Printf("Service discovery endpoint: http://localhost:%d/discovery\n", port)
 		fmt.Printf("Health check endpoint: http://localhost:%d/health\n", port)
 		fmt.Printf("API endpoint: http://localhost:%d/api/\n", port)
@@ -245,7 +245,7 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request, handler *server.P
 	schema.Servers = []openapi.Server{
 		{
 			URL:         fmt.Sprintf("http://%s", r.Host),
-			Description: "Kubernetes-native MCP Proxy Server",
+			Description: "system MCP Proxy Server",
 		},
 	}
 	

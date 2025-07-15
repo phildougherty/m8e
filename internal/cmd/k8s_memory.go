@@ -31,10 +31,10 @@ func NewK8sMemoryCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "memory",
-		Short: "Manage the Kubernetes-native memory service",
-		Long: `Manage the memory service using Kubernetes-native resources.
+		Short: "Manage the system memory service",
+		Long: `Manage the memory service using system resources.
 
-The Kubernetes-native memory service provides:
+The system memory service provides:
 - PostgreSQL-backed persistent storage
 - Graph-based knowledge storage
 - Entity and relationship management  
@@ -116,7 +116,7 @@ func newMemoryStartCommand(namespace string, port int32, host string, postgresEn
 			manager.SetConfigFile(configFile)
 
 			// Start the service
-			fmt.Printf("Starting Kubernetes-native memory service in namespace: %s\n", namespace)
+			fmt.Printf("Starting system memory service in namespace: %s\n", namespace)
 			if err := manager.Start(); err != nil {
 				return fmt.Errorf("failed to start memory service: %w", err)
 			}

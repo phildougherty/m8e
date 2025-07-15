@@ -8,8 +8,8 @@ import (
 func NewRootCommand(version string) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:     "matey",
-		Short:   "Kubernetes-native MCP server orchestrator",
-		Long:    `Matey (m8e) is a Kubernetes-native tool for defining and running multi-server Model Context Protocol applications using Kubernetes resources.`,
+		Short:   "MCP server orchestrator",
+		Long:    `Matey (m8e) is a tool for defining and running multi-server Model Context Protocol applications.`,
 		Version: version,
 	}
 
@@ -20,7 +20,7 @@ func NewRootCommand(version string) *cobra.Command {
 	// Add installation command
 	rootCmd.AddCommand(NewInstallCommand())
 	
-	// Add core orchestration commands (Kubernetes-native by default)
+	// Add core orchestration commands
 	rootCmd.AddCommand(NewUpCommand())
 	rootCmd.AddCommand(NewDownCommand())
 	rootCmd.AddCommand(NewStartCommand())
@@ -41,16 +41,16 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewServeProxyCommand()) // Internal command for containers
 	rootCmd.AddCommand(NewReloadCommand())
 	
-	// Add service-specific commands (both legacy and Kubernetes-native)
+	// Add service-specific commands
 	rootCmd.AddCommand(NewTaskSchedulerCommand())
 	rootCmd.AddCommand(NewMemoryCommand())
 	rootCmd.AddCommand(NewWorkflowCommand())
 	
-	// Add Kubernetes-native service commands
+	// Add service commands
 	k8sCmd := &cobra.Command{
 		Use:   "k8s",
-		Short: "Kubernetes-native service management commands",
-		Long:  `Direct Kubernetes-native commands for managing individual services with full control over Kubernetes resources.`,
+		Short: "Service management commands",
+		Long:  `Direct commands for managing individual services with full control over resources.`,
 	}
 	k8sCmd.AddCommand(NewK8sTaskSchedulerCommand())
 	k8sCmd.AddCommand(NewK8sMemoryCommand())

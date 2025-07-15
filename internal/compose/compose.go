@@ -41,7 +41,7 @@ type K8sComposer struct {
 	controllerManager   *controllers.ControllerManager
 }
 
-// NewK8sComposer creates a new Kubernetes-native composer instance
+// NewK8sComposer creates a new composer instance
 func NewK8sComposer(configPath string, namespace string) (*K8sComposer, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
@@ -82,7 +82,7 @@ func (c *K8sComposer) Up(serviceNames []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.logger.Info("Starting Kubernetes-native MCP services")
+	c.logger.Info("Starting MCP services")
 	
 	// FIRST: Ensure controller manager is running
 	if err := c.ensureControllerManagerRunning(); err != nil {
@@ -103,7 +103,7 @@ func (c *K8sComposer) Down(serviceNames []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.logger.Info("Stopping Kubernetes-native MCP services")
+	c.logger.Info("Stopping MCP services")
 	
 
 	// If no specific services requested, stop all services
@@ -816,7 +816,7 @@ type ServiceStatus struct {
 
 // Public API functions for backwards compatibility
 
-// Up starts services using Kubernetes-native approach
+// Up starts services using system approach
 func Up(configFile string, serviceNames []string) error {
 	composer, err := NewK8sComposer(configFile, "default")
 	if err != nil {
@@ -825,7 +825,7 @@ func Up(configFile string, serviceNames []string) error {
 	return composer.Up(serviceNames)
 }
 
-// Down stops services using Kubernetes-native approach
+// Down stops services using system approach
 func Down(configFile string, serviceNames []string) error {
 	composer, err := NewK8sComposer(configFile, "default")
 	if err != nil {
@@ -834,7 +834,7 @@ func Down(configFile string, serviceNames []string) error {
 	return composer.Down(serviceNames)
 }
 
-// Start starts specific services using Kubernetes-native approach
+// Start starts specific services using system approach
 func Start(configFile string, serviceNames []string) error {
 	composer, err := NewK8sComposer(configFile, "default")
 	if err != nil {
@@ -843,7 +843,7 @@ func Start(configFile string, serviceNames []string) error {
 	return composer.Start(serviceNames)
 }
 
-// Stop stops specific services using Kubernetes-native approach
+// Stop stops specific services using system approach
 func Stop(configFile string, serviceNames []string) error {
 	composer, err := NewK8sComposer(configFile, "default")
 	if err != nil {
@@ -852,7 +852,7 @@ func Stop(configFile string, serviceNames []string) error {
 	return composer.Stop(serviceNames)
 }
 
-// Restart restarts specific services using Kubernetes-native approach
+// Restart restarts specific services using system approach
 func Restart(configFile string, serviceNames []string) error {
 	composer, err := NewK8sComposer(configFile, "default")
 	if err != nil {
@@ -861,7 +861,7 @@ func Restart(configFile string, serviceNames []string) error {
 	return composer.Restart(serviceNames)
 }
 
-// Status returns the status of all services using Kubernetes-native approach
+// Status returns the status of all services using system approach
 func Status(configFile string) (*ComposeStatus, error) {
 	composer, err := NewK8sComposer(configFile, "default")
 	if err != nil {
@@ -889,7 +889,7 @@ func List(configFile string) error {
 
 // Logs returns logs from services (placeholder for future implementation)
 func Logs(configFile string, serviceNames []string, follow bool) error {
-	fmt.Println("Kubernetes-native logs - use kubectl logs to view pod logs")
+	fmt.Println("Use kubectl logs to view pod logs")
 	fmt.Printf("Example: kubectl logs -n default -l app.kubernetes.io/name=memory\n")
 	return nil
 }
