@@ -86,12 +86,10 @@ func (r *MCPProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
-	// Update status to running
-	mcpProxy.Status.Phase = crd.MCPProxyPhaseRunning
-	mcpProxy.Status.ObservedGeneration = mcpProxy.Generation
-	if err := r.Status().Update(ctx, &mcpProxy); err != nil {
-		logger.Error(err, "Failed to update MCPProxy status")
-		return ctrl.Result{}, err
+	// Check deployment status and update ReadyReplicas
+	if err := r.updateDeploymentStatus(ctx, &mcpProxy); err != nil {
+		logger.Error(err, "Failed to update deployment status")
+		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 	}
 
 	logger.Info("Successfully reconciled MCPProxy")
@@ -199,6 +197,41 @@ func (r *MCPProxyReconciler) reconcileDeployment(ctx context.Context, mcpProxy *
 			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (r *MCPProxyReconciler) updateDeploymentStatus(ctx context.Context, mcpProxy *crd.MCPProxy) error {
+	logger := log.FromContext(ctx)
+
+	// Get the deployment
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, client.ObjectKey{
+		Name:      mcpProxy.Name + "-proxy",
+		Namespace: mcpProxy.Namespace,
+	}, deployment)
+	if err != nil {
+		logger.Error(err, "Failed to get Deployment for status check")
+		return err
+	}
+
+	// Update status based on deployment state
+	mcpProxy.Status.Replicas = deployment.Status.Replicas
+	mcpProxy.Status.ReadyReplicas = deployment.Status.ReadyReplicas
+	mcpProxy.Status.ObservedGeneration = mcpProxy.Generation
+
+	// Update phase based on readiness
+	if deployment.Status.ReadyReplicas > 0 {
+		mcpProxy.Status.Phase = crd.MCPProxyPhaseRunning
+	} else {
+		mcpProxy.Status.Phase = crd.MCPProxyPhaseStarting
+	}
+
+	// Update status
+	if err := r.Status().Update(ctx, mcpProxy); err != nil {
+		logger.Error(err, "Failed to update MCPProxy status")
+		return err
 	}
 
 	return nil

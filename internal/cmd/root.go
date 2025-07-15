@@ -45,16 +45,7 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewTaskSchedulerCommand())
 	rootCmd.AddCommand(NewMemoryCommand())
 	rootCmd.AddCommand(NewWorkflowCommand())
-	
-	// Add service commands
-	k8sCmd := &cobra.Command{
-		Use:   "k8s",
-		Short: "Service management commands",
-		Long:  `Direct commands for managing individual services with full control over resources.`,
-	}
-	k8sCmd.AddCommand(NewK8sTaskSchedulerCommand())
-	k8sCmd.AddCommand(NewK8sMemoryCommand())
-	rootCmd.AddCommand(k8sCmd)
+	rootCmd.AddCommand(NewInspectCommand())
 
 	return rootCmd
 }
