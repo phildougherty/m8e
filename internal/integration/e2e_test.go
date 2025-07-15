@@ -50,6 +50,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	// Create fake client
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(s).
+		WithStatusSubresource(&mcpv1.MCPServer{}).
 		Build()
 
 	// Create test config
@@ -271,12 +272,10 @@ func TestMCPServerLifecycle(t *testing.T) {
 		}
 
 		// Phase 8: Test deletion
-		// Set deletion timestamp
-		now := metav1.Now()
-		updated.DeletionTimestamp = &now
-		err = env.Client.Update(env.Ctx, updated)
+		// Delete the MCPServer to trigger deletion reconciliation
+		err = env.Client.Delete(env.Ctx, updated)
 		if err != nil {
-			t.Fatalf("Failed to set deletion timestamp: %v", err)
+			t.Fatalf("Failed to delete MCPServer: %v", err)
 		}
 
 		// Final reconciliation - should handle deletion

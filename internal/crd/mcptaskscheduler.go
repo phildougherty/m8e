@@ -115,6 +115,15 @@ type TaskSchedulerConfig struct {
 	TaskStorageEnabled bool   `json:"taskStorageEnabled,omitempty"`
 	TaskHistoryLimit   int32  `json:"taskHistoryLimit,omitempty"`
 	TaskCleanupPolicy  string `json:"taskCleanupPolicy,omitempty"`
+
+	// Event-driven workflow triggers
+	EventTriggers []EventTrigger `json:"eventTriggers,omitempty"`
+
+	// Conditional dependency configuration
+	ConditionalDependencies ConditionalDependencyConfig `json:"conditionalDependencies,omitempty"`
+
+	// Auto-scaling configuration
+	AutoScaling AutoScalingConfig `json:"autoScaling,omitempty"`
 }
 
 // TaskRetryPolicy defines retry behavior for failed tasks
@@ -122,6 +131,153 @@ type TaskRetryPolicy struct {
 	MaxRetries      int32  `json:"maxRetries,omitempty"`
 	RetryDelay      string `json:"retryDelay,omitempty"`
 	BackoffStrategy string `json:"backoffStrategy,omitempty"`
+}
+
+// EventTrigger defines event-driven workflow triggers
+type EventTrigger struct {
+	// Type of event trigger (k8s-event, webhook, file-watch, etc.)
+	Type string `json:"type"`
+
+	// Name of the trigger for identification
+	Name string `json:"name"`
+
+	// Workflow to trigger when event occurs
+	Workflow string `json:"workflow"`
+
+	// Kubernetes event configuration
+	KubernetesEvent *KubernetesEventConfig `json:"kubernetesEvent,omitempty"`
+
+	// Webhook configuration
+	Webhook *WebhookConfig `json:"webhook,omitempty"`
+
+	// File watch configuration
+	FileWatch *FileWatchConfig `json:"fileWatch,omitempty"`
+
+	// Conditions for triggering
+	Conditions []TriggerCondition `json:"conditions,omitempty"`
+
+	// Cooldown period to prevent rapid triggering
+	CooldownDuration string `json:"cooldownDuration,omitempty"`
+}
+
+// KubernetesEventConfig defines configuration for Kubernetes event watching
+type KubernetesEventConfig struct {
+	// Resource kind to watch (Pod, Service, etc.)
+	Kind string `json:"kind"`
+
+	// Event reason filter
+	Reason string `json:"reason,omitempty"`
+
+	// Namespace filter
+	Namespace string `json:"namespace,omitempty"`
+
+	// Label selector
+	LabelSelector string `json:"labelSelector,omitempty"`
+
+	// Field selector
+	FieldSelector string `json:"fieldSelector,omitempty"`
+}
+
+// WebhookConfig defines webhook trigger configuration
+type WebhookConfig struct {
+	// Endpoint path for webhook
+	Endpoint string `json:"endpoint"`
+
+	// Authentication method (bearer-token, basic, etc.)
+	Authentication string `json:"authentication,omitempty"`
+
+	// HTTP method (POST, GET, etc.)
+	Method string `json:"method,omitempty"`
+
+	// Expected headers
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// FileWatchConfig defines file watching configuration
+type FileWatchConfig struct {
+	// Path to watch
+	Path string `json:"path"`
+
+	// File pattern to match
+	Pattern string `json:"pattern,omitempty"`
+
+	// Watch mode (create, modify, delete, all)
+	Events []string `json:"events,omitempty"`
+
+	// Recursive watching
+	Recursive bool `json:"recursive,omitempty"`
+}
+
+// TriggerCondition defines conditions for event triggering
+type TriggerCondition struct {
+	// Field to check
+	Field string `json:"field"`
+
+	// Operator (equals, contains, regex, etc.)
+	Operator string `json:"operator"`
+
+	// Value to compare against
+	Value string `json:"value"`
+}
+
+// ConditionalDependencyConfig defines conditional dependency configuration
+type ConditionalDependencyConfig struct {
+	// Enable conditional dependencies
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Default dependency resolution strategy
+	DefaultStrategy string `json:"defaultStrategy,omitempty"`
+
+	// Timeout for dependency resolution
+	ResolutionTimeout string `json:"resolutionTimeout,omitempty"`
+
+	// Enable cross-workflow dependencies
+	CrossWorkflowEnabled bool `json:"crossWorkflowEnabled,omitempty"`
+}
+
+// AutoScalingConfig defines auto-scaling configuration
+type AutoScalingConfig struct {
+	// Enable auto-scaling
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Minimum concurrent tasks
+	MinConcurrentTasks int32 `json:"minConcurrentTasks,omitempty"`
+
+	// Maximum concurrent tasks
+	MaxConcurrentTasks int32 `json:"maxConcurrentTasks,omitempty"`
+
+	// Target CPU utilization percentage
+	TargetCPUUtilization int32 `json:"targetCPUUtilization,omitempty"`
+
+	// Target memory utilization percentage
+	TargetMemoryUtilization int32 `json:"targetMemoryUtilization,omitempty"`
+
+	// Scale up cooldown period
+	ScaleUpCooldown string `json:"scaleUpCooldown,omitempty"`
+
+	// Scale down cooldown period
+	ScaleDownCooldown string `json:"scaleDownCooldown,omitempty"`
+
+	// Metrics collection interval
+	MetricsInterval string `json:"metricsInterval,omitempty"`
+
+	// Custom metrics for scaling decisions
+	CustomMetrics []CustomMetric `json:"customMetrics,omitempty"`
+}
+
+// CustomMetric defines custom metrics for auto-scaling
+type CustomMetric struct {
+	// Name of the metric
+	Name string `json:"name"`
+
+	// Metric type (resource, pods, object, external)
+	Type string `json:"type"`
+
+	// Target value for the metric
+	TargetValue string `json:"targetValue"`
+
+	// Metric selector
+	Selector map[string]string `json:"selector,omitempty"`
 }
 
 // MCPTaskSchedulerStatus defines the observed state of MCPTaskScheduler
@@ -414,6 +570,15 @@ func (in *MCPTaskSchedulerCondition) DeepCopy() *MCPTaskSchedulerCondition {
 func (in *TaskSchedulerConfig) DeepCopyInto(out *TaskSchedulerConfig) {
 	*out = *in
 	in.RetryPolicy.DeepCopyInto(&out.RetryPolicy)
+	if in.EventTriggers != nil {
+		in, out := &in.EventTriggers, &out.EventTriggers
+		*out = make([]EventTrigger, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	in.ConditionalDependencies.DeepCopyInto(&out.ConditionalDependencies)
+	in.AutoScaling.DeepCopyInto(&out.AutoScaling)
 }
 
 func (in *TaskSchedulerConfig) DeepCopy() *TaskSchedulerConfig {
@@ -512,6 +677,157 @@ func (in *ResourceRequirements) DeepCopy() *ResourceRequirements {
 		return nil
 	}
 	out := new(ResourceRequirements)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopy methods for new structs
+func (in *EventTrigger) DeepCopyInto(out *EventTrigger) {
+	*out = *in
+	if in.KubernetesEvent != nil {
+		in, out := &in.KubernetesEvent, &out.KubernetesEvent
+		*out = new(KubernetesEventConfig)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Webhook != nil {
+		in, out := &in.Webhook, &out.Webhook
+		*out = new(WebhookConfig)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.FileWatch != nil {
+		in, out := &in.FileWatch, &out.FileWatch
+		*out = new(FileWatchConfig)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &out.Conditions
+		*out = make([]TriggerCondition, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *EventTrigger) DeepCopy() *EventTrigger {
+	if in == nil {
+		return nil
+	}
+	out := new(EventTrigger)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *KubernetesEventConfig) DeepCopyInto(out *KubernetesEventConfig) {
+	*out = *in
+}
+
+func (in *KubernetesEventConfig) DeepCopy() *KubernetesEventConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(KubernetesEventConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *WebhookConfig) DeepCopyInto(out *WebhookConfig) {
+	*out = *in
+	if in.Headers != nil {
+		in, out := &in.Headers, &out.Headers
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+}
+
+func (in *WebhookConfig) DeepCopy() *WebhookConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(WebhookConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *FileWatchConfig) DeepCopyInto(out *FileWatchConfig) {
+	*out = *in
+	if in.Events != nil {
+		in, out := &in.Events, &out.Events
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *FileWatchConfig) DeepCopy() *FileWatchConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(FileWatchConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *TriggerCondition) DeepCopyInto(out *TriggerCondition) {
+	*out = *in
+}
+
+func (in *TriggerCondition) DeepCopy() *TriggerCondition {
+	if in == nil {
+		return nil
+	}
+	out := new(TriggerCondition)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ConditionalDependencyConfig) DeepCopyInto(out *ConditionalDependencyConfig) {
+	*out = *in
+}
+
+func (in *ConditionalDependencyConfig) DeepCopy() *ConditionalDependencyConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(ConditionalDependencyConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *AutoScalingConfig) DeepCopyInto(out *AutoScalingConfig) {
+	*out = *in
+	if in.CustomMetrics != nil {
+		in, out := &in.CustomMetrics, &out.CustomMetrics
+		*out = make([]CustomMetric, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *AutoScalingConfig) DeepCopy() *AutoScalingConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(AutoScalingConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *CustomMetric) DeepCopyInto(out *CustomMetric) {
+	*out = *in
+	if in.Selector != nil {
+		in, out := &in.Selector, &out.Selector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+}
+
+func (in *CustomMetric) DeepCopy() *CustomMetric {
+	if in == nil {
+		return nil
+	}
+	out := new(CustomMetric)
 	in.DeepCopyInto(out)
 	return out
 }

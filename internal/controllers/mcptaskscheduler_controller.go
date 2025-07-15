@@ -4,6 +4,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -31,6 +33,9 @@ type MCPTaskSchedulerReconciler struct {
 	Scheme *runtime.Scheme
 	Logger *logging.Logger
 	Config *config.ComposeConfig
+	
+	// Event watching
+	eventWatchers map[string]context.CancelFunc
 }
 
 //+kubebuilder:rbac:groups=mcp.matey.ai,resources=mcptaskschedulers,verbs=get;list;watch;create;update;patch;delete
@@ -44,6 +49,8 @@ type MCPTaskSchedulerReconciler struct {
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -186,10 +193,24 @@ func (r *MCPTaskSchedulerReconciler) reconcileRunning(ctx context.Context, taskS
 		return ctrl.Result{}, err
 	}
 
+	// Set up event watching for configured triggers
+	if err := r.setupEventWatching(ctx, taskScheduler); err != nil {
+		logger.Error(err, "Failed to setup event watching")
+		// Don't fail reconciliation for event watching errors
+	}
+
 	// Update task statistics by checking for running jobs
 	if err := r.updateTaskStatistics(ctx, taskScheduler); err != nil {
 		logger.Error(err, "Failed to update task statistics")
 		// Don't fail reconciliation for stats update errors
+	}
+
+	// Handle auto-scaling if enabled
+	if taskScheduler.Spec.SchedulerConfig.AutoScaling.Enabled {
+		if err := r.handleAutoScaling(ctx, taskScheduler); err != nil {
+			logger.Error(err, "Failed to handle auto-scaling")
+			// Don't fail reconciliation for auto-scaling errors
+		}
 	}
 
 	// Check health of the deployment
@@ -240,6 +261,16 @@ func (r *MCPTaskSchedulerReconciler) reconcileFailed(ctx context.Context, taskSc
 func (r *MCPTaskSchedulerReconciler) reconcileTerminating(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Terminating MCPTaskScheduler", "name", taskScheduler.Name)
+
+	// Cancel event watchers
+	if r.eventWatchers != nil {
+		key := fmt.Sprintf("%s/%s", taskScheduler.Namespace, taskScheduler.Name)
+		if cancelFunc, exists := r.eventWatchers[key]; exists {
+			cancelFunc()
+			delete(r.eventWatchers, key)
+			logger.Info("Cancelled event watcher", "name", taskScheduler.Name)
+		}
+	}
 
 	// Clean up any running jobs created by this scheduler
 	if err := r.cleanupJobs(ctx, taskScheduler); err != nil {
@@ -587,6 +618,29 @@ scheduler:
 
 # Activity webhook
 activity_webhook: %s
+
+# Event triggers
+event_triggers:
+  enabled: %t
+  triggers: %s
+
+# Conditional dependencies
+conditional_dependencies:
+  enabled: %t
+  default_strategy: %s
+  resolution_timeout: %s
+  cross_workflow_enabled: %t
+
+# Auto-scaling
+auto_scaling:
+  enabled: %t
+  min_concurrent_tasks: %d
+  max_concurrent_tasks: %d
+  target_cpu_utilization: %d
+  target_memory_utilization: %d
+  scale_up_cooldown: %s
+  scale_down_cooldown: %s
+  metrics_interval: %s
 `,
 		taskScheduler.Spec.Port,
 		taskScheduler.Spec.Host,
@@ -602,6 +656,20 @@ activity_webhook: %s
 		taskScheduler.Spec.SchedulerConfig.TaskHistoryLimit,
 		taskScheduler.Spec.SchedulerConfig.TaskCleanupPolicy,
 		taskScheduler.Spec.SchedulerConfig.ActivityWebhook,
+		len(taskScheduler.Spec.SchedulerConfig.EventTriggers) > 0,
+		r.generateEventTriggersConfig(taskScheduler.Spec.SchedulerConfig.EventTriggers),
+		taskScheduler.Spec.SchedulerConfig.ConditionalDependencies.Enabled,
+		taskScheduler.Spec.SchedulerConfig.ConditionalDependencies.DefaultStrategy,
+		taskScheduler.Spec.SchedulerConfig.ConditionalDependencies.ResolutionTimeout,
+		taskScheduler.Spec.SchedulerConfig.ConditionalDependencies.CrossWorkflowEnabled,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.Enabled,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.MinConcurrentTasks,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.MaxConcurrentTasks,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.TargetCPUUtilization,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.TargetMemoryUtilization,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.ScaleUpCooldown,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.ScaleDownCooldown,
+		taskScheduler.Spec.SchedulerConfig.AutoScaling.MetricsInterval,
 	)
 
 	return config
@@ -719,6 +787,346 @@ func convertTaskSchedulerResourceList(resources crd.ResourceList) corev1.Resourc
 		result[corev1.ResourceName(key)] = quantity
 	}
 	return result
+}
+
+// generateEventTriggersConfig generates YAML configuration for event triggers
+func (r *MCPTaskSchedulerReconciler) generateEventTriggersConfig(triggers []crd.EventTrigger) string {
+	if len(triggers) == 0 {
+		return "[]"
+	}
+	
+	var config strings.Builder
+	config.WriteString("[\n")
+	for i, trigger := range triggers {
+		config.WriteString(fmt.Sprintf(`    {
+      "name": "%s",
+      "type": "%s",
+      "workflow": "%s",
+      "cooldown_duration": "%s"`,
+			trigger.Name,
+			trigger.Type,
+			trigger.Workflow,
+			trigger.CooldownDuration,
+		))
+		
+		if trigger.KubernetesEvent != nil {
+			config.WriteString(fmt.Sprintf(`,
+      "kubernetes_event": {
+        "kind": "%s",
+        "reason": "%s",
+        "namespace": "%s",
+        "label_selector": "%s",
+        "field_selector": "%s"
+      }`,
+				trigger.KubernetesEvent.Kind,
+				trigger.KubernetesEvent.Reason,
+				trigger.KubernetesEvent.Namespace,
+				trigger.KubernetesEvent.LabelSelector,
+				trigger.KubernetesEvent.FieldSelector,
+			))
+		}
+		
+		config.WriteString("\n    }")
+		if i < len(triggers)-1 {
+			config.WriteString(",")
+		}
+		config.WriteString("\n")
+	}
+	config.WriteString("  ]")
+	return config.String()
+}
+
+// setupEventWatching sets up event watchers for configured triggers
+func (r *MCPTaskSchedulerReconciler) setupEventWatching(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) error {
+	logger := log.FromContext(ctx)
+	
+	// Initialize event watchers map if not exists
+	if r.eventWatchers == nil {
+		r.eventWatchers = make(map[string]context.CancelFunc)
+	}
+	
+	// Get the key for this task scheduler
+	key := fmt.Sprintf("%s/%s", taskScheduler.Namespace, taskScheduler.Name)
+	
+	// Cancel existing watcher if it exists
+	if cancelFunc, exists := r.eventWatchers[key]; exists {
+		cancelFunc()
+		delete(r.eventWatchers, key)
+	}
+	
+	// Skip if no event triggers configured
+	if len(taskScheduler.Spec.SchedulerConfig.EventTriggers) == 0 {
+		return nil
+	}
+	
+	// Create new context for this watcher
+	watchCtx, cancel := context.WithCancel(ctx)
+	r.eventWatchers[key] = cancel
+	
+	// Start watching events
+	go r.watchEvents(watchCtx, taskScheduler)
+	
+	logger.Info("Event watching setup completed", "triggers", len(taskScheduler.Spec.SchedulerConfig.EventTriggers))
+	return nil
+}
+
+// watchEvents watches for Kubernetes events and triggers workflows
+func (r *MCPTaskSchedulerReconciler) watchEvents(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) {
+	for _, trigger := range taskScheduler.Spec.SchedulerConfig.EventTriggers {
+		if trigger.Type == "k8s-event" && trigger.KubernetesEvent != nil {
+			go r.watchKubernetesEvents(ctx, taskScheduler, trigger)
+		}
+	}
+}
+
+// watchKubernetesEvents watches for specific Kubernetes events using polling
+func (r *MCPTaskSchedulerReconciler) watchKubernetesEvents(ctx context.Context, taskScheduler *crd.MCPTaskScheduler, trigger crd.EventTrigger) {
+	logger := log.FromContext(ctx)
+	
+	logger.Info("Started polling Kubernetes events", "trigger", trigger.Name, "kind", trigger.KubernetesEvent.Kind)
+	
+	// Use a ticker to poll for events periodically
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	var lastResourceVersion string
+	
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Event watcher stopped", "trigger", trigger.Name)
+			return
+		case <-ticker.C:
+			// List events to check for new ones
+			eventList := &corev1.EventList{}
+			listOpts := []client.ListOption{
+				client.InNamespace(taskScheduler.Namespace),
+			}
+			
+			if err := r.List(ctx, eventList, listOpts...); err != nil {
+				logger.Error(err, "Failed to list events", "trigger", trigger.Name)
+				continue
+			}
+			
+			for _, event := range eventList.Items {
+				// Skip events we've already processed
+				if lastResourceVersion != "" && event.ResourceVersion <= lastResourceVersion {
+					continue
+				}
+				
+				if r.matchesEventTrigger(&event, trigger) {
+					logger.Info("Event trigger matched", "trigger", trigger.Name, "event", event.Name)
+					if err := r.triggerWorkflow(ctx, taskScheduler, trigger, &event); err != nil {
+						logger.Error(err, "Failed to trigger workflow", "trigger", trigger.Name)
+					}
+				}
+			}
+			
+			// Update last processed resource version
+			if len(eventList.Items) > 0 {
+				lastResourceVersion = eventList.Items[len(eventList.Items)-1].ResourceVersion
+			}
+		}
+	}
+}
+
+// matchesEventTrigger checks if a Kubernetes event matches the trigger criteria
+func (r *MCPTaskSchedulerReconciler) matchesEventTrigger(event *corev1.Event, trigger crd.EventTrigger) bool {
+	k8sEvent := trigger.KubernetesEvent
+	
+	// Check kind
+	if k8sEvent.Kind != "" && event.InvolvedObject.Kind != k8sEvent.Kind {
+		return false
+	}
+	
+	// Check reason
+	if k8sEvent.Reason != "" && event.Reason != k8sEvent.Reason {
+		return false
+	}
+	
+	// Check namespace
+	if k8sEvent.Namespace != "" && event.Namespace != k8sEvent.Namespace {
+		return false
+	}
+	
+	// Check conditions
+	for _, condition := range trigger.Conditions {
+		if !r.evaluateCondition(event, condition) {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// evaluateCondition evaluates a trigger condition against an event
+func (r *MCPTaskSchedulerReconciler) evaluateCondition(event *corev1.Event, condition crd.TriggerCondition) bool {
+	var fieldValue string
+	
+	switch condition.Field {
+	case "reason":
+		fieldValue = event.Reason
+	case "message":
+		fieldValue = event.Message
+	case "type":
+		fieldValue = event.Type
+	case "namespace":
+		fieldValue = event.Namespace
+	case "name":
+		fieldValue = event.Name
+	default:
+		return false
+	}
+	
+	switch condition.Operator {
+	case "equals":
+		return fieldValue == condition.Value
+	case "contains":
+		return strings.Contains(fieldValue, condition.Value)
+	case "startsWith":
+		return strings.HasPrefix(fieldValue, condition.Value)
+	case "endsWith":
+		return strings.HasSuffix(fieldValue, condition.Value)
+	default:
+		return false
+	}
+}
+
+// triggerWorkflow triggers a workflow based on an event
+func (r *MCPTaskSchedulerReconciler) triggerWorkflow(ctx context.Context, taskScheduler *crd.MCPTaskScheduler, trigger crd.EventTrigger, event *corev1.Event) error {
+	logger := log.FromContext(ctx)
+	
+	// Create a job to trigger the workflow
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-%s-%d", taskScheduler.Name, trigger.Name, time.Now().Unix()),
+			Namespace: taskScheduler.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "task-scheduler",
+				"app.kubernetes.io/instance":   taskScheduler.Name,
+				"app.kubernetes.io/component":  "triggered-workflow",
+				"app.kubernetes.io/managed-by": "matey",
+				"mcp.matey.ai/scheduler":       taskScheduler.Name,
+				"mcp.matey.ai/trigger":         trigger.Name,
+				"mcp.matey.ai/workflow":        trigger.Workflow,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					Containers: []corev1.Container{
+						{
+							Name:  "workflow-trigger",
+							Image: "mcpcompose/task-scheduler:latest",
+							Command: []string{
+								"/app/trigger-workflow",
+								"--workflow", trigger.Workflow,
+								"--scheduler", taskScheduler.Name,
+								"--trigger", trigger.Name,
+								"--event-name", event.Name,
+								"--event-reason", event.Reason,
+							},
+							Env: []corev1.EnvVar{
+								{Name: "NAMESPACE", Value: taskScheduler.Namespace},
+								{Name: "SCHEDULER_URL", Value: fmt.Sprintf("http://%s:%d", taskScheduler.Name, taskScheduler.Spec.Port)},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	
+	// Set task scheduler as owner
+	if err := controllerutil.SetControllerReference(taskScheduler, job, r.Scheme); err != nil {
+		return err
+	}
+	
+	// Create the job
+	if err := r.Create(ctx, job); err != nil {
+		return err
+	}
+	
+	logger.Info("Triggered workflow job created", "job", job.Name, "workflow", trigger.Workflow)
+	return nil
+}
+
+// handleAutoScaling handles auto-scaling based on resource utilization
+func (r *MCPTaskSchedulerReconciler) handleAutoScaling(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) error {
+	logger := log.FromContext(ctx)
+	
+	autoScaling := taskScheduler.Spec.SchedulerConfig.AutoScaling
+	
+	// Get current resource utilization
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      taskScheduler.Name,
+		Namespace: taskScheduler.Namespace,
+	}, deployment); err != nil {
+		return err
+	}
+	
+	// Get current task statistics
+	currentTasks := taskScheduler.Status.TaskStats.RunningTasks
+	
+	// Calculate desired concurrency based on utilization
+	desiredConcurrency := r.calculateDesiredConcurrency(taskScheduler, int32(currentTasks))
+	
+	// Update max concurrent tasks if needed
+	if desiredConcurrency != taskScheduler.Spec.SchedulerConfig.MaxConcurrentTasks {
+		logger.Info("Auto-scaling adjustment needed", 
+			"current", taskScheduler.Spec.SchedulerConfig.MaxConcurrentTasks,
+			"desired", desiredConcurrency,
+			"running_tasks", currentTasks,
+			"target_cpu", autoScaling.TargetCPUUtilization,
+		)
+		
+		// Update the task scheduler configuration
+		taskScheduler.Spec.SchedulerConfig.MaxConcurrentTasks = desiredConcurrency
+		
+		// Update the ConfigMap to reflect the new configuration
+		if err := r.reconcileConfigMap(ctx, taskScheduler); err != nil {
+			return err
+		}
+	}
+	
+	return nil
+}
+
+// calculateDesiredConcurrency calculates the desired concurrency based on current load
+func (r *MCPTaskSchedulerReconciler) calculateDesiredConcurrency(taskScheduler *crd.MCPTaskScheduler, currentTasks int32) int32 {
+	autoScaling := taskScheduler.Spec.SchedulerConfig.AutoScaling
+	current := taskScheduler.Spec.SchedulerConfig.MaxConcurrentTasks
+	
+	// Special case: if no tasks are running, start with minimum
+	if currentTasks == 0 {
+		return autoScaling.MinConcurrentTasks
+	}
+	
+	// Calculate utilization percentage
+	utilization := float32(currentTasks) / float32(current) * 100
+	
+	var desired int32
+	
+	// Scale up if utilization is high
+	if utilization > float32(autoScaling.TargetCPUUtilization) {
+		desired = current + int32(math.Floor(float64(current) * float64(config.DefaultAutoScalingMultiplier)))
+	} else if utilization < float32(autoScaling.TargetCPUUtilization)/config.LowUtilizationDivisor {
+		desired = current - int32(math.Ceil(float64(current) * float64(config.DefaultAutoScalingMultiplier)))
+	} else {
+		desired = current // No change
+	}
+	
+	// Ensure within bounds
+	if desired < autoScaling.MinConcurrentTasks {
+		desired = autoScaling.MinConcurrentTasks
+	}
+	if desired > autoScaling.MaxConcurrentTasks {
+		desired = autoScaling.MaxConcurrentTasks
+	}
+	
+	return desired
 }
 
 // SetupWithManager sets up the controller with the Manager.
