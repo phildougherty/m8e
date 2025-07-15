@@ -139,21 +139,64 @@ func (c *K8sComposer) Stop(serviceNames []string) error {
 	return c.stopSpecificServices(serviceNames)
 }
 
-// Restart restarts specific services
+// Restart restarts specific services or all services if none specified
 func (c *K8sComposer) Restart(serviceNames []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Stop first
-	if err := c.stopSpecificServices(serviceNames); err != nil {
-		c.logger.Warning("Warning during stop: %v", err)
+	// If no services specified, restart all enabled services
+	if len(serviceNames) == 0 {
+		return c.restartAllServices()
 	}
 
-	// Wait a moment for cleanup
-	time.Sleep(2 * time.Second)
+	// Restart specific services with progress indicators
+	c.logger.Info("Restarting %d service(s): %s", len(serviceNames), strings.Join(serviceNames, ", "))
 
-	// Start again
-	return c.startSpecificServices(serviceNames)
+	for _, serviceName := range serviceNames {
+		c.logger.Info("Restarting service: %s", serviceName)
+
+		// Stop the service
+		if err := c.stopSpecificServices([]string{serviceName}); err != nil {
+			c.logger.Warning("Warning during stop of %s: %v", serviceName, err)
+		}
+
+		// Wait for cleanup
+		time.Sleep(2 * time.Second)
+
+		// Start the service
+		if err := c.startSpecificServices([]string{serviceName}); err != nil {
+			return fmt.Errorf("failed to restart %s: %w", serviceName, err)
+		}
+
+		c.logger.Info("Service restarted successfully: %s", serviceName)
+	}
+
+	c.logger.Info("All specified services restarted successfully")
+	return nil
+}
+
+// restartAllServices restarts all enabled services
+func (c *K8sComposer) restartAllServices() error {
+	c.logger.Info("Restarting all Matey services")
+
+	// Stop all services
+	c.logger.Info("Stopping all services for restart")
+	if err := c.stopAllServices(); err != nil {
+		c.logger.Warning("Warning during full stop: %v", err)
+	}
+
+	// Wait for cleanup
+	c.logger.Info("Waiting for cleanup...")
+	time.Sleep(5 * time.Second)
+
+	// Start all enabled services
+	c.logger.Info("Starting all enabled services")
+	if err := c.startAllEnabledServices(); err != nil {
+		return fmt.Errorf("failed to restart all services: %w", err)
+	}
+
+	c.logger.Info("All services restarted successfully")
+	return nil
 }
 
 // Status returns the status of all services
@@ -335,6 +378,11 @@ func (c *K8sComposer) startSpecificServices(serviceNames []string) error {
 			if err := c.taskSchedulerManager.Start(); err != nil {
 				errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
 			}
+		case "controller-manager":
+			c.logger.Info("Starting controller manager")
+			if err := c.ensureControllerManagerRunning(); err != nil {
+				errors = append(errors, fmt.Sprintf("controller-manager: %v", err))
+			}
 		default:
 			// Check if it's a configured server
 			if serverConfig, exists := c.config.Servers[serviceName]; exists {
@@ -352,7 +400,6 @@ func (c *K8sComposer) startSpecificServices(serviceNames []string) error {
 		return fmt.Errorf("failed to start services: %s", strings.Join(errors, ", "))
 	}
 
-
 	return nil
 }
 
@@ -360,16 +407,28 @@ func (c *K8sComposer) startSpecificServices(serviceNames []string) error {
 func (c *K8sComposer) stopAllServices() error {
 	var errors []string
 
+	// Stop all MCP servers first
+	for serverName := range c.config.Servers {
+		c.logger.Info("Stopping MCP server: %s", serverName)
+		if err := c.stopMCPServer(serverName); err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", serverName, err))
+		}
+	}
+
 	// Stop memory service
-	c.logger.Info("Stopping memory service")
-	if err := c.memoryManager.Stop(); err != nil {
-		errors = append(errors, fmt.Sprintf("memory: %v", err))
+	if c.config.Memory.Enabled {
+		c.logger.Info("Stopping memory service")
+		if err := c.memoryManager.Stop(); err != nil {
+			errors = append(errors, fmt.Sprintf("memory: %v", err))
+		}
 	}
 
 	// Stop task scheduler
-	c.logger.Info("Stopping task scheduler service")
-	if err := c.taskSchedulerManager.Stop(); err != nil {
-		errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
+	if c.config.TaskScheduler.Enabled {
+		c.logger.Info("Stopping task scheduler service")
+		if err := c.taskSchedulerManager.Stop(); err != nil {
+			errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
+		}
 	}
 
 	// Stop controller manager last
@@ -384,7 +443,6 @@ func (c *K8sComposer) stopAllServices() error {
 	if len(errors) > 0 {
 		return fmt.Errorf("failed to stop services: %s", strings.Join(errors, ", "))
 	}
-
 
 	return nil
 }
@@ -405,15 +463,30 @@ func (c *K8sComposer) stopSpecificServices(serviceNames []string) error {
 			if err := c.taskSchedulerManager.Stop(); err != nil {
 				errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
 			}
+		case "controller-manager":
+			c.logger.Info("Stopping controller manager")
+			if c.controllerManager != nil {
+				if err := c.controllerManager.Stop(); err != nil {
+					errors = append(errors, fmt.Sprintf("controller-manager: %v", err))
+				}
+				c.controllerManager = nil
+			}
 		default:
-			errors = append(errors, fmt.Sprintf("unknown service: %s", serviceName))
+			// Check if it's an MCP server defined in config
+			if _, exists := c.config.Servers[serviceName]; exists {
+				c.logger.Info("Stopping MCP server: %s", serviceName)
+				if err := c.stopMCPServer(serviceName); err != nil {
+					errors = append(errors, fmt.Sprintf("%s: %v", serviceName, err))
+				}
+			} else {
+				errors = append(errors, fmt.Sprintf("unknown service: %s", serviceName))
+			}
 		}
 	}
 
 	if len(errors) > 0 {
 		return fmt.Errorf("failed to stop services: %s", strings.Join(errors, ", "))
 	}
-
 
 	return nil
 }
@@ -504,6 +577,62 @@ func (c *K8sComposer) startMCPServer(name string, serverConfig config.ServerConf
 		}
 	}
 	
+	return nil
+}
+
+// stopMCPServer stops an MCP server by deleting its Kubernetes resources
+func (c *K8sComposer) stopMCPServer(name string) error {
+	ctx := context.Background()
+	
+	// Delete MCPServer CRD - this will trigger the controller to clean up associated resources
+	mcpServer := &crd.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.namespace,
+		},
+	}
+	
+	err := c.k8sClient.Delete(ctx, mcpServer)
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			c.logger.Info("MCPServer %s not found, may already be deleted", name)
+		} else {
+			return fmt.Errorf("failed to delete MCPServer %s: %w", name, err)
+		}
+	} else {
+		c.logger.Info("MCPServer %s deleted successfully", name)
+	}
+	
+	// The controller will handle cleanup of associated Deployments, Services, ConfigMaps, etc.
+	// But we can also try to clean up manually as fallback
+	
+	// Delete associated Deployment
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.namespace,
+		},
+	}
+	
+	err = c.k8sClient.Delete(ctx, deployment)
+	if err != nil && client.IgnoreNotFound(err) != nil {
+		c.logger.Warning("Failed to delete Deployment %s: %v", name, err)
+	}
+	
+	// Delete associated Service
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.namespace,
+		},
+	}
+	
+	err = c.k8sClient.Delete(ctx, service)
+	if err != nil && client.IgnoreNotFound(err) != nil {
+		c.logger.Warning("Failed to delete Service %s: %v", name, err)
+	}
+	
+	c.logger.Info("MCP server %s stopped successfully", name)
 	return nil
 }
 

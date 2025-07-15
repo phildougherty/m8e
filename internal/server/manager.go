@@ -50,7 +50,7 @@ type Manager struct {
 	config           *config.ComposeConfig
 	projectDir       string // For running lifecycle hooks and resolving relative paths
 	servers          map[string]*ServerInstance
-	networks         map[string]bool // Tracks networks known/created by this manager instance
+	// networks field removed - networking is handled by Kubernetes
 	logger           *logging.Logger
 	mu               sync.RWMutex
 	ctx              context.Context
@@ -119,7 +119,7 @@ func NewManager(cfg *config.ComposeConfig) (*Manager, error) {
 				"MCP_FILESYSTEM_URL":                 "http://matey-filesystem:3000",
 				"MCP_OPENROUTER_GATEWAY_URL":         "http://matey-openrouter-gateway:8012",
 			},
-			Networks: []string{"mcp-net"},
+			// Networks handled by Kubernetes
 			Authentication: &config.ServerAuthConfig{
 				Enabled:       true,
 				RequiredScope: "mcp:tools",
@@ -163,7 +163,7 @@ func NewManager(cfg *config.ComposeConfig) (*Manager, error) {
 				"NODE_ENV":     "production",
 				"DATABASE_URL": cfg.Memory.DatabaseURL,
 			},
-			Networks:       []string{"mcp-net"},
+			// Networks handled by Kubernetes
 			Authentication: cfg.Memory.Authentication,
 			DependsOn:      []string{"postgres-memory"},
 		}
@@ -181,7 +181,7 @@ func NewManager(cfg *config.ComposeConfig) (*Manager, error) {
 				"POSTGRES_PASSWORD": cfg.Memory.PostgresPassword,
 			},
 			Volumes:       cfg.Memory.Volumes,
-			Networks:      []string{"mcp-net"},
+			// Networks handled by Kubernetes
 			RestartPolicy: "unless-stopped",
 		}
 
@@ -210,7 +210,6 @@ func NewManager(cfg *config.ComposeConfig) (*Manager, error) {
 		config:           cfg,
 		projectDir:       wd,
 		servers:          make(map[string]*ServerInstance),
-		networks:         make(map[string]bool),
 		logger:           logger,
 		ctx:              ctx,
 		cancel:           cancel,
@@ -295,17 +294,9 @@ func (m *Manager) StartServer(name string) error {
 		m.logger.Info("MANAGER: Pre-start hook for server '%s' completed.", name)
 	}
 
-	// Ensure networks
+	// Network management is handled by Kubernetes
 	if len(srvCfg.Networks) > 0 {
-		m.logger.Info("MANAGER: Ensuring networks for server '%s': %v", name, srvCfg.Networks)
-		for _, networkName := range srvCfg.Networks {
-			if networkErr := m.ensureNetworkExists(networkName, true); networkErr != nil {
-				m.logger.Error("MANAGER: Failed to ensure network '%s' for server '%s': %v", networkName, name, networkErr)
-
-				return fmt.Errorf("failed to ensure network '%s' for server '%s': %w", networkName, name, networkErr)
-			}
-		}
-		m.logger.Info("MANAGER: Networks ensured for server '%s'.", name)
+		m.logger.Debug("MANAGER: Networks for server '%s' will be managed by Kubernetes: %v", name, srvCfg.Networks)
 	}
 
 	var startErr error
@@ -1410,19 +1401,7 @@ func (m *Manager) runLifecycleHook(hookScript string) error {
 	return nil
 }
 
-// ensureNetworkExists needs a lock if it modifies m.networks and is called concurrently.
-// If called only from StartServer (which is locked), internal lock might not be needed.
-// Let's assume it might be called externally or by multiple StartServer goroutines in future.
-func (m *Manager) ensureNetworkExists(networkName string, lockedByCaller bool) error {
-	// Network management is handled by Kubernetes
-	m.logger.Debug("Network management handled by Kubernetes, skipping network creation for '%s'", networkName)
-	return nil
-}
-
-func (m *Manager) cleanupNetworks() error {
-	// Network cleanup is handled by Kubernetes
-	return nil
-}
+// Network management functions removed - handled by Kubernetes
 
 func (m *Manager) Shutdown() error {
 	m.logger.Info("MANAGER: Starting graceful shutdown process")
@@ -1493,10 +1472,7 @@ func (m *Manager) Shutdown() error {
 		}
 	}
 
-	// Cleanup networks
-	if err := m.cleanupNetworks(); err != nil {
-		m.logger.Warning("MANAGER: Network cleanup failed: %v", err)
-	}
+	// Network cleanup handled by Kubernetes
 
 	// Wait for all background goroutines
 	waitDone := make(chan struct{})

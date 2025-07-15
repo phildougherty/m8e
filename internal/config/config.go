@@ -47,7 +47,7 @@ type ComposeConfig struct {
 	Environments  map[string]EnvironmentConfig `yaml:"environments,omitempty"`
 	CurrentEnv    string                       `yaml:"-"`
 	Dashboard     DashboardConfig              `yaml:"dashboard,omitempty"`
-	Networks      map[string]NetworkConfig     `yaml:"networks,omitempty"`
+	Networks      map[string]NetworkConfig     `yaml:"networks,omitempty"` // Deprecated: Kubernetes handles networking
 	Volumes       map[string]VolumeConfig      `yaml:"volumes,omitempty"`
 	TaskScheduler *TaskScheduler               `yaml:"task_scheduler,omitempty"`
 	Memory        MemoryConfig                 `yaml:"memory"`
@@ -176,8 +176,8 @@ type ServerConfig struct {
 	Security        SecurityConfig      `yaml:"security,omitempty"`
 	Lifecycle       LifecycleConfig     `yaml:"lifecycle,omitempty"`
 	CapabilityOpt   CapabilityOptConfig `yaml:"capability_options,omitempty"`
-	NetworkMode     string              `yaml:"network_mode,omitempty"`
-	Networks        []string            `yaml:"networks,omitempty"`
+	NetworkMode     string              `yaml:"network_mode,omitempty"` // Deprecated: Kubernetes handles networking
+	Networks        []string            `yaml:"networks,omitempty"` // Deprecated: Kubernetes handles networking
 	Authentication  *ServerAuthConfig   `yaml:"authentication,omitempty"`
 	OAuth           *ServerOAuthConfig  `yaml:"oauth,omitempty"`
 	SSEPath         string              `yaml:"sse_path,omitempty"`      // Path for SSE endpoint

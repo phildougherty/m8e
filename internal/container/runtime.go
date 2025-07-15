@@ -9,6 +9,7 @@ import (
 )
 
 // ContainerOptions holds container creation options
+// NOTE: This is deprecated in Kubernetes-native mode - use MCPServer CRDs instead
 type ContainerOptions struct {
 	Name        string
 	Image       string
@@ -19,8 +20,8 @@ type ContainerOptions struct {
 	Volumes     []string
 	WorkDir     string
 	Pull        bool
-	NetworkMode string
-	Networks    []string
+	NetworkMode string // Deprecated: Kubernetes handles networking
+	Networks    []string // Deprecated: Kubernetes handles networking  
 	Build       config.BuildConfig
 
 	// Security context
@@ -75,7 +76,7 @@ type HealthCheck struct {
 	StartPeriod string   `yaml:"start_period,omitempty"`
 }
 
-// SecurityConfig for container validation
+// SecurityConfig for container validation - deprecated in Kubernetes-native mode
 type SecurityConfig struct {
 	AllowHostMounts    []string `yaml:"allow_host_mounts,omitempty"`
 	AllowPrivilegedOps bool     `yaml:"allow_privileged_ops,omitempty"`
