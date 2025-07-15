@@ -238,8 +238,8 @@ func (sd *K8sServiceDiscovery) handleServiceAdded(service *corev1.Service) {
 	sd.services[endpoint.Name] = *endpoint
 	sd.mu.Unlock()
 
-	sd.logger.Info("Discovered MCP service: %s (protocol: %s, url: %s", 
-		endpoint.Name, endpoint.Protocol, endpoint.URL))
+	sd.logger.Info("Discovered MCP service: %s (protocol: %s, url: %s)", 
+		endpoint.Name, endpoint.Protocol, endpoint.URL)
 
 	// Notify handlers
 	for _, handler := range sd.handlers {

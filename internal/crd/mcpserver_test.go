@@ -3,12 +3,8 @@ package crd
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 )
 
@@ -176,7 +172,7 @@ func TestMCPServerStatus(t *testing.T) {
 	server.Status.Phase = "Pending"
 	server.Status.ReadyReplicas = 0
 	server.Status.Replicas = 2
-	server.Status.LastUpdateTime = metav1.Now()
+	// Status timestamps are managed by the controller
 
 	// Verify status fields
 	if server.Status.Phase != "Pending" {
@@ -197,7 +193,7 @@ func TestMCPServerStatus(t *testing.T) {
 	server.Status.Conditions = []MCPServerCondition{
 		{
 			Type:   "Ready",
-			Status: corev1.ConditionTrue,
+			Status: metav1.ConditionTrue,
 			Reason: "AllReplicasReady",
 			Message: "All replicas are ready",
 			LastTransitionTime: metav1.Now(),
@@ -222,7 +218,7 @@ func TestMCPServerStatus(t *testing.T) {
 		t.Errorf("Expected condition type 'Ready', got %s", condition.Type)
 	}
 
-	if condition.Status != corev1.ConditionTrue {
+	if condition.Status != metav1.ConditionTrue {
 		t.Errorf("Expected condition status 'True', got %s", condition.Status)
 	}
 }
@@ -243,7 +239,7 @@ func TestMCPServerList(t *testing.T) {
 				Spec: MCPServerSpec{
 					Image:    "nginx:latest",
 					Protocol: "http",
-					Port:     8080,
+					HttpPort: 8080,
 				},
 			},
 			{
@@ -307,16 +303,16 @@ func TestMCPServerDeepCopy(t *testing.T) {
 		Spec: MCPServerSpec{
 			Image:    "nginx:latest",
 			Protocol: "http",
-			Port:     8080,
+			HttpPort: 8080,
 			Command:  []string{"nginx"},
 			Args:     []string{"-g", "daemon off;"},
 			Env: map[string]string{
 				"ENV": "production",
 			},
-			Resources: corev1.ResourceRequirements{
-				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("100m"),
-					corev1.ResourceMemory: resource.MustParse("128Mi"),
+			Resources: ResourceRequirements{
+				Limits: ResourceList{
+					"cpu":    "100m",
+					"memory": "128Mi",
 				},
 			},
 		},
@@ -327,7 +323,7 @@ func TestMCPServerDeepCopy(t *testing.T) {
 			Conditions: []MCPServerCondition{
 				{
 					Type:   "Ready",
-					Status: corev1.ConditionTrue,
+					Status: metav1.ConditionTrue,
 					Reason: "AllReplicasReady",
 				},
 			},
@@ -378,7 +374,7 @@ func TestMCPServerCondition(t *testing.T) {
 	now := metav1.Now()
 	condition := MCPServerCondition{
 		Type:               "Ready",
-		Status:             corev1.ConditionTrue,
+		Status:             metav1.ConditionTrue,
 		Reason:             "AllReplicasReady",
 		Message:            "All replicas are ready and healthy",
 		LastTransitionTime: now,
@@ -543,9 +539,9 @@ func createTestMCPServer(name, namespace string) *MCPServer {
 }
 
 // Helper function to create a test MCPServerCondition
-func createTestCondition(condType string, status corev1.ConditionStatus, reason, message string) MCPServerCondition {
+func createTestCondition(condType string, status metav1.ConditionStatus, reason, message string) MCPServerCondition {
 	return MCPServerCondition{
-		Type:               condType,
+		Type:               MCPServerConditionType(condType),
 		Status:             status,
 		Reason:             reason,
 		Message:            message,

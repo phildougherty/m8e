@@ -38,12 +38,30 @@ type Workflow struct {
 	Status WorkflowStatus `json:"status,omitempty"`
 }
 
+// GroupVersionKind returns the GroupVersionKind for Workflow
+func (w *Workflow) GroupVersionKind() schema.GroupVersionKind {
+	return schema.GroupVersionKind{
+		Group:   WorkflowGroup,
+		Version: WorkflowVersion,
+		Kind:    "Workflow",
+	}
+}
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type WorkflowList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []Workflow `json:"items"`
+}
+
+// GroupVersionKind returns the GroupVersionKind for WorkflowList
+func (w *WorkflowList) GroupVersionKind() schema.GroupVersionKind {
+	return schema.GroupVersionKind{
+		Group:   WorkflowGroup,
+		Version: WorkflowVersion,
+		Kind:    "WorkflowList",
+	}
 }
 
 type WorkflowSpec struct {

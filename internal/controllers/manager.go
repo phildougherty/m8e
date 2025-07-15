@@ -211,7 +211,7 @@ func StartControllerManagerInBackground(namespace string, cfg *config.ComposeCon
 		ctx := ctrl.SetupSignalHandler()
 		
 		if err := cm.Start(ctx); err != nil {
-			cm.logger.Error(fmt.Sprintf("Controller manager failed: %v", err))
+			cm.logger.Error("Controller manager failed: %v", err)
 		}
 	}()
 

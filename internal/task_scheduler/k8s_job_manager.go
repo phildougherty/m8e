@@ -104,7 +104,7 @@ func NewK8sJobManager(namespace string, config *config.ComposeConfig, logger *lo
 
 // SubmitTask submits a task for execution as a Kubernetes Job
 func (jm *K8sJobManager) SubmitTask(ctx context.Context, task *TaskRequest) (*TaskStatus, error) {
-	jm.logger.Info("Submitting task %s (%s to Kubernetes", task.ID, task.Name))
+	jm.logger.Info("Submitting task %s (%s) to Kubernetes", task.ID, task.Name)
 
 	// Create Job specification
 	job, err := jm.createJobSpec(task)
@@ -236,7 +236,7 @@ func (jm *K8sJobManager) CancelTask(ctx context.Context, taskID string) error {
 		return fmt.Errorf("failed to delete job: %w", err)
 	}
 
-	jm.logger.Info("Cancelled task %s (deleted job %s", taskID, job.Name))
+	jm.logger.Info("Cancelled task %s (deleted job %s)", taskID, job.Name)
 	return nil
 }
 

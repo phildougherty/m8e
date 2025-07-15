@@ -326,7 +326,7 @@ func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time
 			}, memory)
 
 			if err != nil {
-				m.logger.Warning(fmt.Sprintf("Failed to get memory service status: %v", err))
+				m.logger.Warning("Failed to get memory service status: %v", err)
 				continue
 			}
 
@@ -339,10 +339,10 @@ func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time
 				return fmt.Errorf("memory service failed to start")
 			}
 
-			m.logger.Info("Memory service status: %s (ready: %d/%d",
+			m.logger.Info("Memory service status: %s (ready: %d/%d)",
 				memory.Status.Phase,
 				memory.Status.ReadyReplicas,
-				memory.Status.Replicas))
+				memory.Status.Replicas)
 		}
 	}
 }

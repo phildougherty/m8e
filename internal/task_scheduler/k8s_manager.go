@@ -389,10 +389,10 @@ func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time
 				return fmt.Errorf("task scheduler failed to start")
 			}
 
-			m.logger.Info("Task scheduler status: %s (ready: %d/%d",
+			m.logger.Info("Task scheduler status: %s (ready: %d/%d)",
 				taskScheduler.Status.Phase,
 				taskScheduler.Status.ReadyReplicas,
-				taskScheduler.Status.Replicas))
+				taskScheduler.Status.Replicas)
 		}
 	}
 }

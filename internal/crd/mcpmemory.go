@@ -4,6 +4,7 @@ package crd
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // MCPMemory represents a memory server deployment with PostgreSQL backend
@@ -22,6 +23,15 @@ type MCPMemory struct {
 
 	Spec   MCPMemorySpec   `json:"spec,omitempty"`
 	Status MCPMemoryStatus `json:"status,omitempty"`
+}
+
+// GroupVersionKind returns the GroupVersionKind for MCPMemory
+func (m *MCPMemory) GroupVersionKind() schema.GroupVersionKind {
+	return schema.GroupVersionKind{
+		Group:   GroupName,
+		Version: Version,
+		Kind:    "MCPMemory",
+	}
 }
 
 // MCPMemorySpec defines the desired state of MCPMemory
@@ -139,6 +149,15 @@ type MCPMemoryList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []MCPMemory `json:"items"`
+}
+
+// GroupVersionKind returns the GroupVersionKind for MCPMemoryList
+func (m *MCPMemoryList) GroupVersionKind() schema.GroupVersionKind {
+	return schema.GroupVersionKind{
+		Group:   GroupName,
+		Version: Version,
+		Kind:    "MCPMemoryList",
+	}
 }
 
 // DeepCopy methods

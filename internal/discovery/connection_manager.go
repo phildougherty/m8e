@@ -125,7 +125,7 @@ func (dcm *DynamicConnectionManager) Start() error {
 	// Discover existing services and establish connections
 	services, err := dcm.serviceDiscovery.DiscoverMCPServers()
 	if err != nil {
-		dcm.logger.Error(fmt.Sprintf("Failed to discover initial services: %v", err))
+		dcm.logger.Error("Failed to discover initial services: %v", err)
 		return err
 	}
 
@@ -156,7 +156,7 @@ func (dcm *DynamicConnectionManager) Stop() {
 
 // OnServiceAdded handles service discovery events when a new service is added
 func (dcm *DynamicConnectionManager) OnServiceAdded(endpoint ServiceEndpoint) {
-	dcm.logger.Info("Adding connection to service: %s (%s", endpoint.Name, endpoint.URL))
+	dcm.logger.Info("Adding connection to service: %s (%s)", endpoint.Name, endpoint.URL)
 
 	dcm.mu.Lock()
 	defer dcm.mu.Unlock()
@@ -270,7 +270,7 @@ func (dcm *DynamicConnectionManager) GetConnectionStatus() map[string]Connection
 
 // initializeConnection establishes a connection to an MCP server
 func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
-	dcm.logger.Info("Initializing connection to %s (%s", conn.Endpoint.Name, conn.Endpoint.Protocol))
+	dcm.logger.Info("Initializing connection to %s (%s)", conn.Endpoint.Name, conn.Endpoint.Protocol)
 
 	var err error
 	
@@ -289,7 +289,7 @@ func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
 	if err != nil {
 		conn.Status = "failed"
 		conn.ErrorCount++
-		dcm.logger.Error(fmt.Sprintf("Failed to connect to %s: %v", conn.Endpoint.Name, err))
+		dcm.logger.Error("Failed to connect to %s: %v", conn.Endpoint.Name, err)
 		
 		// Schedule retry if not exceeded max retries
 		if conn.ErrorCount <= dcm.maxRetries {

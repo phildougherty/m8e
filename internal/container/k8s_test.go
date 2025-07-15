@@ -6,12 +6,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/kubernetes/scheme"
 	ktesting "k8s.io/client-go/testing"
 )
 
@@ -253,24 +250,26 @@ func TestKubernetesRuntime_StopContainer(t *testing.T) {
 			}
 
 			if !tt.expectError {
-				// Check that deployment was deleted
-				deploymentDeleted := false
-				serviceDeleted := false
+				// Check that deployment was scaled to 0 replicas (not deleted)
+				deploymentScaled := false
 				
 				for _, action := range fakeClient.Actions() {
-					if action.GetVerb() == "delete" && action.GetResource().Resource == "deployments" {
-						deploymentDeleted = true
-					}
-					if action.GetVerb() == "delete" && action.GetResource().Resource == "services" {
-						serviceDeleted = true
+					if action.GetVerb() == "update" && action.GetResource().Resource == "deployments" {
+						deploymentScaled = true
+						break
 					}
 				}
 
-				if !deploymentDeleted {
-					t.Error("Expected deployment to be deleted")
+				if !deploymentScaled {
+					t.Error("Expected deployment to be scaled to 0 replicas")
 				}
-				if !serviceDeleted {
-					t.Error("Expected service to be deleted")
+				
+				// Verify the deployment is scaled to 0
+				deployment, err := runtime.client.AppsV1().Deployments(runtime.namespace).Get(runtime.ctx, tt.containerName, metav1.GetOptions{})
+				if err != nil {
+					t.Errorf("Failed to get deployment after stop: %v", err)
+				} else if *deployment.Spec.Replicas != 0 {
+					t.Errorf("Expected deployment replicas to be 0, got %d", *deployment.Spec.Replicas)
 				}
 			}
 		})
@@ -303,7 +302,7 @@ func TestKubernetesRuntime_GetContainerStatus(t *testing.T) {
 		},
 		Status: appsv1.DeploymentStatus{
 			ReadyReplicas: 0,
-			Replicas:      1,
+			Replicas:      0,  // Both replicas should be 0 for a stopped container
 			Conditions: []appsv1.DeploymentCondition{
 				{
 					Type:   appsv1.DeploymentAvailable,
@@ -542,7 +541,7 @@ func TestKubernetesRuntime_ListContainers(t *testing.T) {
 		},
 		Status: appsv1.DeploymentStatus{
 			ReadyReplicas: 0,
-			Replicas:      1,
+			Replicas:      0,  // Both replicas should be 0 for a stopped container
 		},
 	}
 

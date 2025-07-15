@@ -1,11 +1,12 @@
 package discovery
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/phildougherty/m8e/internal/logging"
 )
 
 func TestMCPConnection_Basic(t *testing.T) {
@@ -136,7 +137,7 @@ func TestMCPConnection_StatusManagement(t *testing.T) {
 			Name:      "test-service",
 			Namespace: "default",
 			Protocol:  "http",
-			Host:      "test-service.default.svc.cluster.local",
+			URL:       "http://test-service.default.svc.cluster.local:8080/mcp",
 			Port:      8080,
 		},
 		LastUsed:   time.Now(),
@@ -211,352 +212,90 @@ func TestConnectionStatus(t *testing.T) {
 }
 
 func TestDynamicConnectionManager_Basic(t *testing.T) {
-	manager := NewDynamicConnectionManager()
+	logger := logging.NewLogger("info")
+	serviceDiscovery, err := NewK8sServiceDiscovery("default", logger)
+	if err != nil {
+		t.Skip("Skipping test - K8s service discovery unavailable")
+	}
+
+	manager := NewDynamicConnectionManager(serviceDiscovery, logger)
 	
 	if manager == nil {
 		t.Fatal("Expected non-nil connection manager")
 	}
 
 	// Test initial state
-	connections := manager.GetConnections()
+	connections := manager.GetAllConnections()
 	if len(connections) != 0 {
 		t.Errorf("Expected 0 connections initially, got %d", len(connections))
 	}
 
-	// Test adding a connection
-	endpoint := ServiceEndpoint{
-		Name:      "test-service",
-		Namespace: "default",
-		Protocol:  "http",
-		Host:      "test-service.default.svc.cluster.local",
-		Port:      8080,
-		Path:      "/mcp",
-	}
-
-	err := manager.AddConnection(endpoint)
-	if err != nil {
-		t.Errorf("Expected no error adding connection, got %v", err)
-	}
-
-	// Test getting connections
-	connections = manager.GetConnections()
-	if len(connections) != 1 {
-		t.Errorf("Expected 1 connection, got %d", len(connections))
-	}
-
-	// Test getting specific connection
-	conn, err := manager.GetConnection("test-service")
-	if err != nil {
-		t.Errorf("Expected no error getting connection, got %v", err)
-	}
-
-	if conn.Endpoint.Name != "test-service" {
-		t.Errorf("Expected connection name 'test-service', got %s", conn.Endpoint.Name)
-	}
-
-	// Test removing connection
-	err = manager.RemoveConnection("test-service")
-	if err != nil {
-		t.Errorf("Expected no error removing connection, got %v", err)
-	}
-
-	connections = manager.GetConnections()
-	if len(connections) != 0 {
-		t.Errorf("Expected 0 connections after removal, got %d", len(connections))
+	// Test getting status
+	status := manager.GetConnectionStatus()
+	if len(status) != 0 {
+		t.Errorf("Expected 0 connection statuses initially, got %d", len(status))
 	}
 }
 
-func TestDynamicConnectionManager_MultipleConnections(t *testing.T) {
-	manager := NewDynamicConnectionManager()
-
-	// Add multiple connections
-	endpoints := []ServiceEndpoint{
-		{
-			Name:      "http-service",
-			Namespace: "default",
-			Protocol:  "http",
-			Host:      "http-service.default.svc.cluster.local",
-			Port:      8080,
-			Path:      "/mcp",
-		},
-		{
-			Name:      "sse-service",
-			Namespace: "default",
-			Protocol:  "sse",
-			Host:      "sse-service.default.svc.cluster.local",
-			Port:      8080,
-			Path:      "/events",
-		},
-		{
-			Name:      "stdio-service",
-			Namespace: "default",
-			Protocol:  "stdio",
-			Host:      "stdio-service.default.svc.cluster.local",
-			Port:      8080,
-		},
+func TestDynamicConnectionManager_GetConnection(t *testing.T) {
+	logger := logging.NewLogger("info")
+	serviceDiscovery, err := NewK8sServiceDiscovery("default", logger)
+	if err != nil {
+		t.Skip("Skipping test - K8s service discovery unavailable")
 	}
 
-	for _, endpoint := range endpoints {
-		err := manager.AddConnection(endpoint)
-		if err != nil {
-			t.Errorf("Expected no error adding connection %s, got %v", endpoint.Name, err)
-		}
-	}
-
-	// Test getting all connections
-	connections := manager.GetConnections()
-	if len(connections) != 3 {
-		t.Errorf("Expected 3 connections, got %d", len(connections))
-	}
-
-	// Test getting specific connections
-	for _, endpoint := range endpoints {
-		conn, err := manager.GetConnection(endpoint.Name)
-		if err != nil {
-			t.Errorf("Expected no error getting connection %s, got %v", endpoint.Name, err)
-		}
-
-		if conn.Endpoint.Protocol != endpoint.Protocol {
-			t.Errorf("Expected protocol %s for %s, got %s", endpoint.Protocol, endpoint.Name, conn.Endpoint.Protocol)
-		}
-
-		if conn.Endpoint.Host != endpoint.Host {
-			t.Errorf("Expected host %s for %s, got %s", endpoint.Host, endpoint.Name, conn.Endpoint.Host)
-		}
-
-		if conn.Endpoint.Port != endpoint.Port {
-			t.Errorf("Expected port %d for %s, got %d", endpoint.Port, endpoint.Name, conn.Endpoint.Port)
-		}
-	}
-
-	// Test connection filtering by protocol
-	httpConnections := manager.GetConnectionsByProtocol("http")
-	if len(httpConnections) != 1 {
-		t.Errorf("Expected 1 HTTP connection, got %d", len(httpConnections))
-	}
-
-	sseConnections := manager.GetConnectionsByProtocol("sse")
-	if len(sseConnections) != 1 {
-		t.Errorf("Expected 1 SSE connection, got %d", len(sseConnections))
-	}
-
-	stdioConnections := manager.GetConnectionsByProtocol("stdio")
-	if len(stdioConnections) != 1 {
-		t.Errorf("Expected 1 STDIO connection, got %d", len(stdioConnections))
-	}
-}
-
-func TestDynamicConnectionManager_ErrorHandling(t *testing.T) {
-	manager := NewDynamicConnectionManager()
+	manager := NewDynamicConnectionManager(serviceDiscovery, logger)
 
 	// Test getting non-existent connection
-	_, err := manager.GetConnection("non-existent")
+	_, err = manager.GetConnection("non-existent")
 	if err == nil {
 		t.Error("Expected error getting non-existent connection")
 	}
+}
 
-	// Test removing non-existent connection
-	err = manager.RemoveConnection("non-existent")
-	if err == nil {
-		t.Error("Expected error removing non-existent connection")
+func TestDynamicConnectionManager_ServiceDiscoveryCallbacks(t *testing.T) {
+	logger := logging.NewLogger("info")
+	serviceDiscovery, err := NewK8sServiceDiscovery("default", logger)
+	if err != nil {
+		t.Skip("Skipping test - K8s service discovery unavailable")
 	}
 
-	// Test adding duplicate connection
+	manager := NewDynamicConnectionManager(serviceDiscovery, logger)
+
+	// Test service discovery callbacks
 	endpoint := ServiceEndpoint{
 		Name:      "test-service",
 		Namespace: "default",
 		Protocol:  "http",
-		Host:      "test-service.default.svc.cluster.local",
+		URL:       "http://test-service.default.svc.cluster.local:8080/mcp",
 		Port:      8080,
 	}
 
-	err = manager.AddConnection(endpoint)
-	if err != nil {
-		t.Errorf("Expected no error adding connection, got %v", err)
-	}
+	// Test OnServiceAdded callback
+	manager.OnServiceAdded(endpoint)
 
-	err = manager.AddConnection(endpoint)
-	if err == nil {
-		t.Error("Expected error adding duplicate connection")
-	}
+	// Test OnServiceModified callback
+	manager.OnServiceModified(endpoint)
+
+	// Test OnServiceDeleted callback
+	manager.OnServiceDeleted("test-service", "default")
 }
 
-func TestDynamicConnectionManager_ConcurrentAccess(t *testing.T) {
-	manager := NewDynamicConnectionManager()
-
-	// Test concurrent access
-	done := make(chan bool, 10)
-
-	// Concurrent connection additions
-	for i := 0; i < 5; i++ {
-		go func(i int) {
-			endpoint := ServiceEndpoint{
-				Name:      fmt.Sprintf("service-%d", i),
-				Namespace: "default",
-				Protocol:  "http",
-				Host:      fmt.Sprintf("service-%d.default.svc.cluster.local", i),
-				Port:      8080,
-			}
-			err := manager.AddConnection(endpoint)
-			if err != nil {
-				t.Errorf("Expected no error adding connection %d, got %v", i, err)
-			}
-			done <- true
-		}(i)
-	}
-
-	// Concurrent connection retrievals
-	for i := 0; i < 5; i++ {
-		go func(i int) {
-			// Wait a bit to ensure connections are added
-			time.Sleep(10 * time.Millisecond)
-			connections := manager.GetConnections()
-			if len(connections) == 0 {
-				t.Error("Expected connections to be available")
-			}
-			done <- true
-		}(i)
-	}
-
-	// Wait for all goroutines to complete
-	for i := 0; i < 10; i++ {
-		<-done
-	}
-
-	// Verify final state
-	connections := manager.GetConnections()
-	if len(connections) != 5 {
-		t.Errorf("Expected 5 connections, got %d", len(connections))
-	}
-}
-
-func TestDynamicConnectionManager_UpdateConnection(t *testing.T) {
-	manager := NewDynamicConnectionManager()
-
-	// Add initial connection
-	endpoint := ServiceEndpoint{
-		Name:      "test-service",
-		Namespace: "default",
-		Protocol:  "http",
-		Host:      "test-service.default.svc.cluster.local",
-		Port:      8080,
-		Path:      "/mcp",
-	}
-
-	err := manager.AddConnection(endpoint)
+func TestDynamicConnectionManager_StartStop(t *testing.T) {
+	logger := logging.NewLogger("info")
+	serviceDiscovery, err := NewK8sServiceDiscovery("default", logger)
 	if err != nil {
-		t.Errorf("Expected no error adding connection, got %v", err)
+		t.Skip("Skipping test - K8s service discovery unavailable")
 	}
 
-	// Update connection
-	updatedEndpoint := ServiceEndpoint{
-		Name:      "test-service",
-		Namespace: "default",
-		Protocol:  "http",
-		Host:      "test-service.default.svc.cluster.local",
-		Port:      9090, // Changed port
-		Path:      "/api/mcp", // Changed path
-	}
+	manager := NewDynamicConnectionManager(serviceDiscovery, logger)
 
-	err = manager.UpdateConnection(updatedEndpoint)
+	// Test starting the manager
+	err = manager.Start()
 	if err != nil {
-		t.Errorf("Expected no error updating connection, got %v", err)
+		t.Errorf("Expected no error starting manager, got %v", err)
 	}
 
-	// Verify update
-	conn, err := manager.GetConnection("test-service")
-	if err != nil {
-		t.Errorf("Expected no error getting updated connection, got %v", err)
-	}
-
-	if conn.Endpoint.Port != 9090 {
-		t.Errorf("Expected updated port 9090, got %d", conn.Endpoint.Port)
-	}
-
-	if conn.Endpoint.Path != "/api/mcp" {
-		t.Errorf("Expected updated path '/api/mcp', got %s", conn.Endpoint.Path)
-	}
-}
-
-func TestDynamicConnectionManager_HealthCheck(t *testing.T) {
-	manager := NewDynamicConnectionManager()
-
-	// Create a test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status": "healthy"}`))
-	}))
-	defer server.Close()
-
-	// Add connection with real server
-	endpoint := ServiceEndpoint{
-		Name:      "test-service",
-		Namespace: "default",
-		Protocol:  "http",
-		Host:      server.URL[7:], // Remove "http://" prefix
-		Port:      80,
-		Path:      "/health",
-	}
-
-	err := manager.AddConnection(endpoint)
-	if err != nil {
-		t.Errorf("Expected no error adding connection, got %v", err)
-	}
-
-	// Test health check
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	healthy, err := manager.CheckHealth(ctx, "test-service")
-	if err != nil {
-		t.Errorf("Expected no error checking health, got %v", err)
-	}
-
-	if !healthy {
-		t.Error("Expected service to be healthy")
-	}
-
-	// Test health check for non-existent service
-	healthy, err = manager.CheckHealth(ctx, "non-existent")
-	if err == nil {
-		t.Error("Expected error checking health for non-existent service")
-	}
-
-	if healthy {
-		t.Error("Expected non-existent service to be unhealthy")
-	}
-}
-
-// Helper function to create a test service endpoint
-func createTestEndpoint(name, protocol string, port int32) ServiceEndpoint {
-	return ServiceEndpoint{
-		Name:      name,
-		Namespace: "default",
-		Protocol:  protocol,
-		Host:      fmt.Sprintf("%s.default.svc.cluster.local", name),
-		Port:      port,
-		Path:      "/mcp",
-	}
-}
-
-// Helper function to create a test HTTP server
-func createTestServer(handler http.HandlerFunc) *httptest.Server {
-	return httptest.NewServer(handler)
-}
-
-// Helper function to create a test connection manager with sample data
-func createTestConnectionManager() *DynamicConnectionManager {
-	manager := NewDynamicConnectionManager()
-	
-	endpoints := []ServiceEndpoint{
-		createTestEndpoint("http-service", "http", 8080),
-		createTestEndpoint("sse-service", "sse", 8080),
-		createTestEndpoint("stdio-service", "stdio", 8080),
-	}
-
-	for _, endpoint := range endpoints {
-		manager.AddConnection(endpoint)
-	}
-
-	return manager
+	// Test stopping the manager
+	manager.Stop()
 }

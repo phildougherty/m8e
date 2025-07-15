@@ -98,7 +98,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	logger.Info("Successfully reconciled MCPServer", "name", mcpServer.Name)
-	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+	return ctrl.Result{RequeueAfter: time.Second * 30}, nil
 }
 
 // handleDeletion handles MCPServer deletion
