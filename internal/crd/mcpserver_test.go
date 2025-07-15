@@ -446,22 +446,22 @@ func TestMCPServerDefaulting(t *testing.T) {
 	}
 
 	// Test default values (this would typically be handled by admission controllers)
-	if server.Spec.Port == 0 {
+	if server.Spec.HttpPort == 0 {
 		// In a real scenario, this would be defaulted by a mutating webhook
-		server.Spec.Port = 8080
+		server.Spec.HttpPort = 8080
 	}
 
-	if server.Spec.Replicas == 0 {
-		server.Spec.Replicas = 1
+	if server.Spec.Replicas == nil {
+		server.Spec.Replicas = &[]int32{1}[0]
 	}
 
 	// Verify defaults were applied
-	if server.Spec.Port != 8080 {
-		t.Errorf("Expected default port 8080, got %d", server.Spec.Port)
+	if server.Spec.HttpPort != 8080 {
+		t.Errorf("Expected default port 8080, got %d", server.Spec.HttpPort)
 	}
 
-	if server.Spec.Replicas != 1 {
-		t.Errorf("Expected default replicas 1, got %d", server.Spec.Replicas)
+	if server.Spec.Replicas == nil || *server.Spec.Replicas != 1 {
+		t.Errorf("Expected default replicas 1, got %v", server.Spec.Replicas)
 	}
 }
 

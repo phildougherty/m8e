@@ -13,9 +13,8 @@ func TestMCPConnection_Basic(t *testing.T) {
 		Name:      "test-service",
 		Namespace: "default",
 		Protocol:  "http",
-		Host:      "test-service.default.svc.cluster.local",
+		URL:       "http://test-service.default.svc.cluster.local:8080/mcp",
 		Port:      8080,
-		Path:      "/mcp",
 	}
 
 	connection := &MCPConnection{
