@@ -9,16 +9,19 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/controller"
 	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
 )
@@ -56,6 +59,9 @@ func NewControllerManager(namespace string, cfg *config.ComposeConfig) (*Control
 	}
 	if err := batchv1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add batch v1 scheme: %w", err)
+	}
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add networking v1 scheme: %w", err)
 	}
 	
 	// Add our CRDs
@@ -131,6 +137,14 @@ func (cm *ControllerManager) IsReady() bool {
 	return cm.manager != nil
 }
 
+// GetClient returns the controller manager's Kubernetes client
+func (cm *ControllerManager) GetClient() client.Client {
+	if cm.manager == nil {
+		return nil
+	}
+	return cm.manager.GetClient()
+}
+
 // setupControllers registers all our controllers with the manager
 func setupControllers(mgr ctrl.Manager, logger *logging.Logger, cfg *config.ComposeConfig) error {
 	// Setup MCPServer controller
@@ -158,6 +172,14 @@ func setupControllers(mgr ctrl.Manager, logger *logging.Logger, cfg *config.Comp
 		Config: cfg,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup MCPTaskScheduler controller: %w", err)
+	}
+
+	// Setup MCPProxy controller
+	if err := (&controller.MCPProxyReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup MCPProxy controller: %w", err)
 	}
 
 	return nil

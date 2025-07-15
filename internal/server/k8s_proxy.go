@@ -2,10 +2,14 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,6 +86,8 @@ type ConnectionStats struct {
 	LastSuccess    time.Time
 	mu             sync.RWMutex
 }
+
+// MCP protocol types already defined in other files
 
 // NewProxyHandler creates a new Kubernetes-native proxy handler
 func NewProxyHandler(cfg *config.ComposeConfig, namespace, apiKey string) (*ProxyHandler, error) {
@@ -203,7 +209,7 @@ func (h *ProxyHandler) HandleMCPRequest(w http.ResponseWriter, r *http.Request, 
 	// Get connection for the server
 	conn, err := h.ConnectionManager.GetConnection(serverName)
 	if err != nil {
-		h.Logger.Error(fmt.Sprintf("Failed to get connection for server %s: %v", serverName, err))
+		h.Logger.Error("Failed to get connection for server %s: %v", serverName, err)
 		h.writeErrorResponse(w, fmt.Sprintf("Server %s not available: %v", serverName, err), http.StatusServiceUnavailable)
 		return
 	}
@@ -254,8 +260,8 @@ func (h *ProxyHandler) handleStdioRequest(w http.ResponseWriter, r *http.Request
 
 // forwardK8sHTTPRequest forwards an HTTP request to the target server
 func (h *ProxyHandler) forwardK8sHTTPRequest(w http.ResponseWriter, r *http.Request, conn *discovery.MCPHTTPConnection) {
-	// Create a new request to the target server
-	targetURL := conn.BaseURL + r.URL.Path
+	// MCP servers expect requests to be sent to the root path
+	targetURL := conn.BaseURL + "/"
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
@@ -282,7 +288,30 @@ func (h *ProxyHandler) forwardK8sHTTPRequest(w http.ResponseWriter, r *http.Requ
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers
+	// Read response body first to check if we need to process it for OpenWebUI
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.Logger.Error("Failed to read response body: %v", err)
+		return
+	}
+
+	// Check if this is a tools/call response that needs OpenWebUI processing
+	if h.shouldProcessForOpenWebUI(r, responseBody) {
+		h.Logger.Info("Processing MCP response for OpenWebUI compatibility")
+		processedResponse := h.processResponseForOpenWebUI(responseBody)
+		if processedResponse != nil {
+			// Return plain text for OpenWebUI
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, err = w.Write(processedResponse)
+			if err != nil {
+				h.Logger.Error("Failed to write processed response: %v", err)
+			}
+			return
+		}
+	}
+
+	// Copy response headers for non-OpenWebUI response
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
@@ -292,20 +321,10 @@ func (h *ProxyHandler) forwardK8sHTTPRequest(w http.ResponseWriter, r *http.Requ
 	// Copy status code
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy response body
-	_, err = w.(http.ResponseWriter).Write([]byte{})
-	if err == nil {
-		// Use io.Copy or similar to stream the response
-		buffer := make([]byte, 1024)
-		for {
-			n, err := resp.Body.Read(buffer)
-			if n > 0 {
-				w.Write(buffer[:n])
-			}
-			if err != nil {
-				break
-			}
-		}
+	// Copy original response body for non-OpenWebUI or failed processing
+	_, err = w.Write(responseBody)
+	if err != nil {
+		h.Logger.Error("Failed to copy response body: %v", err)
 	}
 }
 
@@ -380,7 +399,7 @@ func (h *ProxyHandler) RefreshConnections() error {
 	// a manual discovery to get immediate results
 	_, err := h.ServiceDiscovery.DiscoverMCPServers()
 	if err != nil {
-		h.Logger.Error(fmt.Sprintf("Failed to refresh service discovery: %v", err))
+		h.Logger.Error("Failed to refresh service discovery: %v", err)
 		return err
 	}
 
@@ -447,7 +466,7 @@ func (h *ProxyHandler) discoverTools() {
 	}
 
 	h.cacheExpiry = time.Now().Add(10 * time.Minute)
-	h.Logger.Info(fmt.Sprintf("Discovered %d tools from %d servers", len(h.toolCache), len(connections)))
+	h.Logger.Info("Discovered %d tools from %d servers", len(h.toolCache), len(connections))
 }
 
 // Tool structure for OpenAPI generation
@@ -461,28 +480,61 @@ type Tool struct {
 func (h *ProxyHandler) DiscoverServerTools(serverName string) ([]Tool, error) {
 	conn, err := h.ConnectionManager.GetConnection(serverName)
 	if err != nil {
+		h.Logger.Warning("No connection for %s: %v", serverName, err)
 		return nil, fmt.Errorf("no connection available for server %s: %w", serverName, err)
 	}
+	
+	h.Logger.Info("Connection status for %s: protocol=%s, status=%s", 
+		serverName, conn.Endpoint.Protocol, conn.Status)
 
 	// Make MCP tools/list call to discover actual tools
 	tools, err := h.makeToolsListRequest(serverName, conn)
 	if err != nil {
 		h.Logger.Warning("Failed to discover tools for %s: %v", serverName, err)
-		// Return placeholder tools based on capabilities
-		return h.createPlaceholderTools(serverName, conn), nil
+		// Return the error - no placeholder tools
+		return nil, fmt.Errorf("tool discovery failed for %s: %w", serverName, err)
 	}
 
 	return tools, nil
 }
 
+// FindServerForTool finds which server has a specific tool using cached discovery
+func (h *ProxyHandler) FindServerForTool(toolName string) (string, bool) {
+	// Check if cache needs refresh (expired or empty)
+	h.toolCacheMu.RLock()
+	cacheEmpty := len(h.toolCache) == 0
+	cacheExpired := time.Now().After(h.cacheExpiry)
+	h.toolCacheMu.RUnlock()
+	
+	if cacheEmpty || cacheExpired {
+		h.Logger.Info("Tool cache is empty or expired, refreshing...")
+		h.discoverTools()
+	}
+	
+	// Now check the unified cache
+	h.toolCacheMu.RLock()
+	serverName, found := h.toolCache[toolName]
+	h.toolCacheMu.RUnlock()
+	
+	if found {
+		h.Logger.Debug("Found tool %s in server %s via unified cache", toolName, serverName)
+		return serverName, true
+	}
+	
+	h.Logger.Warning("Tool %s not found in unified cache of %d tools", toolName, len(h.toolCache))
+	return "", false
+}
+
+// findServerForTool method already exists in tool_discovery.go
+
 // makeToolsListRequest makes an MCP tools/list request to discover tools
 func (h *ProxyHandler) makeToolsListRequest(serverName string, conn *discovery.MCPConnection) ([]Tool, error) {
-	// Create MCP tools/list request
+	// Create MCP tools/list request with string ID
 	request := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/list",
 		"params":  map[string]interface{}{},
-		"id":      h.getNextRequestID(),
+		"id":      h.generateStringID(),
 	}
 
 	// Send request based on protocol
@@ -496,46 +548,332 @@ func (h *ProxyHandler) makeToolsListRequest(serverName string, conn *discovery.M
 	}
 }
 
-// makeHTTPToolsListRequest makes HTTP tools/list request
+// makeHTTPToolsListRequest makes HTTP tools/list request with proper MCP session management
 func (h *ProxyHandler) makeHTTPToolsListRequest(conn *discovery.MCPConnection, request map[string]interface{}) ([]Tool, error) {
 	if conn.HTTPConnection == nil {
 		return nil, fmt.Errorf("no HTTP connection available")
 	}
 
-	// Marshal request
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Make HTTP request
-	req, err := http.NewRequest("POST", conn.HTTPConnection.BaseURL, strings.NewReader(string(payload)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
+	// Generate session ID for this request sequence
+	sessionID := h.generateStringID()
 	
-	resp, err := conn.HTTPConnection.Client.Do(req)
+	// Step 1: Send initialize request
+	initRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      h.generateStringID(),
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"clientInfo": map[string]interface{}{
+				"name":    "matey-proxy",
+				"version": "1.0.0",
+			},
+			"capabilities": map[string]interface{}{},
+		},
+	}
+	
+	initResponse, err := h.sendHTTPRequestWithSession(conn.HTTPConnection, sessionID, initRequest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make HTTP request: %w", err)
+		return nil, fmt.Errorf("failed to initialize HTTP session: %w", err)
 	}
-	defer resp.Body.Close()
-
-	// Parse response
-	var mcpResponse map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&mcpResponse); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	
+	// Check initialize response
+	if initResponse["error"] != nil {
+		return nil, fmt.Errorf("initialize failed: %v", initResponse["error"])
 	}
-
-	return h.parseToolsFromMCPResponse(mcpResponse)
+	
+	// Step 2: Send initialized notification
+	initializedNotif := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "notifications/initialized",
+		"params":  map[string]interface{}{},
+	}
+	
+	err = h.sendHTTPNotificationWithSession(conn.HTTPConnection, sessionID, initializedNotif)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send initialized notification: %w", err)
+	}
+	
+	// Step 3: Send tools/list request
+	toolsRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      h.generateStringID(),
+		"method":  "tools/list",
+		"params":  map[string]interface{}{},
+	}
+	
+	toolsResponse, err := h.sendHTTPRequestWithSession(conn.HTTPConnection, sessionID, toolsRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send tools/list request: %w", err)
+	}
+	
+	return h.parseToolsFromMCPResponse(toolsResponse)
 }
 
-// makeSSEToolsListRequest makes SSE tools/list request  
+// makeSSEToolsListRequest makes SSE tools/list request with proper MCP session management
 func (h *ProxyHandler) makeSSEToolsListRequest(conn *discovery.MCPConnection, request map[string]interface{}) ([]Tool, error) {
-	// For SSE, we'd need to implement the full SSE protocol
-	// For now, return error and fall back to placeholder tools
-	return nil, fmt.Errorf("SSE tools discovery not yet implemented")
+	if conn.SSEConnection == nil {
+		return nil, fmt.Errorf("no SSE connection available")
+	}
+	
+	h.Logger.Info("Starting SSE tools/list request for server %s", conn.Endpoint.Name)
+	
+	// Step 1: Establish SSE connection and get session endpoint
+	sessionEndpoint, err := h.establishSSESession(conn.SSEConnection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish SSE session: %w", err)
+	}
+	
+	sessionURL := conn.SSEConnection.BaseURL + sessionEndpoint
+	h.Logger.Info("Got session URL: %s", sessionURL)
+	
+	// Step 2: Send initialize request (don't wait for response)
+	initRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      h.generateStringID(),
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"clientInfo": map[string]interface{}{
+				"name":    "matey-proxy",
+				"version": "1.0.0",
+			},
+			"capabilities": map[string]interface{}{},
+		},
+	}
+	
+	err = h.sendSSENotification(sessionURL, initRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send initialize request: %w", err)
+	}
+	
+	// Step 3: Send initialized notification (don't wait for response)
+	initializedNotif := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "notifications/initialized",
+		"params":  map[string]interface{}{},
+	}
+	
+	err = h.sendSSENotification(sessionURL, initializedNotif)
+	if err != nil {
+		h.Logger.Warning("Failed to send initialized notification: %v (continuing anyway)", err)
+	} else {
+		h.Logger.Info("Sent initialized notification successfully")
+	}
+	
+	// Give the server a moment to process
+	time.Sleep(100 * time.Millisecond)
+	
+	// Step 4: Send tools/list request
+	toolsRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      h.generateStringID(),
+		"method":  "tools/list",
+		"params":  map[string]interface{}{},
+	}
+	
+	toolsResponse, err := h.sendSSERequestAndWaitForResponse(sessionURL, toolsRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send tools/list request: %w", err)
+	}
+	
+	h.Logger.Info("Got tools/list response: %v", toolsResponse)
+	return h.parseToolsFromMCPResponse(toolsResponse)
+}
+
+
+// establishSSESession establishes an SSE session and returns the session endpoint
+func (h *ProxyHandler) establishSSESession(sseConn *discovery.MCPSSEConnection) (string, error) {
+	h.Logger.Debug("Establishing SSE session to: %s", sseConn.BaseURL)
+	
+	// Try GET first (some SSE servers expect GET for initial handshake)
+	req, err := http.NewRequest("GET", sseConn.BaseURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create handshake request: %w", err)
+	}
+	
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+	
+	// Send handshake request
+	resp, err := sseConn.Client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send handshake request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	h.Logger.Debug("SSE handshake response status: %d", resp.StatusCode)
+	
+	// Parse SSE stream for session endpoint
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		h.Logger.Debug("SSE handshake line: %s", line)
+		
+		// Handle empty lines
+		if line == "" {
+			continue
+		}
+		
+		// Look for endpoint event
+		if strings.HasPrefix(line, "event: endpoint") {
+			// Next line should contain the session endpoint
+			if scanner.Scan() {
+				dataLine := scanner.Text()
+				h.Logger.Debug("SSE handshake data line: %s", dataLine)
+				if strings.HasPrefix(dataLine, "data: ") {
+					endpoint := strings.TrimPrefix(dataLine, "data: ")
+					h.Logger.Info("Found SSE session endpoint: %s", endpoint)
+					return endpoint, nil
+				}
+			}
+		}
+		
+		// Some servers may send session info in different formats
+		if strings.HasPrefix(line, "data: ") {
+			dataContent := strings.TrimPrefix(line, "data: ")
+			h.Logger.Debug("SSE handshake data content: %s", dataContent)
+			
+			// Try to parse as JSON to see if it contains session info
+			var sessionInfo map[string]interface{}
+			if err := json.Unmarshal([]byte(dataContent), &sessionInfo); err == nil {
+				if sessionEndpoint, ok := sessionInfo["endpoint"].(string); ok {
+					h.Logger.Info("Found session endpoint in JSON: %s", sessionEndpoint)
+					return sessionEndpoint, nil
+				}
+				if sessionPath, ok := sessionInfo["path"].(string); ok {
+					h.Logger.Info("Found session path in JSON: %s", sessionPath)
+					return sessionPath, nil
+				}
+			}
+			
+			// If it looks like a path, use it directly
+			if strings.HasPrefix(dataContent, "/") {
+				h.Logger.Info("Using data content as session endpoint: %s", dataContent)
+				return dataContent, nil
+			}
+		}
+	}
+	
+	return "", fmt.Errorf("no session endpoint found in SSE handshake response")
+}
+
+
+// parseSSEResponse parses SSE stream for MCP JSON-RPC response
+func (h *ProxyHandler) parseSSEResponse(reader io.Reader) (map[string]interface{}, error) {
+	scanner := bufio.NewScanner(reader)
+	
+	for scanner.Scan() {
+		line := scanner.Text()
+		h.Logger.Debug("SSE response line: %s", line)
+		
+		// Handle empty lines
+		if line == "" {
+			continue
+		}
+		
+		// Look for SSE event: response format (proper MCP format)
+		if strings.HasPrefix(line, "event: response") {
+			h.Logger.Info("Found SSE event: response")
+			// Next line should be the data
+			if scanner.Scan() {
+				dataLine := scanner.Text()
+				h.Logger.Info("SSE data line: %s", dataLine)
+				if strings.HasPrefix(dataLine, "data: ") {
+					jsonData := strings.TrimPrefix(dataLine, "data: ")
+					h.Logger.Info("SSE JSON data: %s", jsonData)
+					
+					var response MCPResponse
+					if err := json.Unmarshal([]byte(jsonData), &response); err == nil {
+						h.Logger.Debug("Successfully parsed SSE response with ID: %s", response.ID)
+						// Convert to map for compatibility
+						responseMap := make(map[string]interface{})
+						responseMap["jsonrpc"] = response.JSONRPC
+						responseMap["id"] = response.ID
+						responseMap["result"] = response.Result
+						responseMap["error"] = response.Error
+						return responseMap, nil
+					} else {
+						h.Logger.Debug("Failed to parse SSE response as MCPResponse: %v", err)
+					}
+				}
+			}
+		}
+		
+		// Look for SSE event: message format (alternative format from mcp-compose)
+		if strings.HasPrefix(line, "event: message") {
+			h.Logger.Info("Found SSE event: message")
+			// Next line should be the data
+			if scanner.Scan() {
+				dataLine := scanner.Text()
+				h.Logger.Info("SSE message data line: %s", dataLine)
+				if strings.HasPrefix(dataLine, "data: ") {
+					jsonData := strings.TrimPrefix(dataLine, "data: ")
+					h.Logger.Info("SSE message JSON data: %s", jsonData)
+					
+					var response map[string]interface{}
+					if err := json.Unmarshal([]byte(jsonData), &response); err == nil {
+						h.Logger.Debug("Successfully parsed SSE message response: %v", response)
+						// Check if this is our tools/list response
+						if response["id"] != nil && (response["result"] != nil || response["error"] != nil) {
+							return response, nil
+						}
+					} else {
+						h.Logger.Debug("Failed to parse SSE message response: %v", err)
+					}
+				}
+			}
+		}
+		
+		// Look for any other event formats
+		if strings.HasPrefix(line, "event: ") && !strings.HasPrefix(line, "event: endpoint") {
+			eventType := strings.TrimPrefix(line, "event: ")
+			h.Logger.Debug("Found SSE event: %s", eventType)
+			// Next line should be the data
+			if scanner.Scan() {
+				dataLine := scanner.Text()
+				h.Logger.Debug("SSE event data line: %s", dataLine)
+				if strings.HasPrefix(dataLine, "data: ") {
+					jsonData := strings.TrimPrefix(dataLine, "data: ")
+					h.Logger.Debug("SSE event JSON data: %s", jsonData)
+					
+					var response map[string]interface{}
+					if err := json.Unmarshal([]byte(jsonData), &response); err == nil {
+						h.Logger.Debug("Successfully parsed SSE event response: %v", response)
+						// Check if this is our tools/list response
+						if response["id"] != nil && (response["result"] != nil || response["error"] != nil) {
+							return response, nil
+						}
+					} else {
+						h.Logger.Debug("Failed to parse SSE event response: %v", err)
+					}
+				}
+			}
+		}
+		
+		// Fallback: handle legacy data: format
+		if strings.HasPrefix(line, "data: ") {
+			jsonData := strings.TrimPrefix(line, "data: ")
+			h.Logger.Debug("Legacy SSE data: %s", jsonData)
+			
+			// Parse JSON-RPC response
+			var response map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonData), &response); err != nil {
+				h.Logger.Debug("Failed to parse legacy SSE data: %v", err)
+				continue // Skip invalid JSON
+			}
+			
+			h.Logger.Debug("Parsed legacy SSE response: %v", response)
+			// Check if this is our tools/list response
+			if response["id"] != nil && (response["result"] != nil || response["error"] != nil) {
+				return response, nil
+			}
+		}
+	}
+	
+	h.Logger.Info("No valid MCP response found in SSE stream")
+	return nil, fmt.Errorf("no valid MCP response found in SSE stream")
 }
 
 // parseToolsFromMCPResponse parses tools from MCP response
@@ -753,6 +1091,158 @@ func (h *ProxyHandler) getNextRequestID() int {
 	return h.GlobalRequestID
 }
 
+// generateStringID generates a unique string ID for MCP requests
+func (h *ProxyHandler) generateStringID() string {
+	h.GlobalIDMutex.Lock()
+	defer h.GlobalIDMutex.Unlock()
+	h.GlobalRequestID++
+	return strconv.Itoa(h.GlobalRequestID)
+}
+
+// sendHTTPRequestWithSession sends HTTP request with session management
+func (h *ProxyHandler) sendHTTPRequestWithSession(httpConn *discovery.MCPHTTPConnection, sessionID string, request map[string]interface{}) (map[string]interface{}, error) {
+	// Marshal request
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", httpConn.BaseURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set session headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Mcp-Session-Id", sessionID)
+	
+	resp, err := httpConn.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	var mcpResponse map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&mcpResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return mcpResponse, nil
+}
+
+// sendHTTPNotificationWithSession sends HTTP notification with session management
+func (h *ProxyHandler) sendHTTPNotificationWithSession(httpConn *discovery.MCPHTTPConnection, sessionID string, notification map[string]interface{}) error {
+	// Marshal notification
+	payload, err := json.Marshal(notification)
+	if err != nil {
+		return fmt.Errorf("failed to marshal notification: %w", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", httpConn.BaseURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set session headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Mcp-Session-Id", sessionID)
+	
+	resp, err := httpConn.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to make HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// sendSSERequestAndWaitForResponse sends SSE request and waits for response
+func (h *ProxyHandler) sendSSERequestAndWaitForResponse(sessionURL string, request map[string]interface{}) (map[string]interface{}, error) {
+	// Marshal request
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	h.Logger.Info("Sending SSE request to %s: %s", sessionURL, string(payload))
+
+	// Create HTTP request to session endpoint with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	req, err := http.NewRequestWithContext(ctx, "POST", sessionURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+	
+	// Send request and read SSE stream
+	resp, err := h.sseClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send session request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	h.Logger.Info("SSE request response status: %d", resp.StatusCode)
+	
+	// Handle non-200 responses
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("SSE request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	
+	// Parse SSE stream for MCP JSON-RPC response
+	return h.parseSSEResponse(resp.Body)
+}
+
+// sendSSENotification sends SSE notification without waiting for response
+func (h *ProxyHandler) sendSSENotification(sessionURL string, notification map[string]interface{}) error {
+	// Marshal notification
+	payload, err := json.Marshal(notification)
+	if err != nil {
+		return fmt.Errorf("failed to marshal notification: %w", err)
+	}
+
+	// Create HTTP request to session endpoint
+	req, err := http.NewRequest("POST", sessionURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create session request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	
+	// Send notification
+	resp, err := h.sseClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send session notification: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("SSE notification failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
 // Direct tool execution support
 
 
@@ -900,7 +1390,7 @@ func (h *ProxyHandler) getOptimalSSEConnection(serverName string) (interface{}, 
 	return nil, fmt.Errorf("no SSE connection available for server %s", serverName)
 }
 
-// sendOptimalSSERequest with map[string]interface{} payload support  
+// sendOptimalSSERequest with proper MCP protocol implementation
 func (h *ProxyHandler) sendOptimalSSERequest(serverName string, payload interface{}) (map[string]interface{}, error) {
 	conn, err := h.ConnectionManager.GetConnection(serverName)
 	if err != nil {
@@ -911,28 +1401,34 @@ func (h *ProxyHandler) sendOptimalSSERequest(serverName string, payload interfac
 		return nil, fmt.Errorf("no SSE connection available for server %s", serverName)
 	}
 
-	// Convert payload to bytes if it's a map
-	var payloadBytes []byte
+	// Convert payload to request map
+	var request map[string]interface{}
 	switch p := payload.(type) {
 	case []byte:
-		payloadBytes = p
-	case map[string]interface{}:
-		var err error
-		payloadBytes, err = json.Marshal(p)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal payload: %w", err)
+		if err := json.Unmarshal(p, &request); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal payload: %w", err)
 		}
+	case map[string]interface{}:
+		request = p
 	default:
 		return nil, fmt.Errorf("unsupported payload type: %T", payload)
 	}
 
-	// Make SSE request with the payload
-	// This is a simplified implementation - in reality this would involve
-	// the full SSE protocol handling
+	// Use the proper MCP tools discovery implementation
+	tools, err := h.makeSSEToolsListRequest(conn, request)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert tools to response format
+	result := map[string]interface{}{
+		"tools": tools,
+	}
+	
 	return map[string]interface{}{
 		"jsonrpc": "2.0",
-		"result":  map[string]interface{}{"status": "processed via SSE", "payload_size": len(payloadBytes)},
-		"id":      h.getNextRequestID(),
+		"result":  result,
+		"id":      request["id"],
 	}, nil
 }
 
@@ -969,11 +1465,119 @@ func (h *ProxyHandler) recordConnectionEvent(serverName string, success, timeout
 			eventType = "ERROR"
 		}
 	}
-	h.Logger.Info(fmt.Sprintf("Connection event [%s] for server %s (success: %v, timeout: %v)", eventType, serverName, success, timeout))
+	h.Logger.Info("Connection event [%s] for server %s (success: %v, timeout: %v)", eventType, serverName, success, timeout)
 }
 
 // maintainEnhancedSSEConnections maintains enhanced SSE connections (compatibility method)
 func (h *ProxyHandler) maintainEnhancedSSEConnections() {
 	// For K8s-native mode, connection maintenance is handled by the ConnectionManager
 	h.Logger.Debug("Enhanced SSE connection maintenance called - handled by K8s connection manager")
+}
+
+// shouldProcessForOpenWebUI determines if a response should be processed for OpenWebUI compatibility
+func (h *ProxyHandler) shouldProcessForOpenWebUI(r *http.Request, responseBody []byte) bool {
+	// Check if response looks like MCP JSON-RPC with tools/call result
+	var responseData map[string]interface{}
+	if json.Unmarshal(responseBody, &responseData) == nil {
+		if _, hasResult := responseData["result"]; hasResult {
+			if _, hasJsonRPC := responseData["jsonrpc"]; hasJsonRPC {
+				// Check if result contains content array (typical of tools/call responses)
+				if result, ok := responseData["result"].(map[string]interface{}); ok {
+					if _, hasContent := result["content"]; hasContent {
+						h.Logger.Info("Detected MCP tools/call response - processing for OpenWebUI")
+						return true
+					}
+				}
+			}
+		}
+	}
+	
+	return false
+}
+
+// processResponseForOpenWebUI processes MCP response for OpenWebUI compatibility
+func (h *ProxyHandler) processResponseForOpenWebUI(responseBody []byte) []byte {
+	h.Logger.Info("Processing MCP response for OpenWebUI: %s", string(responseBody))
+	
+	var response map[string]interface{}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		h.Logger.Warning("Failed to parse MCP response: %v", err)
+		return nil
+	}
+	
+	// Extract and format the successful result for OpenWebUI - return clean text
+	if result, exists := response["result"]; exists {
+		h.Logger.Info("Found result in MCP response")
+		if resultMap, ok := result.(map[string]interface{}); ok {
+			h.Logger.Info("Result is a map")
+			if content, exists := resultMap["content"]; exists {
+				h.Logger.Info("Found content in result: %+v", content)
+				// Process the content for OpenWebUI - extract text from MCP content array
+				cleanResult := h.processMCPContentForOpenWebUI(content)
+				h.Logger.Info("processMCPContentForOpenWebUI returned: %+v (type: %T)", cleanResult, cleanResult)
+				
+				// For OpenWebUI, we want just the text content, not JSON
+				if cleanText, ok := cleanResult.(string); ok {
+					h.Logger.Info("Successfully converted to string: %s", cleanText)
+					return []byte(cleanText)
+				} else {
+					h.Logger.Warning("cleanResult is not a string, type: %T", cleanResult)
+				}
+			} else {
+				h.Logger.Warning("No content found in result")
+			}
+		} else {
+			h.Logger.Warning("Result is not a map, type: %T", result)
+		}
+	} else {
+		h.Logger.Warning("No result found in response")
+	}
+	
+	return nil
+}
+
+// processMCPContentForOpenWebUI processes MCP content for OpenWebUI compatibility
+func (h *ProxyHandler) processMCPContentForOpenWebUI(content interface{}) interface{} {
+	h.Logger.Info("processMCPContentForOpenWebUI called with: %+v (type: %T)", content, content)
+	
+	if contentArray, ok := content.([]interface{}); ok {
+		h.Logger.Info("Content is an array with %d items", len(contentArray))
+		var textParts []string
+		for i, item := range contentArray {
+			h.Logger.Info("Processing item %d: %+v (type: %T)", i, item, item)
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemType, ok := itemMap["type"].(string); ok {
+					h.Logger.Info("Item type: %s", itemType)
+					switch itemType {
+					case "text":
+						if text, ok := itemMap["text"].(string); ok {
+							h.Logger.Info("Found text: %s", text)
+							textParts = append(textParts, text)
+						}
+					case "image":
+						if data, ok := itemMap["data"].(string); ok {
+							if mimeType, ok := itemMap["mimeType"].(string); ok {
+								imageURL := fmt.Sprintf("data:%s;base64,%s", mimeType, data)
+								h.Logger.Info("Found image: %s", imageURL)
+								textParts = append(textParts, imageURL)
+							}
+						}
+					// For other types, we skip them for OpenWebUI simplicity
+					}
+				}
+			}
+		}
+
+		// Join all text parts with newlines for OpenWebUI
+		if len(textParts) > 0 {
+			result := strings.Join(textParts, "\n")
+			h.Logger.Info("Returning joined text: %s", result)
+			return result
+		}
+		h.Logger.Info("No text parts found, returning original content")
+	} else {
+		h.Logger.Warning("Content is not an array, type: %T", content)
+	}
+
+	return content
 }

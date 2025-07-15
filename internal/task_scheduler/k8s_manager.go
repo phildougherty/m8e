@@ -78,7 +78,7 @@ func (m *K8sManager) Start() error {
 		case crd.MCPTaskSchedulerPhaseFailed:
 			m.logger.Info("Task scheduler is in failed state, will restart")
 		default:
-			m.logger.Info(fmt.Sprintf("Task scheduler exists in phase: %s", taskScheduler.Status.Phase))
+			m.logger.Info("Task scheduler exists in phase: %s", taskScheduler.Status.Phase)
 		}
 	} else {
 		// Create new MCPTaskScheduler resource
@@ -89,8 +89,8 @@ func (m *K8sManager) Start() error {
 		m.logger.Info("Created MCPTaskScheduler resource")
 	}
 
-	// Wait for the task scheduler to become ready
-	return m.waitForReady(ctx, "task-scheduler", 5*time.Minute)
+	// Don't wait for ready - let controller handle deployment in background
+	return nil
 }
 
 // Stop stops the task scheduler service
@@ -356,7 +356,7 @@ func (m *K8sManager) createTaskSchedulerResource() *crd.MCPTaskScheduler {
 
 // waitForReady waits for the task scheduler to become ready
 func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time.Duration) error {
-	m.logger.Info(fmt.Sprintf("Waiting for task scheduler %s to become ready...", name))
+	m.logger.Info("Waiting for task scheduler %s to become ready...", name)
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -389,7 +389,7 @@ func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time
 				return fmt.Errorf("task scheduler failed to start")
 			}
 
-			m.logger.Info(fmt.Sprintf("Task scheduler status: %s (ready: %d/%d)",
+			m.logger.Info("Task scheduler status: %s (ready: %d/%d",
 				taskScheduler.Status.Phase,
 				taskScheduler.Status.ReadyReplicas,
 				taskScheduler.Status.Replicas))

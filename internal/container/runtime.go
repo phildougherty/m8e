@@ -77,7 +77,6 @@ type HealthCheck struct {
 
 // SecurityConfig for container validation
 type SecurityConfig struct {
-	AllowDockerSocket  bool     `yaml:"allow_docker_socket,omitempty"`
 	AllowHostMounts    []string `yaml:"allow_host_mounts,omitempty"`
 	AllowPrivilegedOps bool     `yaml:"allow_privileged_ops,omitempty"`
 	TrustedImage       bool     `yaml:"trusted_image,omitempty"`
@@ -409,7 +408,6 @@ func ConvertConfigToContainerOptions(serverName string, serverCfg config.ServerC
 
 		// Security config for validation
 		Security: SecurityConfig{
-			AllowDockerSocket:  serverCfg.Security.AllowDockerSocket,
 			AllowHostMounts:    serverCfg.Security.AllowHostMounts,
 			AllowPrivilegedOps: serverCfg.Security.AllowPrivilegedOps,
 			TrustedImage:       serverCfg.Security.TrustedImage,
@@ -461,7 +459,6 @@ func GetDefaultContainerOptions() *ContainerOptions {
 		RestartPolicy: "Always",
 		Networks:      []string{"default"},
 		Security: SecurityConfig{
-			AllowDockerSocket:  false,
 			AllowPrivilegedOps: false,
 			TrustedImage:       false,
 		},

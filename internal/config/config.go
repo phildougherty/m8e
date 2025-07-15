@@ -184,7 +184,7 @@ type ServerConfig struct {
 	SSEPort         int                 `yaml:"sse_port,omitempty"`      // Port for SSE (if different from http_port)
 	SSEHeartbeat    int                 `yaml:"sse_heartbeat,omitempty"` // SSE heartbeat interval in seconds
 
-	// NEW: Docker-style container security and resource options
+	// Container security and resource options
 	Privileged    bool              `yaml:"privileged,omitempty"`
 	User          string            `yaml:"user,omitempty"`
 	Groups        []string          `yaml:"groups,omitempty"`
@@ -236,7 +236,7 @@ type BuildConfig struct {
 	Platform   string            `yaml:"platform,omitempty"`
 }
 
-// NEW: Deploy configuration for resource management
+// Deploy configuration for resource management
 type DeployConfig struct {
 	Resources     ResourcesDeployConfig `yaml:"resources,omitempty"`
 	RestartPolicy string                `yaml:"restart_policy,omitempty"`
@@ -265,7 +265,7 @@ type UpdateConfig struct {
 	MaxFailureRatio string `yaml:"max_failure_ratio,omitempty"`
 }
 
-// NEW: Network configuration
+// Network configuration
 type NetworkConfig struct {
 	Driver      string            `yaml:"driver,omitempty"`
 	DriverOpts  map[string]string `yaml:"driver_opts,omitempty"`
@@ -288,7 +288,7 @@ type IPAMConfigEntry struct {
 	Gateway string `yaml:"gateway,omitempty"`
 }
 
-// NEW: Volume configuration
+// Volume configuration
 type VolumeConfig struct {
 	Driver     string            `yaml:"driver,omitempty"`
 	DriverOpts map[string]string `yaml:"driver_opts,omitempty"`
@@ -399,8 +399,7 @@ type SecurityConfig struct {
 	Auth          AuthConfig          `yaml:"auth,omitempty"`
 	AccessControl AccessControlConfig `yaml:"access_control,omitempty"`
 
-	// NEW: Docker-style security capabilities
-	AllowDockerSocket  bool              `yaml:"allow_docker_socket,omitempty"`
+	// Container security capabilities
 	AllowHostMounts    []string          `yaml:"allow_host_mounts,omitempty"`
 	AllowPrivilegedOps bool              `yaml:"allow_privileged_ops,omitempty"`
 	TrustedImage       bool              `yaml:"trusted_image,omitempty"`
@@ -786,12 +785,12 @@ func ValidateConfig(config *ComposeConfig) error {
 
 			return err
 		}
-		// NEW: Validate security configuration
+		// Validate security configuration
 		if err := validateSecurityConfig(name, server.Security); err != nil {
 
 			return err
 		}
-		// NEW: Validate resource limits
+		// Validate resource limits
 		if err := validateResourceLimits(name, server.Deploy.Resources); err != nil {
 
 			return err
@@ -1043,7 +1042,7 @@ func validateToolsConfig(serverName string, tools []ToolConfig) error {
 	return nil
 }
 
-// NEW: Validate security configuration
+// Validate security configuration
 func validateSecurityConfig(serverName string, security SecurityConfig) error {
 	// Validate AppArmor profile
 	if security.AppArmor != "" {
@@ -1082,7 +1081,7 @@ func validateSecurityConfig(serverName string, security SecurityConfig) error {
 	return nil
 }
 
-// NEW: Validate resource limits
+// Validate resource limits
 func validateResourceLimits(serverName string, resources ResourcesDeployConfig) error {
 	// Validate CPU limits
 	if resources.Limits.CPUs != "" {

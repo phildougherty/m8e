@@ -134,7 +134,7 @@ func (dcm *DynamicConnectionManager) Start() error {
 		dcm.OnServiceAdded(service)
 	}
 
-	dcm.logger.Info(fmt.Sprintf("Connection manager started with %d initial services", len(services)))
+	dcm.logger.Info("Connection manager started with %d initial services", len(services))
 	return nil
 }
 
@@ -156,14 +156,14 @@ func (dcm *DynamicConnectionManager) Stop() {
 
 // OnServiceAdded handles service discovery events when a new service is added
 func (dcm *DynamicConnectionManager) OnServiceAdded(endpoint ServiceEndpoint) {
-	dcm.logger.Info(fmt.Sprintf("Adding connection to service: %s (%s)", endpoint.Name, endpoint.URL))
+	dcm.logger.Info("Adding connection to service: %s (%s", endpoint.Name, endpoint.URL))
 
 	dcm.mu.Lock()
 	defer dcm.mu.Unlock()
 
 	// Check if connection already exists
 	if _, exists := dcm.connections[endpoint.Name]; exists {
-		dcm.logger.Info(fmt.Sprintf("Connection to %s already exists", endpoint.Name))
+		dcm.logger.Info("Connection to %s already exists", endpoint.Name)
 		return
 	}
 
@@ -183,7 +183,7 @@ func (dcm *DynamicConnectionManager) OnServiceAdded(endpoint ServiceEndpoint) {
 
 // OnServiceModified handles service discovery events when a service is modified
 func (dcm *DynamicConnectionManager) OnServiceModified(endpoint ServiceEndpoint) {
-	dcm.logger.Info(fmt.Sprintf("Updating connection to service: %s", endpoint.Name))
+	dcm.logger.Info("Updating connection to service: %s", endpoint.Name)
 
 	dcm.mu.Lock()
 	defer dcm.mu.Unlock()
@@ -205,7 +205,7 @@ func (dcm *DynamicConnectionManager) OnServiceModified(endpoint ServiceEndpoint)
 
 // OnServiceDeleted handles service discovery events when a service is deleted
 func (dcm *DynamicConnectionManager) OnServiceDeleted(serviceName, namespace string) {
-	dcm.logger.Info(fmt.Sprintf("Removing connection to service: %s", serviceName))
+	dcm.logger.Info("Removing connection to service: %s", serviceName)
 
 	dcm.mu.Lock()
 	defer dcm.mu.Unlock()
@@ -270,7 +270,7 @@ func (dcm *DynamicConnectionManager) GetConnectionStatus() map[string]Connection
 
 // initializeConnection establishes a connection to an MCP server
 func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
-	dcm.logger.Info(fmt.Sprintf("Initializing connection to %s (%s)", conn.Endpoint.Name, conn.Endpoint.Protocol))
+	dcm.logger.Info("Initializing connection to %s (%s", conn.Endpoint.Name, conn.Endpoint.Protocol))
 
 	var err error
 	
@@ -300,7 +300,7 @@ func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
 	} else {
 		conn.Status = "connected"
 		conn.ErrorCount = 0
-		dcm.logger.Info(fmt.Sprintf("Successfully connected to %s", conn.Endpoint.Name))
+		dcm.logger.Info("Successfully connected to %s", conn.Endpoint.Name)
 	}
 	conn.mu.Unlock()
 }
@@ -323,8 +323,10 @@ func (dcm *DynamicConnectionManager) initializeHTTPConnection(conn *MCPConnectio
 
 // initializeSSEConnection creates an SSE connection
 func (dcm *DynamicConnectionManager) initializeSSEConnection(conn *MCPConnection) error {
+	// SSE connections typically use /sse path
+	sseURL := conn.Endpoint.URL + "/sse"
 	sseConn := &MCPSSEConnection{
-		BaseURL:    conn.Endpoint.URL,
+		BaseURL:    sseURL,
 		Client:     dcm.sseClient,
 		LastUsed:   time.Now(),
 	}
@@ -429,7 +431,7 @@ func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) 
 	if !healthy {
 		conn.Status = "unhealthy"
 		conn.ErrorCount++
-		dcm.logger.Info(fmt.Sprintf("Health check failed for %s", conn.Endpoint.Name))
+		dcm.logger.Info("Health check failed for %s", conn.Endpoint.Name)
 	} else {
 		conn.ErrorCount = 0
 	}

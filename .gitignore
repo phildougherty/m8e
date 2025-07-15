@@ -1,4 +1,9 @@
+matey.yaml
+TODO.md
+CLAUDE.md
+
 # Binaries for programs and plugins
+matey
 *.exe
 *.exe~
 *.dll
@@ -58,7 +63,7 @@ auth.json
 build/
 dist/
 bin/
-mcp-compose
+matey
 
 # Custom development files
 custom_mcp/

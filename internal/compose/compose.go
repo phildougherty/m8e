@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
@@ -189,7 +191,97 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 		}
 	}
 
+	// Check MCP server statuses via Kubernetes API
+	for serverName := range c.config.Servers {
+		serverStatus := c.getMCPServerStatus(serverName)
+		status.Services[serverName] = &ServiceStatus{
+			Name:   serverName,
+			Status: serverStatus,
+			Type:   "mcp-server",
+		}
+	}
+
 	return status, nil
+}
+
+// getMCPServerStatus gets the status of an MCP server via MCPServer CRD with deployment fallback
+func (c *K8sComposer) getMCPServerStatus(serverName string) string {
+	ctx := context.Background()
+	
+	// Use controller manager's client if available, otherwise fall back to k8sClient
+	var clientToUse client.Client
+	if c.controllerManager != nil && c.controllerManager.GetClient() != nil {
+		clientToUse = c.controllerManager.GetClient()
+	} else {
+		clientToUse = c.k8sClient
+	}
+	
+	// Try to get MCPServer CRD status first
+	mcpServer := &crd.MCPServer{}
+	err := clientToUse.Get(ctx, client.ObjectKey{
+		Name:      serverName,
+		Namespace: c.namespace,
+	}, mcpServer)
+	
+	if err == nil {
+		// MCPServer CRD exists, use its status
+		switch mcpServer.Status.Phase {
+		case crd.MCPServerPhaseRunning:
+			return "running"
+		case crd.MCPServerPhasePending:
+			return "pending"
+		case crd.MCPServerPhaseFailed:
+			return "failed"
+		default:
+			return "unknown"
+		}
+	}
+	
+	// MCPServer CRD not found or error, fall back to deployment status
+	if client.IgnoreNotFound(err) != nil {
+		// Real error, not just not found
+		return "error"
+	}
+	
+	// Get the deployment for this server
+	deployment := &appsv1.Deployment{}
+	err = clientToUse.Get(ctx, client.ObjectKey{
+		Name:      serverName,
+		Namespace: c.namespace,
+	}, deployment)
+	
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return "not-found"
+		}
+		return "error"
+	}
+
+	// Check deployment status
+	if deployment.Status.ReadyReplicas > 0 {
+		return "running"
+	}
+
+	// Check if there are any pods and their status
+	podList := &corev1.PodList{}
+	err = clientToUse.List(ctx, podList, client.InNamespace(c.namespace), client.MatchingLabels{"app": serverName})
+	if err != nil || len(podList.Items) == 0 {
+		return "pending"
+	}
+
+	// Check first pod status
+	pod := podList.Items[0]
+	switch pod.Status.Phase {
+	case corev1.PodRunning:
+		// If pod is running but deployment says 0 ready replicas, it's still starting
+		return "starting"
+	case corev1.PodPending:
+		return "pending"
+	case corev1.PodFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
 }
 
 // startAllEnabledServices starts all services that are enabled in config
@@ -518,7 +610,6 @@ func (c *K8sComposer) convertServerConfigToMCPServer(name string, serverConfig c
 		CapAdd:             serverConfig.CapAdd,
 		CapDrop:            serverConfig.CapDrop,
 		// Set from Security field if available
-		AllowDockerSocket:  serverConfig.Security.AllowDockerSocket,
 		AllowHostMounts:    serverConfig.Security.AllowHostMounts,
 		TrustedImage:       serverConfig.Security.TrustedImage,
 		NoNewPrivileges:    serverConfig.Security.NoNewPrivileges,

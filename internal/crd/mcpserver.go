@@ -454,6 +454,8 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&MCPMemoryList{},
 		&MCPProxy{},
 		&MCPProxyList{},
+		&MCPToolbox{},
+		&MCPToolboxList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

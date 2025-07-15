@@ -63,6 +63,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Handle global OpenAPI spec BEFORE authentication - this should be public
+	if path == "/openapi.json" {
+		h.handleOpenAPISpec(w, r)
+		h.logger.Debug("Processed global OpenAPI spec %s %s in %v", r.Method, r.URL.Path, time.Since(start))
+		return
+	}
+
 	// NOW do authentication check for other endpoints
 	if !h.authenticateAPIRequest(w, r) {
 
@@ -72,7 +79,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Handle server-specific OpenAPI specs
 	if len(parts) >= 2 && parts[1] == "openapi.json" {
 		serverName := parts[0]
-		if _, exists := h.Manager.config.Servers[serverName]; exists {
+		// Check if server exists in K8s-native discovery
+		if _, err := h.ConnectionManager.GetConnection(serverName); err == nil {
 			h.handleServerOpenAPISpec(w, r, serverName)
 			h.logger.Debug("Processed server OpenAPI spec %s %s in %v", r.Method, r.URL.Path, time.Since(start))
 
@@ -83,7 +91,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Handle server-specific docs
 	if len(parts) >= 2 && parts[1] == "docs" {
 		serverName := parts[0]
-		if _, exists := h.Manager.config.Servers[serverName]; exists {
+		// Check if server exists in K8s-native discovery
+		if _, err := h.ConnectionManager.GetConnection(serverName); err == nil {
 			h.handleServerDocs(w, r, serverName)
 			h.logger.Debug("Processed server docs %s %s in %v", r.Method, r.URL.Path, time.Since(start))
 
@@ -105,8 +114,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CRITICAL FIX: Handle direct tool calls BEFORE server routing
 	if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodPost {
 		toolName := parts[0]
-		// First check if it's a known tool
-		if h.isKnownTool(toolName) {
+		// First check if it's a known tool using K8s-native approach
+		if _, found := h.FindServerForTool(toolName); found {
 			h.logger.Info("Handling direct tool call for: %s", toolName)
 			h.handleDirectToolCall(w, r, toolName)
 			h.logger.Debug("Processed direct tool call %s %s in %v", r.Method, r.URL.Path, time.Since(start))
@@ -114,8 +123,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// If not a known tool, check if it's a server name
-		if _, exists := h.Manager.GetServerInstance(toolName); exists {
+		// If not a known tool, check if it's a server name using K8s-native approach
+		if _, err := h.ConnectionManager.GetConnection(toolName); err == nil {
 			h.logger.Info("Routing to server: %s", toolName)
 			// This is a server, handle as server request
 			goto handleServer
@@ -135,17 +144,25 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 handleServer:
-	// Handle server routing
+	// Handle server routing using K8s-native connections
 	if len(parts) > 0 && parts[0] != "api" {
 		serverName := parts[0]
-		if instance, exists := h.Manager.GetServerInstance(serverName); exists {
+		if conn, err := h.ConnectionManager.GetConnection(serverName); err == nil {
 			if r.Method == http.MethodPost {
-				// Use the new notification-aware method handler
-				h.handleMCPMethodForwarding(w, r, serverName, instance)
-			} else if r.Method == http.MethodGet && (len(parts) == 1 || (len(parts) > 1 && strings.HasSuffix(parts[1], ".json"))) {
-				h.handleServerDetails(w, r, serverName, instance)
-			} else if r.Method == http.MethodDelete && len(parts) == 1 && r.Header.Get("Mcp-Session-Id") != "" {
-				h.handleSessionTermination(w, r, serverName)
+				// For now, just return a simple response
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]string{"message": "Server found but direct server POST not implemented yet"})
+			} else if r.Method == http.MethodGet {
+				// For GET requests, show connection info
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"server": serverName,
+					"status": conn.Status,
+					"protocol": conn.Endpoint.Protocol,
+					"url": conn.Endpoint.URL,
+				})
 			} else {
 				h.logger.Warning("Method %s not allowed for /%s", r.Method, serverName)
 				h.corsError(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -250,10 +267,6 @@ func (h *ProxyHandler) handleAPIEndpoints(w http.ResponseWriter, r *http.Request
 		return true
 	case "/api/notifications":
 		h.handleNotificationsAPI(w, r)
-
-		return true
-	case "/openapi.json":
-		h.handleOpenAPISpec(w, r)
 
 		return true
 	}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -24,7 +26,7 @@ func NewInstallCommand() *cobra.Command {
 		Long: `Install Matey Custom Resource Definitions (CRDs) and required Kubernetes resources.
 
 This command must be run before using 'matey up' for the first time to install
-the necessary CRDs (MCPServer, MCPMemory, MCPTaskScheduler) into the cluster.
+the necessary CRDs (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy) and RBAC resources into the cluster.
 
 Examples:
   matey install                    # Install all CRDs and resources
@@ -49,6 +51,10 @@ func installCRDs(dryRun bool) error {
 		fmt.Println("✓ MCPServer CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ MCPMemory CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ MCPTaskScheduler CRD (mcp.matey.ai/v1)")
+		fmt.Println("✓ MCPProxy CRD (mcp.matey.ai/v1)")
+		fmt.Println("✓ ServiceAccount: matey-controller")
+		fmt.Println("✓ ClusterRole: matey-controller")
+		fmt.Println("✓ ClusterRoleBinding: matey-controller")
 		return nil
 	}
 
@@ -85,8 +91,34 @@ func installCRDs(dryRun bool) error {
 	}
 	fmt.Println("✓ MCPTaskScheduler CRD installed")
 
+	// Install MCPProxy CRD
+	err = installMCPProxyCRD(ctx, k8sClient)
+	if err != nil {
+		return fmt.Errorf("failed to install MCPProxy CRD: %w", err)
+	}
+	fmt.Println("✓ MCPProxy CRD installed")
+
+	// Install RBAC resources
+	err = installServiceAccount(ctx, k8sClient)
+	if err != nil {
+		return fmt.Errorf("failed to install ServiceAccount: %w", err)
+	}
+	fmt.Println("✓ ServiceAccount installed")
+
+	err = installClusterRole(ctx, k8sClient)
+	if err != nil {
+		return fmt.Errorf("failed to install ClusterRole: %w", err)
+	}
+	fmt.Println("✓ ClusterRole installed")
+
+	err = installClusterRoleBinding(ctx, k8sClient)
+	if err != nil {
+		return fmt.Errorf("failed to install ClusterRoleBinding: %w", err)
+	}
+	fmt.Println("✓ ClusterRoleBinding installed")
+
 	fmt.Println("\n🎉 Matey installation complete!")
-	fmt.Println("You can now run 'matey up' to start your services.")
+	fmt.Println("You can now run 'matey up' or 'matey proxy' to start your services.")
 
 	return nil
 }
@@ -119,6 +151,12 @@ func createK8sClientWithCRDs() (client.Client, error) {
 	}
 	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add apiextensions scheme: %w", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add corev1 scheme: %w", err)
+	}
+	if err := rbacv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add rbacv1 scheme: %w", err)
 	}
 
 	// Create the client
@@ -327,6 +365,174 @@ func installMCPTaskSchedulerCRD(ctx context.Context, k8sClient client.Client) er
 	}
 
 	err := k8sClient.Create(ctx, crd)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+// installMCPProxyCRD installs the MCPProxy CRD
+func installMCPProxyCRD(ctx context.Context, k8sClient client.Client) error {
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "mcpproxies.mcp.matey.ai",
+			Annotations: map[string]string{
+				"controller-gen.kubebuilder.io/version": "v0.12.0",
+			},
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "mcp.matey.ai",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:     "MCPProxy",
+				ListKind: "MCPProxyList",
+				Plural:   "mcpproxies",
+				Singular: "mcpproxy",
+				ShortNames: []string{"mcpproxy"},
+			},
+			Scope: apiextensionsv1.NamespaceScoped,
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name:    "v1",
+					Served:  true,
+					Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]apiextensionsv1.JSONSchemaProps{
+								"spec": {
+									Type: "object",
+									Properties: map[string]apiextensionsv1.JSONSchemaProps{
+										"port":        {Type: "integer", Format: "int32"},
+										"host":        {Type: "string"},
+										"replicas":    {Type: "integer", Format: "int32"},
+										"serviceType": {Type: "string"},
+										"auth": {
+											Type: "object",
+											Properties: map[string]apiextensionsv1.JSONSchemaProps{
+												"enabled": {Type: "boolean"},
+												"apiKey":  {Type: "string"},
+											},
+										},
+										"ingress": {
+											Type: "object",
+											Properties: map[string]apiextensionsv1.JSONSchemaProps{
+												"enabled": {Type: "boolean"},
+												"host":    {Type: "string"},
+											},
+										},
+										"serviceAccount": {Type: "string"},
+									},
+								},
+								"status": {
+									Type: "object",
+									Properties: map[string]apiextensionsv1.JSONSchemaProps{
+										"phase":         {Type: "string"},
+										"replicas":      {Type: "integer", Format: "int32"},
+										"readyReplicas": {Type: "integer", Format: "int32"},
+									},
+								},
+							},
+						},
+					},
+					Subresources: &apiextensionsv1.CustomResourceSubresources{
+						Status: &apiextensionsv1.CustomResourceSubresourceStatus{},
+					},
+				},
+			},
+		},
+	}
+
+	err := k8sClient.Create(ctx, crd)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+// installServiceAccount installs the matey-controller service account
+func installServiceAccount(ctx context.Context, k8sClient client.Client) error {
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-controller",
+			Namespace: "default",
+		},
+	}
+
+	err := k8sClient.Create(ctx, sa)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+// installClusterRole installs the matey-controller cluster role
+func installClusterRole(ctx context.Context, k8sClient client.Client) error {
+	cr := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "matey-controller",
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods", "services", "endpoints", "persistentvolumeclaims", "events", "configmaps", "secrets", "serviceaccounts"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments", "daemonsets", "replicasets", "statefulsets"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"networking.k8s.io"},
+				Resources: []string{"ingresses"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"batch"},
+				Resources: []string{"jobs", "cronjobs"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status"},
+				Verbs:     []string{"get", "update", "patch"},
+			},
+		},
+	}
+
+	err := k8sClient.Create(ctx, cr)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+// installClusterRoleBinding installs the matey-controller cluster role binding
+func installClusterRoleBinding(ctx context.Context, k8sClient client.Client) error {
+	crb := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "matey-controller",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "matey-controller",
+				Namespace: "default",
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "matey-controller",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	err := k8sClient.Create(ctx, crb)
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}

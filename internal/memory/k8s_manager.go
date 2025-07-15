@@ -69,7 +69,7 @@ func (m *K8sManager) Start() error {
 		case crd.MCPMemoryPhaseFailed:
 			m.logger.Info("Memory service is in failed state, will restart")
 		default:
-			m.logger.Info(fmt.Sprintf("Memory service exists in phase: %s", memory.Status.Phase))
+			m.logger.Info("Memory service exists in phase: %s", memory.Status.Phase)
 		}
 	} else {
 		// Create new MCPMemory resource
@@ -80,8 +80,8 @@ func (m *K8sManager) Start() error {
 		m.logger.Info("Created MCPMemory resource")
 	}
 
-	// Wait for the memory service to become ready
-	return m.waitForReady(ctx, "memory", 5*time.Minute)
+	// Don't wait for ready - let controller handle deployment in background
+	return nil
 }
 
 // Stop stops the memory service
@@ -306,7 +306,7 @@ func (m *K8sManager) createMemoryResource() *crd.MCPMemory {
 
 // waitForReady waits for the memory service to become ready
 func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time.Duration) error {
-	m.logger.Info(fmt.Sprintf("Waiting for memory service %s to become ready...", name))
+	m.logger.Info("Waiting for memory service %s to become ready...", name)
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -339,7 +339,7 @@ func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time
 				return fmt.Errorf("memory service failed to start")
 			}
 
-			m.logger.Info(fmt.Sprintf("Memory service status: %s (ready: %d/%d)",
+			m.logger.Info("Memory service status: %s (ready: %d/%d",
 				memory.Status.Phase,
 				memory.Status.ReadyReplicas,
 				memory.Status.Replicas))

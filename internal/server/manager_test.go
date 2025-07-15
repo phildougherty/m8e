@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/phildougherty/m8e/internal/config"
-	"github.com/phildougherty/m8e/internal/container"
 )
 
 func TestNewManager(t *testing.T) {
@@ -18,7 +17,7 @@ func TestNewManager(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManager(cfg, &container.NullRuntime{})
+	manager, err := NewManager(cfg)
 
 	if err != nil {
 		t.Fatalf("Expected no error creating manager, got: %v", err)
@@ -75,7 +74,7 @@ func TestManagerGetInstance(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManager(cfg, &container.NullRuntime{})
+	manager, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("Expected no error creating manager, got: %v", err)
 	}
@@ -117,7 +116,7 @@ func TestManagerGetServerStatus(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManager(cfg, &container.NullRuntime{})
+	manager, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("Expected no error creating manager, got: %v", err)
 	}
@@ -205,7 +204,7 @@ func TestManagerShutdown(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManager(cfg, &container.NullRuntime{})
+	manager, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("Expected no error creating manager, got: %v", err)
 	}
@@ -245,7 +244,7 @@ func TestManagerConcurrentAccess(t *testing.T) {
 		},
 	}
 
-	manager, err := NewManager(cfg, &container.NullRuntime{})
+	manager, err := NewManager(cfg)
 	if err != nil {
 		t.Fatalf("Expected no error creating manager, got: %v", err)
 	}

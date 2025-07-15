@@ -1,14 +1,13 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
-	"github.com/phildougherty/m8e/internal/constants"
+	"github.com/phildougherty/m8e/internal/discovery"
 )
 
 // mcpResponseRecorder captures HTTP responses for MCP tool calls
@@ -36,7 +35,34 @@ func (r *mcpResponseRecorder) Write(body []byte) (int, error) {
 	return len(body), nil
 }
 
+// sendHTTPToolCall sends a tools/call request via HTTP
+func (h *ProxyHandler) sendHTTPToolCall(conn *discovery.MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
+	if conn.HTTPConnection == nil {
+		return nil, fmt.Errorf("no HTTP connection available")
+	}
+
+	return h.sendHTTPRequestWithSession(conn.HTTPConnection, h.generateStringID(), request)
+}
+
+// sendSSEToolCall sends a tools/call request via SSE
+func (h *ProxyHandler) sendSSEToolCall(conn *discovery.MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
+	if conn.SSEConnection == nil {
+		return nil, fmt.Errorf("no SSE connection available")
+	}
+
+	// Get session endpoint
+	sessionEndpoint, err := h.establishSSESession(conn.SSEConnection)
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish SSE session: %w", err)
+	}
+
+	sessionURL := conn.SSEConnection.BaseURL + sessionEndpoint
+	return h.sendSSERequestAndWaitForResponse(sessionURL, request)
+}
+
 func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Request, toolName string) {
+	h.logger.Info("=== DIRECT TOOL CALL DEBUG: Starting handleDirectToolCall for %s ===", toolName)
+	
 	// Authenticate
 	apiKeyToCheck := h.APIKey
 	if h.Manager != nil && h.Manager.config != nil && h.Manager.config.ProxyAuth.Enabled {
@@ -64,8 +90,8 @@ func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Find which server has this tool
-	serverName, found := h.findServerForTool(toolName)
+	// Find which server has this tool using K8s-native approach
+	serverName, found := h.FindServerForTool(toolName)
 	if !found {
 		h.logger.Warning("Tool %s not found in any server", toolName)
 		h.corsError(w, "Tool not found", http.StatusNotFound)
@@ -77,7 +103,7 @@ func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Reque
 
 	mcpRequest := map[string]interface{}{
 		"jsonrpc": "2.0",
-		"id":      h.getNextRequestID(),
+		"id":      h.generateStringID(),
 		"method":  "tools/call",
 		"params": map[string]interface{}{
 			"name":      toolName,
@@ -85,72 +111,132 @@ func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Reque
 		},
 	}
 
-	// Forward to the appropriate server and get response
-	if instance, exists := h.Manager.GetServerInstance(serverName); exists {
-		// Convert to request body
-		requestBody, err := json.Marshal(mcpRequest)
-		if err != nil {
-			h.logger.Error("Failed to marshal MCP request for tool %s: %v", toolName, err)
-			h.corsError(w, "Internal server error", http.StatusInternalServerError)
+	// Forward to the appropriate server using K8s-native connection management
+	conn, err := h.ConnectionManager.GetConnection(serverName)
+	if err != nil {
+		h.logger.Error("No connection available for server %s: %v", serverName, err)
+		h.corsError(w, "Server not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Send MCP request based on protocol
+	var response map[string]interface{}
+	switch conn.Endpoint.Protocol {
+	case "http":
+		response, err = h.sendHTTPToolCall(conn, mcpRequest)
+	case "sse":
+		response, err = h.sendSSEToolCall(conn, mcpRequest)
+	default:
+		h.logger.Error("Unsupported protocol %s for server %s", conn.Endpoint.Protocol, serverName)
+		h.corsError(w, "Unsupported protocol", http.StatusInternalServerError)
+		return
+	}
+
+	if err != nil {
+		h.logger.Error("Failed to execute tool %s on server %s: %v", toolName, serverName, err)
+		h.corsError(w, "Tool execution failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse and format the MCP response
+	if response != nil {
+		// Check for MCP error
+		if mcpError, hasError := response["error"].(map[string]interface{}); hasError {
+			errorResponse := map[string]interface{}{
+				"error": mcpError["message"],
+			}
+			if data, hasData := mcpError["data"]; hasData {
+				errorResponse["details"] = data
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse)
 
 			return
 		}
 
-		// Create new request
-		newRequest := r.Clone(r.Context())
-		newRequest.Body = io.NopCloser(bytes.NewReader(requestBody))
-		newRequest.ContentLength = int64(len(requestBody))
-
-		// Create a simple response recorder
-		recorder := &mcpResponseRecorder{
-			statusCode: constants.HTTPStatusSuccess,
-			headers:    make(http.Header),
+		// Extract and format the successful result for OpenWebUI - return clean text
+		if result, exists := response["result"]; exists {
+			h.logger.Info("Found result in response")
+			if resultMap, ok := result.(map[string]interface{}); ok {
+				h.logger.Info("Result is a map")
+				if content, exists := resultMap["content"]; exists {
+					h.logger.Info("Found content in result: %+v", content)
+					// Process the content for OpenWebUI - extract text from MCP content array
+					cleanResult := h.processMCPContent(content)
+					h.logger.Info("processMCPContent returned: %+v (type: %T)", cleanResult, cleanResult)
+					
+					// For OpenWebUI, we want just the text content, not JSON
+					if cleanText, ok := cleanResult.(string); ok {
+						h.logger.Info("Successfully converted to string: %s", cleanText)
+						w.Header().Set("Content-Type", "text/plain")
+						_, _ = w.Write([]byte(cleanText))
+						return
+					} else {
+						h.logger.Warning("cleanResult is not a string, type: %T", cleanResult)
+					}
+				} else {
+					h.logger.Warning("No content found in result")
+				}
+			} else {
+				h.logger.Warning("Result is not a map, type: %T", result)
+			}
+		} else {
+			h.logger.Warning("No result found in response")
 		}
 
-		h.handleServerForward(recorder, newRequest, serverName, instance)
+		// Fallback to original response if formatting fails
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	} else {
+		h.corsError(w, "No response from server", http.StatusInternalServerError)
+	}
+}
 
-		// Parse and format the MCP response
-		if recorder.statusCode == 200 && len(recorder.body) > 0 {
-			var mcpResponse map[string]interface{}
-			if err := json.Unmarshal(recorder.body, &mcpResponse); err == nil {
-				// Check for MCP error
-				if mcpError, hasError := mcpResponse["error"].(map[string]interface{}); hasError {
-					errorResponse := map[string]interface{}{
-						"error": mcpError["message"],
-					}
-					if data, hasData := mcpError["data"]; hasData {
-						errorResponse["details"] = data
-					}
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_ = json.NewEncoder(w).Encode(errorResponse)
-
-					return
-				}
-
-				// Extract and format the successful result
-				if result, exists := mcpResponse["result"]; exists {
-					if resultMap, ok := result.(map[string]interface{}); ok {
-						if content, exists := resultMap["content"]; exists {
-							// Process the content like MCPO does
-							cleanResult := h.processMCPContent(content)
-							w.Header().Set("Content-Type", "application/json")
-							_ = json.NewEncoder(w).Encode(cleanResult)
-
-							return
+// processMCPContent processes MCP content for OpenWebUI compatibility
+func (h *ProxyHandler) processMCPContent(content interface{}) interface{} {
+	h.logger.Info("processMCPContent called with: %+v (type: %T)", content, content)
+	
+	if contentArray, ok := content.([]interface{}); ok {
+		h.logger.Info("Content is an array with %d items", len(contentArray))
+		var textParts []string
+		for i, item := range contentArray {
+			h.logger.Info("Processing item %d: %+v (type: %T)", i, item, item)
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemType, ok := itemMap["type"].(string); ok {
+					h.logger.Info("Item type: %s", itemType)
+					switch itemType {
+					case "text":
+						if text, ok := itemMap["text"].(string); ok {
+							h.logger.Info("Found text: %s", text)
+							textParts = append(textParts, text)
 						}
+					case "image":
+						if data, ok := itemMap["data"].(string); ok {
+							if mimeType, ok := itemMap["mimeType"].(string); ok {
+								imageURL := fmt.Sprintf("data:%s;base64,%s", mimeType, data)
+								h.logger.Info("Found image: %s", imageURL)
+								textParts = append(textParts, imageURL)
+							}
+						}
+					// For other types, we skip them for OpenWebUI simplicity
 					}
 				}
 			}
 		}
 
-		// Fallback to original response if formatting fails
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(recorder.statusCode)
-		_, _ = w.Write(recorder.body)
+		// Join all text parts with newlines for OpenWebUI
+		if len(textParts) > 0 {
+			result := strings.Join(textParts, "\n")
+			h.logger.Info("Returning joined text: %s", result)
+			return result
+		}
+		h.logger.Info("No text parts found, returning original content")
 	} else {
-		h.corsError(w, "Server not found", http.StatusNotFound)
+		h.logger.Warning("Content is not an array, type: %T", content)
 	}
+
+	return content
 }
 
 func (h *ProxyHandler) handleServerForward(w http.ResponseWriter, r *http.Request, serverName string, instance *ServerInstance) {
@@ -227,56 +313,3 @@ func (h *ProxyHandler) handleServerForward(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// processMCPContent processes MCP content like the official MCPO tool does
-func (h *ProxyHandler) processMCPContent(content interface{}) interface{} {
-	if contentArray, ok := content.([]interface{}); ok {
-		var processed []interface{}
-		for _, item := range contentArray {
-			if itemMap, ok := item.(map[string]interface{}); ok {
-				if itemType, ok := itemMap["type"].(string); ok {
-					switch itemType {
-					case "text":
-						if text, ok := itemMap["text"].(string); ok {
-							// Try to parse as JSON first
-							var jsonData interface{}
-							if err := json.Unmarshal([]byte(text), &jsonData); err == nil {
-								processed = append(processed, jsonData)
-							} else {
-								processed = append(processed, text)
-							}
-						} else {
-							processed = append(processed, item)
-						}
-					case "image":
-						if data, ok := itemMap["data"].(string); ok {
-							if mimeType, ok := itemMap["mimeType"].(string); ok {
-								imageURL := fmt.Sprintf("data:%s;base64,%s", mimeType, data)
-								processed = append(processed, imageURL)
-							} else {
-								processed = append(processed, item)
-							}
-						} else {
-							processed = append(processed, item)
-						}
-					default:
-						processed = append(processed, item)
-					}
-				} else {
-					processed = append(processed, item)
-				}
-			} else {
-				processed = append(processed, item)
-			}
-		}
-
-		// Return single item if array has only one element
-		if len(processed) == 1 {
-
-			return processed[0]
-		}
-
-		return processed
-	}
-
-	return content
-}

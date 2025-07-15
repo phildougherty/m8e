@@ -30,16 +30,21 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewTopCommand())
 	rootCmd.AddCommand(NewLogsCommand())
 	
+	// Add toolbox management commands
+	rootCmd.AddCommand(NewToolboxCommand())
+	
 	// Add utility commands
 	rootCmd.AddCommand(NewValidateCommand())
 	rootCmd.AddCommand(NewCompletionCommand())
 	rootCmd.AddCommand(NewCreateConfigCommand())
 	rootCmd.AddCommand(NewProxyCommand())
+	rootCmd.AddCommand(NewServeProxyCommand()) // Internal command for containers
 	rootCmd.AddCommand(NewReloadCommand())
 	
 	// Add service-specific commands (both legacy and Kubernetes-native)
 	rootCmd.AddCommand(NewTaskSchedulerCommand())
 	rootCmd.AddCommand(NewMemoryCommand())
+	rootCmd.AddCommand(NewWorkflowCommand())
 	
 	// Add Kubernetes-native service commands
 	k8sCmd := &cobra.Command{

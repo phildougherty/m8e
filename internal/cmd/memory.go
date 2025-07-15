@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"fmt"
+
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/constants"
 	"github.com/phildougherty/m8e/internal/memory"
@@ -26,11 +27,12 @@ func NewMemoryCommand() *cobra.Command {
 		Long: `Start, stop, enable, or disable the postgres-backed memory MCP server using Kubernetes.
 The memory server provides persistent knowledge graph storage with:
 - PostgreSQL backend for reliability  
-- Graph-based knowledge storage
+- Graph-based knowledge storage with 11 MCP tools
 - Entity and relationship management
 - Observation tracking
+- Full-text search capabilities
 
-For direct Kubernetes control, use: matey k8s memory
+This is a Kubernetes-native implementation that uses CRDs and controllers.
 
 Examples:
   matey memory                    # Start memory server via Kubernetes
@@ -60,16 +62,8 @@ Examples:
 				return nil
 			}
 
-			// Create Kubernetes client
-			k8sClient, err := createK8sClientWithScheme()
-			if err != nil {
-				return fmt.Errorf("failed to create Kubernetes client: %w", err)
-			}
-
-			// Start the memory server using Kubernetes-native manager
-			memoryManager := memory.NewK8sManager(cfg, k8sClient, namespace)
-
-			return memoryManager.Start()
+			// Always use Kubernetes mode (this is a Kubernetes-native system)
+			return startK8sMemoryServer(cfg, namespace)
 		},
 	}
 
@@ -219,6 +213,31 @@ func disableMemoryServer(configFile string, cfg *config.ComposeConfig, namespace
 	fmt.Println("Memory server disabled.")
 
 	return config.SaveConfig(configFile, cfg)
+}
+
+
+// startK8sMemoryServer starts the memory server using Kubernetes
+func startK8sMemoryServer(cfg *config.ComposeConfig, namespace string) error {
+	fmt.Println("Creating Kubernetes-native MCP memory server...")
+	fmt.Printf("Namespace: %s\n", namespace)
+	
+	// Create Kubernetes client
+	k8sClient, err := createK8sClientWithScheme()
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	// Create memory manager and start (non-blocking)
+	memoryManager := memory.NewK8sManager(cfg, k8sClient, namespace)
+	if err := memoryManager.Start(); err != nil {
+		return fmt.Errorf("failed to create MCPMemory resource: %w", err)
+	}
+
+	fmt.Println("MCPMemory resource created successfully")
+	fmt.Println("The controller will deploy the memory service automatically")
+	fmt.Printf("Check deployment status with: kubectl get mcpmemory -n %s\n", namespace)
+	
+	return nil
 }
 
 // createK8sClientWithScheme creates a Kubernetes client with CRD scheme

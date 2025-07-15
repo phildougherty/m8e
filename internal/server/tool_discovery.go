@@ -22,17 +22,24 @@ func (h *ProxyHandler) refreshToolCache() {
 	h.logger.Info("Refreshing tool cache...")
 	newCache := make(map[string]string)
 
-	for serverName := range h.Manager.config.Servers {
-		tools, err := h.discoverServerTools(serverName)
-		if err != nil {
-			h.logger.Warning("Failed to discover tools for %s during cache refresh: %v", serverName, err)
-
+	// Use K8s service discovery instead of config-based servers
+	discoveredServers := h.GetDiscoveredServers()
+	for _, server := range discoveredServers {
+		if server.Name == "" {
 			continue
 		}
-
+		
+		// Use the new K8s-compatible tool discovery
+		tools, err := h.DiscoverServerTools(server.Name)
+		if err != nil {
+			h.logger.Warning("Failed to discover tools for %s during cache refresh: %v", server.Name, err)
+			continue
+		}
+		
+		// Add tools to cache
 		for _, tool := range tools {
-			newCache[tool.Name] = serverName
-			h.logger.Debug("Cached tool %s -> %s", tool.Name, serverName)
+			newCache[tool.Name] = server.Name
+			h.logger.Debug("Cached tool %s -> %s", tool.Name, server.Name)
 		}
 	}
 
@@ -53,9 +60,9 @@ func (h *ProxyHandler) discoverServerTools(serverName string) ([]openapi.ToolSpe
 
 	// Check if server exists
 	if _, exists := h.Manager.GetServerInstance(serverName); !exists {
-		h.logger.Warning("Server instance %s not found, using generic fallback", serverName)
+		h.logger.Warning("Server instance %s not found", serverName)
 
-		return h.getGenericToolForServer(serverName), nil
+		return nil, fmt.Errorf("server instance %s not found", serverName)
 	}
 
 	serverConfig := h.Manager.config.Servers[serverName]
@@ -95,15 +102,15 @@ func (h *ProxyHandler) discoverServerTools(serverName string) ([]openapi.ToolSpe
 				socatPort := serverConfig.StdioHosterPort
 				response, err = h.sendRawTCPRequestWithRetry(socatHost, socatPort, toolsRequest, timeout, attempt)
 			} else {
-				// STDIO server - skip for now and use generic
-				h.logger.Warning("Direct STDIO server %s tool discovery not implemented, using generic fallback", serverName)
+				// STDIO server - skip for now and return error
+				h.logger.Warning("Direct STDIO server %s tool discovery not implemented", serverName)
 
-				return h.getGenericToolForServer(serverName), nil
+				return nil, fmt.Errorf("direct STDIO server %s tool discovery not implemented", serverName)
 			}
 		default:
-			h.logger.Warning("Unknown protocol %s for server %s, using generic fallback", protocol, serverName)
+			h.logger.Warning("Unknown protocol %s for server %s", protocol, serverName)
 
-			return h.getGenericToolForServer(serverName), nil
+			return nil, fmt.Errorf("unknown protocol %s for server %s", protocol, serverName)
 		}
 
 		if err == nil {
@@ -142,9 +149,9 @@ func (h *ProxyHandler) discoverServerTools(serverName string) ([]openapi.ToolSpe
 		break
 	}
 
-	// All retries failed, use generic fallback
+	// All retries failed - return error instead of generic fallback
 
-	return h.getGenericToolForServer(serverName), fmt.Errorf("failed to discover tools after %d attempts", maxRetries)
+	return nil, fmt.Errorf("failed to discover tools after %d attempts", maxRetries)
 }
 
 func (h *ProxyHandler) sendSSEToolsRequestWithRetry(serverName string, requestPayload map[string]interface{}, timeout time.Duration, attempt int) (map[string]interface{}, error) {
