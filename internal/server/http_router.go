@@ -160,8 +160,8 @@ handleServer:
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"server": serverName,
 					"status": conn.Status,
-					"protocol": conn.Endpoint.Protocol,
-					"url": conn.Endpoint.URL,
+					"protocol": conn.Protocol,
+					"url": conn.Endpoint,
 				})
 			} else {
 				h.logger.Warning("Method %s not allowed for /%s", r.Method, serverName)

@@ -19,19 +19,22 @@ func TestMCPConnection_Basic(t *testing.T) {
 	}
 
 	connection := &MCPConnection{
-		Endpoint:  endpoint,
+		Name:      endpoint.Name,
+		Endpoint:  endpoint.URL,
+		Protocol:  endpoint.Protocol,
+		Port:      endpoint.Port,
 		LastUsed:  time.Now(),
 		Status:    "connected",
 		ErrorCount: 0,
 	}
 
 	// Test basic properties
-	if connection.Endpoint.Name != "test-service" {
-		t.Errorf("Expected service name 'test-service', got %s", connection.Endpoint.Name)
+	if connection.Name != "test-service" {
+		t.Errorf("Expected service name 'test-service', got %s", connection.Name)
 	}
 
-	if connection.Endpoint.Protocol != "http" {
-		t.Errorf("Expected protocol 'http', got %s", connection.Endpoint.Protocol)
+	if connection.Protocol != "http" {
+		t.Errorf("Expected protocol 'http', got %s", connection.Protocol)
 	}
 
 	if connection.Status != "connected" {
@@ -133,13 +136,10 @@ func TestMCPSSEConnection(t *testing.T) {
 
 func TestMCPConnection_StatusManagement(t *testing.T) {
 	connection := &MCPConnection{
-		Endpoint: ServiceEndpoint{
-			Name:      "test-service",
-			Namespace: "default",
-			Protocol:  "http",
-			URL:       "http://test-service.default.svc.cluster.local:8080/mcp",
-			Port:      8080,
-		},
+		Name:       "test-service",
+		Endpoint:   "http://test-service.default.svc.cluster.local:8080/mcp",
+		Protocol:   "http",
+		Port:       8080,
 		LastUsed:   time.Now(),
 		Status:     "connected",
 		ErrorCount: 0,

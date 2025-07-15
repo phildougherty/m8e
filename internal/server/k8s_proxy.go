@@ -215,10 +215,10 @@ func (h *ProxyHandler) HandleMCPRequest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Update connection stats
-	h.updateConnectionStats(conn.Endpoint.Name, true)
+	h.updateConnectionStats(conn.Name, true)
 
 	// Route based on protocol
-	switch conn.Endpoint.Protocol {
+	switch conn.Protocol {
 	case "http":
 		h.handleHTTPRequest(w, r, conn)
 	case "sse":
@@ -226,7 +226,7 @@ func (h *ProxyHandler) HandleMCPRequest(w http.ResponseWriter, r *http.Request, 
 	case "stdio":
 		h.handleStdioRequest(w, r, conn)
 	default:
-		h.writeErrorResponse(w, fmt.Sprintf("Unsupported protocol: %s", conn.Endpoint.Protocol), http.StatusBadRequest)
+		h.writeErrorResponse(w, fmt.Sprintf("Unsupported protocol: %s", conn.Protocol), http.StatusBadRequest)
 	}
 }
 
@@ -485,7 +485,7 @@ func (h *ProxyHandler) DiscoverServerTools(serverName string) ([]Tool, error) {
 	}
 	
 	h.Logger.Info("Connection status for %s: protocol=%s, status=%s", 
-		serverName, conn.Endpoint.Protocol, conn.Status)
+		serverName, conn.Protocol, conn.Status)
 
 	// Make MCP tools/list call to discover actual tools
 	tools, err := h.makeToolsListRequest(serverName, conn)
@@ -538,13 +538,13 @@ func (h *ProxyHandler) makeToolsListRequest(serverName string, conn *discovery.M
 	}
 
 	// Send request based on protocol
-	switch conn.Endpoint.Protocol {
+	switch conn.Protocol {
 	case "http":
 		return h.makeHTTPToolsListRequest(conn, request)
 	case "sse":
 		return h.makeSSEToolsListRequest(conn, request)
 	default:
-		return nil, fmt.Errorf("unsupported protocol for tools discovery: %s", conn.Endpoint.Protocol)
+		return nil, fmt.Errorf("unsupported protocol for tools discovery: %s", conn.Protocol)
 	}
 }
 
@@ -616,7 +616,7 @@ func (h *ProxyHandler) makeSSEToolsListRequest(conn *discovery.MCPConnection, re
 		return nil, fmt.Errorf("no SSE connection available")
 	}
 	
-	h.Logger.Info("Starting SSE tools/list request for server %s", conn.Endpoint.Name)
+	h.Logger.Info("Starting SSE tools/list request for server %s", conn.Name)
 	
 	// Step 1: Establish SSE connection and get session endpoint
 	sessionEndpoint, err := h.establishSSESession(conn.SSEConnection)
@@ -914,7 +914,7 @@ func (h *ProxyHandler) createPlaceholderTools(serverName string, conn *discovery
 	var tools []Tool
 
 	// Create placeholder tools based on capabilities
-	for _, capability := range conn.Endpoint.Capabilities {
+	for _, capability := range conn.Capabilities {
 		switch capability {
 		case "tools":
 			tools = append(tools, Tool{
@@ -983,7 +983,7 @@ func (h *ProxyHandler) discoverK8sServerTools(serverName string, conn *discovery
 
 	// This would make an actual MCP tools/list call to the server
 	// For now, we'll return a placeholder based on capabilities
-	for _, capability := range conn.Endpoint.Capabilities {
+	for _, capability := range conn.Capabilities {
 		if capability == "tools" {
 			// Make actual tools/list request here
 			// For now, just add a placeholder
@@ -1306,7 +1306,7 @@ func (h *ProxyHandler) HandleDirectToolCall(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Handle based on protocol
-	switch conn.Endpoint.Protocol {
+	switch conn.Protocol {
 	case "http":
 		h.forwardDirectHTTPToolCall(w, r, conn, payload)
 	case "sse":
@@ -1325,7 +1325,7 @@ func (h *ProxyHandler) forwardDirectHTTPToolCall(w http.ResponseWriter, r *http.
 // forwardDirectSSEToolCall forwards a direct tool call via SSE
 func (h *ProxyHandler) forwardDirectSSEToolCall(w http.ResponseWriter, r *http.Request, conn *discovery.MCPConnection, payload []byte) {
 	// Implementation similar to sendOptimalSSERequest
-	response, err := h.sendOptimalSSERequest(conn.Endpoint.Name, payload)
+	response, err := h.sendOptimalSSERequest(conn.Name, payload)
 	if err != nil {
 		h.corsError(w, fmt.Sprintf("Failed to execute tool: %v", err), http.StatusInternalServerError)
 		return
@@ -1368,7 +1368,7 @@ func (h *ProxyHandler) sendMCPError(w http.ResponseWriter, id interface{}, code 
 func (h *ProxyHandler) getServerHTTPURL(serverName string, cfg config.ServerConfig) string {
 	// For K8s-native mode, we get the URL from service discovery
 	if conn, err := h.ConnectionManager.GetConnection(serverName); err == nil {
-		return conn.Endpoint.URL
+		return conn.Endpoint
 	}
 	// Fallback to empty string if not found
 	return ""
@@ -1381,7 +1381,7 @@ func (h *ProxyHandler) getOptimalSSEConnection(serverName string) (interface{}, 
 		// Convert to legacy format
 		return &MCPSSEConnection{
 			ServerName:  serverName,
-			BaseURL:     conn.Endpoint.URL,
+			BaseURL:     conn.Endpoint,
 			LastUsed:    time.Now(),
 			Initialized: true,
 			Healthy:     true,

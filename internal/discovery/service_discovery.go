@@ -4,6 +4,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type ServiceEndpoint struct {
 	Name            string            `json:"name"`
 	Namespace       string            `json:"namespace"`
 	URL             string            `json:"url"`
+	Endpoint        string            `json:"endpoint"` // For compatibility with tests
 	Protocol        string            `json:"protocol"`
 	Port            int32             `json:"port"`
 	Capabilities    []string          `json:"capabilities"`
@@ -47,6 +49,9 @@ type ServiceDiscoveryHandler interface {
 
 // K8sServiceDiscovery provides Kubernetes-native service discovery for MCP servers
 type K8sServiceDiscovery struct {
+	Client          kubernetes.Interface // Public for testing
+	Namespace       string               // Public for testing
+	Logger          *logging.Logger      // Public for testing
 	client          kubernetes.Interface
 	namespace       string
 	logger          *logging.Logger
@@ -312,19 +317,22 @@ func (sd *K8sServiceDiscovery) buildServiceEndpoint(service *corev1.Service) *Se
 	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", 
 		service.Name, service.Namespace, port)
 
+	// Build cluster DNS endpoint (without protocol prefix)
+	endpoint := fmt.Sprintf("%s.%s.svc.cluster.local:%d", 
+		service.Name, service.Namespace, port)
+
 	// Extract capabilities from labels
 	capabilities := []string{}
 	if caps, exists := service.Labels["mcp.matey.ai/capabilities"]; exists {
-		// Parse comma-separated capabilities
-		for _, cap := range parseCapabilities(caps) {
-			capabilities = append(capabilities, cap)
-		}
+		// Parse dot-separated capabilities (set by controller)
+		capabilities = parseCapabilities(caps)
 	}
 
 	return &ServiceEndpoint{
 		Name:           serviceName,
 		Namespace:      service.Namespace,
 		URL:            url,
+		Endpoint:       endpoint,
 		Protocol:       protocol,
 		Port:           port,
 		Capabilities:   capabilities,
@@ -346,16 +354,18 @@ func (sd *K8sServiceDiscovery) getServiceName(service *corev1.Service) string {
 	return service.Name
 }
 
-// parseCapabilities parses comma-separated capabilities string
+// parseCapabilities parses dot-separated capabilities string
 func parseCapabilities(caps string) []string {
 	if caps == "" {
 		return []string{}
 	}
 
+	// Split by dots (as used by controller)
+	parts := strings.Split(caps, ".")
 	capabilities := []string{}
-	for _, cap := range []string{"tools", "resources", "prompts", "notifications"} {
-		if contains(caps, cap) {
-			capabilities = append(capabilities, cap)
+	for _, part := range parts {
+		if part != "" {
+			capabilities = append(capabilities, part)
 		}
 	}
 	return capabilities
@@ -387,5 +397,101 @@ func (sd *K8sServiceDiscovery) DiscoverMCPServers() ([]ServiceEndpoint, error) {
 	}
 
 	sd.logger.Info("Discovered %d MCP services", len(endpoints))
+	return endpoints, nil
+}
+
+// DiscoverMCPServices performs an immediate discovery of all MCP services
+// This is an alias for DiscoverMCPServers for API compatibility
+func (sd *K8sServiceDiscovery) DiscoverMCPServices(ctx context.Context) ([]ServiceEndpoint, error) {
+	// Use public Client if available (for testing), otherwise use private client
+	client := sd.Client
+	if client == nil {
+		client = sd.client
+	}
+	
+	namespace := sd.Namespace
+	if namespace == "" {
+		namespace = sd.namespace
+	}
+	
+	services, err := client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "mcp.matey.ai/role=server",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list services: %w", err)
+	}
+
+	endpoints := make([]ServiceEndpoint, 0, len(services.Items))
+	for _, service := range services.Items {
+		if endpoint := sd.buildServiceEndpoint(&service); endpoint != nil {
+			endpoints = append(endpoints, *endpoint)
+		}
+	}
+
+	return endpoints, nil
+}
+
+// DiscoverMCPServicesByProtocol discovers MCP services filtered by protocol
+func (sd *K8sServiceDiscovery) DiscoverMCPServicesByProtocol(ctx context.Context, protocol string) ([]ServiceEndpoint, error) {
+	client := sd.Client
+	if client == nil {
+		client = sd.client
+	}
+	
+	namespace := sd.Namespace
+	if namespace == "" {
+		namespace = sd.namespace
+	}
+	
+	services, err := client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("mcp.matey.ai/role=server,mcp.matey.ai/protocol=%s", protocol),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list services: %w", err)
+	}
+
+	endpoints := make([]ServiceEndpoint, 0, len(services.Items))
+	for _, service := range services.Items {
+		if endpoint := sd.buildServiceEndpoint(&service); endpoint != nil {
+			endpoints = append(endpoints, *endpoint)
+		}
+	}
+
+	return endpoints, nil
+}
+
+// DiscoverMCPServicesByCapability discovers MCP services filtered by capability
+func (sd *K8sServiceDiscovery) DiscoverMCPServicesByCapability(ctx context.Context, capability string) ([]ServiceEndpoint, error) {
+	client := sd.Client
+	if client == nil {
+		client = sd.client
+	}
+	
+	namespace := sd.Namespace
+	if namespace == "" {
+		namespace = sd.namespace
+	}
+	
+	// Get all MCP services first, then filter by capability
+	services, err := client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "mcp.matey.ai/role=server",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list services: %w", err)
+	}
+
+	endpoints := make([]ServiceEndpoint, 0)
+	for _, service := range services.Items {
+		if endpoint := sd.buildServiceEndpoint(&service); endpoint != nil {
+			// Check if this service has the required capability
+			for _, cap := range endpoint.Capabilities {
+				if cap == capability {
+					endpoints = append(endpoints, *endpoint)
+					break
+				}
+			}
+		}
+	}
+
 	return endpoints, nil
 }

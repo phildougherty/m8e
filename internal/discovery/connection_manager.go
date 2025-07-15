@@ -33,12 +33,17 @@ type MCPSTDIOConnection struct {
 
 // MCPConnection represents a connection to an MCP server
 type MCPConnection struct {
-	Endpoint       ServiceEndpoint
+	Name           string
+	Endpoint       string
+	Protocol       string
+	Port           int32
+	Capabilities   []string
+	Status         string
+	LastSeen       time.Time
 	HTTPConnection *MCPHTTPConnection
 	SSEConnection  *MCPSSEConnection
 	StdioConnection *MCPSTDIOConnection
 	LastUsed       time.Time
-	Status         string
 	ErrorCount     int
 	mu             sync.RWMutex
 }
@@ -169,7 +174,10 @@ func (dcm *DynamicConnectionManager) OnServiceAdded(endpoint ServiceEndpoint) {
 
 	// Create new connection
 	conn := &MCPConnection{
-		Endpoint:   endpoint,
+		Name:       endpoint.Name,
+		Endpoint:   endpoint.URL,
+		Protocol:   endpoint.Protocol,
+		Port:       endpoint.Port,
 		LastUsed:   time.Now(),
 		Status:     "connecting",
 		ErrorCount: 0,
@@ -190,7 +198,10 @@ func (dcm *DynamicConnectionManager) OnServiceModified(endpoint ServiceEndpoint)
 
 	if conn, exists := dcm.connections[endpoint.Name]; exists {
 		// Update endpoint information
-		conn.Endpoint = endpoint
+		conn.Name = endpoint.Name
+		conn.Endpoint = endpoint.URL
+		conn.Protocol = endpoint.Protocol
+		conn.Port = endpoint.Port
 		
 		// If URL changed, reinitialize connection
 		if conn.HTTPConnection != nil && conn.HTTPConnection.BaseURL != endpoint.URL {
@@ -270,11 +281,11 @@ func (dcm *DynamicConnectionManager) GetConnectionStatus() map[string]Connection
 
 // initializeConnection establishes a connection to an MCP server
 func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
-	dcm.logger.Info("Initializing connection to %s (%s)", conn.Endpoint.Name, conn.Endpoint.Protocol)
+	dcm.logger.Info("Initializing connection to %s (%s)", conn.Name, conn.Protocol)
 
 	var err error
 	
-	switch conn.Endpoint.Protocol {
+	switch conn.Protocol {
 	case "http":
 		err = dcm.initializeHTTPConnection(conn)
 	case "sse":
@@ -282,14 +293,14 @@ func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
 	case "stdio":
 		err = dcm.initializeStdioConnection(conn)
 	default:
-		err = fmt.Errorf("unsupported protocol: %s", conn.Endpoint.Protocol)
+		err = fmt.Errorf("unsupported protocol: %s", conn.Protocol)
 	}
 
 	conn.mu.Lock()
 	if err != nil {
 		conn.Status = "failed"
 		conn.ErrorCount++
-		dcm.logger.Error("Failed to connect to %s: %v", conn.Endpoint.Name, err)
+		dcm.logger.Error("Failed to connect to %s: %v", conn.Name, err)
 		
 		// Schedule retry if not exceeded max retries
 		if conn.ErrorCount <= dcm.maxRetries {
@@ -300,7 +311,7 @@ func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
 	} else {
 		conn.Status = "connected"
 		conn.ErrorCount = 0
-		dcm.logger.Info("Successfully connected to %s", conn.Endpoint.Name)
+		dcm.logger.Info("Successfully connected to %s", conn.Name)
 	}
 	conn.mu.Unlock()
 }
@@ -308,7 +319,7 @@ func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
 // initializeHTTPConnection creates an HTTP connection
 func (dcm *DynamicConnectionManager) initializeHTTPConnection(conn *MCPConnection) error {
 	httpConn := &MCPHTTPConnection{
-		BaseURL:    conn.Endpoint.URL,
+		BaseURL:    conn.Endpoint,
 		Client:     dcm.httpClient,
 		LastUsed:   time.Now(),
 	}
@@ -324,7 +335,7 @@ func (dcm *DynamicConnectionManager) initializeHTTPConnection(conn *MCPConnectio
 // initializeSSEConnection creates an SSE connection
 func (dcm *DynamicConnectionManager) initializeSSEConnection(conn *MCPConnection) error {
 	// SSE connections typically use /sse path
-	sseURL := conn.Endpoint.URL + "/sse"
+	sseURL := conn.Endpoint + "/sse"
 	sseConn := &MCPSSEConnection{
 		BaseURL:    sseURL,
 		Client:     dcm.sseClient,
@@ -418,7 +429,7 @@ func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) 
 
 	// Perform health check based on protocol
 	var healthy bool
-	switch conn.Endpoint.Protocol {
+	switch conn.Protocol {
 	case "http":
 		healthy = dcm.checkHTTPHealth(conn)
 	case "sse":
@@ -431,7 +442,7 @@ func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) 
 	if !healthy {
 		conn.Status = "unhealthy"
 		conn.ErrorCount++
-		dcm.logger.Info("Health check failed for %s", conn.Endpoint.Name)
+		dcm.logger.Info("Health check failed for %s", conn.Name)
 	} else {
 		conn.ErrorCount = 0
 	}
@@ -457,4 +468,103 @@ func (dcm *DynamicConnectionManager) checkSSEHealth(conn *MCPConnection) bool {
 
 	// Implement actual SSE health check logic here
 	return true
+}
+
+// AddConnection adds a new connection to the manager
+func (dcm *DynamicConnectionManager) AddConnection(conn *MCPConnection) error {
+	if conn == nil {
+		return fmt.Errorf("connection cannot be nil")
+	}
+
+	dcm.mu.Lock()
+	defer dcm.mu.Unlock()
+
+	if dcm.connections == nil {
+		dcm.connections = make(map[string]*MCPConnection)
+	}
+
+	dcm.connections[conn.Name] = conn
+	return nil
+}
+
+// RemoveConnection removes a connection from the manager
+func (dcm *DynamicConnectionManager) RemoveConnection(name string) error {
+	dcm.mu.Lock()
+	defer dcm.mu.Unlock()
+
+	if conn, exists := dcm.connections[name]; exists {
+		dcm.closeConnection(conn)
+		delete(dcm.connections, name)
+		return nil
+	}
+
+	return fmt.Errorf("connection %s not found", name)
+}
+
+
+// GetConnections returns all connections as a slice
+func (dcm *DynamicConnectionManager) GetConnections() []*MCPConnection {
+	dcm.mu.RLock()
+	defer dcm.mu.RUnlock()
+
+	connections := make([]*MCPConnection, 0, len(dcm.connections))
+	for _, conn := range dcm.connections {
+		connections = append(connections, conn)
+	}
+	return connections
+}
+
+// GetHealthyConnections returns connections that are healthy within the given time window
+func (dcm *DynamicConnectionManager) GetHealthyConnections(maxAge time.Duration) []*MCPConnection {
+	dcm.mu.RLock()
+	defer dcm.mu.RUnlock()
+
+	healthy := make([]*MCPConnection, 0)
+	cutoff := time.Now().Add(-maxAge)
+
+	for _, conn := range dcm.connections {
+		if conn.Status == "connected" && conn.LastSeen.After(cutoff) {
+			healthy = append(healthy, conn)
+		}
+	}
+
+	return healthy
+}
+
+// UpdateConnectionStatus updates the status of a connection
+func (dcm *DynamicConnectionManager) UpdateConnectionStatus(name, status string) error {
+	dcm.mu.Lock()
+	defer dcm.mu.Unlock()
+
+	if conn, exists := dcm.connections[name]; exists {
+		conn.Status = status
+		conn.LastSeen = time.Now()
+		return nil
+	}
+
+	return fmt.Errorf("connection %s not found", name)
+}
+
+// CleanupStaleConnections removes connections that haven't been seen recently
+func (dcm *DynamicConnectionManager) CleanupStaleConnections(maxAge time.Duration) error {
+	dcm.mu.Lock()
+	defer dcm.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	toRemove := make([]string, 0)
+
+	for name, conn := range dcm.connections {
+		if conn.LastSeen.Before(cutoff) {
+			toRemove = append(toRemove, name)
+		}
+	}
+
+	for _, name := range toRemove {
+		if conn, exists := dcm.connections[name]; exists {
+			dcm.closeConnection(conn)
+			delete(dcm.connections, name)
+		}
+	}
+
+	return nil
 }

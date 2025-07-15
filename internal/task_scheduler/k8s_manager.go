@@ -39,7 +39,7 @@ func NewK8sManager(cfg *config.ComposeConfig, k8sClient client.Client, namespace
 	// Create job manager
 	jobManager, err := NewK8sJobManager(namespace, cfg, logger)
 	if err != nil {
-		logger.Error(fmt.Sprintf("Failed to create job manager: %v", err))
+		logger.Error("Failed to create job manager: %v", err)
 		// Continue without job manager for now
 	}
 
@@ -376,7 +376,7 @@ func (m *K8sManager) waitForReady(ctx context.Context, name string, timeout time
 			}, taskScheduler)
 
 			if err != nil {
-				m.logger.Warning(fmt.Sprintf("Failed to get task scheduler status: %v", err))
+				m.logger.Warning("Failed to get task scheduler status: %v", err)
 				continue
 			}
 

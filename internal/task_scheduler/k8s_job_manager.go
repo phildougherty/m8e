@@ -181,7 +181,7 @@ func (jm *K8sJobManager) GetTaskStatus(ctx context.Context, taskID string) (*Tas
 
 	// Get pod information and logs if available
 	if err := jm.enrichStatusWithPodInfo(ctx, status, &job); err != nil {
-		jm.logger.Warning(fmt.Sprintf("Failed to get pod info for task %s: %v", taskID, err))
+		jm.logger.Warning("Failed to get pod info for task %s: %v", taskID, err)
 	}
 
 	return status, nil
@@ -201,7 +201,7 @@ func (jm *K8sJobManager) ListTasks(ctx context.Context, schedulerName string) ([
 		if taskID, exists := job.Labels["mcp.matey.ai/task-id"]; exists {
 			status, err := jm.GetTaskStatus(ctx, taskID)
 			if err != nil {
-				jm.logger.Error(fmt.Sprintf("Failed to get status for task %s: %v", taskID, err))
+				jm.logger.Error("Failed to get status for task %s: %v", taskID, err)
 				continue
 			}
 			tasks = append(tasks, status)
@@ -322,7 +322,7 @@ func (jm *K8sJobManager) CleanupCompletedTasks(ctx context.Context, schedulerNam
 			if completionTime.Before(cutoffTime) {
 				err := jm.client.BatchV1().Jobs(jm.namespace).Delete(ctx, job.Name, metav1.DeleteOptions{})
 				if err != nil {
-					jm.logger.Error(fmt.Sprintf("Failed to delete job %s: %v", job.Name, err))
+					jm.logger.Error("Failed to delete job %s: %v", job.Name, err)
 					continue
 				}
 				deletedCount++

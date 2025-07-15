@@ -121,13 +121,13 @@ func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Reque
 
 	// Send MCP request based on protocol
 	var response map[string]interface{}
-	switch conn.Endpoint.Protocol {
+	switch conn.Protocol {
 	case "http":
 		response, err = h.sendHTTPToolCall(conn, mcpRequest)
 	case "sse":
 		response, err = h.sendSSEToolCall(conn, mcpRequest)
 	default:
-		h.logger.Error("Unsupported protocol %s for server %s", conn.Endpoint.Protocol, serverName)
+		h.logger.Error("Unsupported protocol %s for server %s", conn.Protocol, serverName)
 		h.corsError(w, "Unsupported protocol", http.StatusInternalServerError)
 		return
 	}

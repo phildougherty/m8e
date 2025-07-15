@@ -146,7 +146,7 @@ func (c *K8sComposer) Restart(serviceNames []string) error {
 
 	// Stop first
 	if err := c.stopSpecificServices(serviceNames); err != nil {
-		c.logger.Warning(fmt.Sprintf("Warning during stop: %v", err))
+		c.logger.Warning("Warning during stop: %v", err)
 	}
 
 	// Wait a moment for cleanup
