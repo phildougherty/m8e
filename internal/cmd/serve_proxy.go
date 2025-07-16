@@ -115,6 +115,15 @@ func runServeProxy(cmd *cobra.Command, port int, namespace, apiKey string) error
 		handleServerRequest(w, r, proxyHandler)
 	})
 	
+	// MCP protocol endpoints
+	mux.HandleFunc("/mcp/servers", func(w http.ResponseWriter, r *http.Request) {
+		handleMCPServersEndpoint(w, r, proxyHandler)
+	})
+	
+	mux.HandleFunc("/mcp/server/", func(w http.ResponseWriter, r *http.Request) {
+		handleMCPServerToolsEndpoint(w, r, proxyHandler)
+	})
+	
 	// FastAPI-style tool endpoints are now handled dynamically in handleDynamicRequest
 	
 	// Catch-all for dynamic routing (must be last)
@@ -513,4 +522,158 @@ func handleServerDocs(w http.ResponseWriter, r *http.Request, handler *server.Pr
 			"openapi": fmt.Sprintf("/%s/openapi.json", serverName),
 		})
 	}
+}
+
+// handleMCPServersEndpoint handles MCP protocol /mcp/servers endpoint
+func handleMCPServersEndpoint(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler) {
+	if r.Method != http.MethodPost {
+		writeErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get discovered servers
+	servers := handler.GetDiscoveredServers()
+	connections := handler.GetConnectionStatus()
+	
+	// Convert to MCP server info format, filtering for only connected servers
+	var mcpServers []map[string]interface{}
+	for _, server := range servers {
+		// Check if server is connected
+		if connStatus, exists := connections[server.Name]; exists && connStatus.Connected {
+			mcpServer := map[string]interface{}{
+				"name":        server.Name,
+				"version":     "1.0.0",
+				"description": fmt.Sprintf("MCP Server: %s", server.Name),
+			}
+			mcpServers = append(mcpServers, mcpServer)
+		}
+	}
+
+	// Return in MCP protocol format
+	writeJSONResponse(w, map[string]interface{}{
+		"result": mcpServers,
+	})
+}
+
+// handleMCPServerToolsEndpoint handles MCP protocol /mcp/server/{name}/tools endpoint
+func handleMCPServerToolsEndpoint(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler) {
+	if r.Method != http.MethodPost {
+		writeErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract server name from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/mcp/server/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[1] != "tools" {
+		writeErrorResponse(w, "Invalid endpoint format", http.StatusBadRequest)
+		return
+	}
+	
+	serverName := parts[0]
+	if serverName == "" {
+		writeErrorResponse(w, "Server name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if this is a tool call endpoint (e.g., /mcp/server/{name}/tools/call)
+	if len(parts) >= 3 && parts[2] == "call" {
+		handleMCPToolCallEndpoint(w, r, handler, serverName)
+		return
+	}
+
+	// Otherwise, handle as tools list endpoint
+	tools, err := handler.DiscoverServerTools(serverName)
+	if err != nil {
+		handler.Logger.Error("Failed to discover tools for server %s: %v", serverName, err)
+		writeErrorResponse(w, fmt.Sprintf("Failed to discover tools for server %s: %v", serverName, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to MCP tool format
+	var mcpTools []map[string]interface{}
+	for _, tool := range tools {
+		mcpTool := map[string]interface{}{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"inputSchema": tool.Parameters,
+		}
+		mcpTools = append(mcpTools, mcpTool)
+	}
+
+	// Return in MCP protocol format
+	writeJSONResponse(w, map[string]interface{}{
+		"result": mcpTools,
+	})
+}
+
+// handleMCPToolCallEndpoint handles MCP protocol tool call requests
+func handleMCPToolCallEndpoint(w http.ResponseWriter, r *http.Request, handler *server.ProxyHandler, serverName string) {
+	// Parse the MCP request
+	var mcpRequest map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&mcpRequest); err != nil {
+		writeErrorResponse(w, "Invalid JSON request", http.StatusBadRequest)
+		return
+	}
+
+	// Extract tool name and arguments from MCP request
+	params, ok := mcpRequest["params"].(map[string]interface{})
+	if !ok {
+		writeErrorResponse(w, "Invalid MCP request: missing params", http.StatusBadRequest)
+		return
+	}
+
+	toolName, ok := params["name"].(string)
+	if !ok {
+		writeErrorResponse(w, "Invalid MCP request: missing tool name", http.StatusBadRequest)
+		return
+	}
+
+	arguments, ok := params["arguments"].(map[string]interface{})
+	if !ok {
+		arguments = make(map[string]interface{})
+	}
+
+	handler.Logger.Info("MCP tool call: server=%s, tool=%s", serverName, toolName)
+
+	// Get connection for the server
+	conn, err := handler.ConnectionManager.GetConnection(serverName)
+	if err != nil {
+		handler.Logger.Error("No connection available for server %s: %v", serverName, err)
+		writeErrorResponse(w, fmt.Sprintf("Server %s not available", serverName), http.StatusServiceUnavailable)
+		return
+	}
+
+	// Create MCP request for the actual server
+	request := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "mcp-call-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      toolName,
+			"arguments": arguments,
+		},
+	}
+
+	// Send request based on protocol
+	var response map[string]interface{}
+	switch conn.Protocol {
+	case "http":
+		response, err = handler.SendHTTPToolCall(conn, request)
+	case "sse":
+		response, err = handler.SendSSEToolCall(conn, request)
+	default:
+		handler.Logger.Error("Unsupported protocol %s for server %s", conn.Protocol, serverName)
+		writeErrorResponse(w, "Unsupported protocol", http.StatusInternalServerError)
+		return
+	}
+
+	if err != nil {
+		handler.Logger.Error("Failed to execute tool %s on server %s: %v", toolName, serverName, err)
+		writeErrorResponse(w, "Tool execution failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Return the response in MCP protocol format
+	writeJSONResponse(w, response)
 }

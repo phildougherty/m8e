@@ -446,6 +446,7 @@ func (h *ProxyHandler) discoverTools() {
 	h.Logger.Debug("Discovering tools from connected services")
 
 	connections := h.ConnectionManager.GetAllConnections()
+	h.Logger.Debug("Got %d connections from ConnectionManager", len(connections))
 	
 	h.toolCacheMu.Lock()
 	defer h.toolCacheMu.Unlock()
@@ -453,20 +454,29 @@ func (h *ProxyHandler) discoverTools() {
 	// Clear existing cache
 	h.toolCache = make(map[string]string)
 
+	connectedCount := 0
 	for serverName, conn := range connections {
+		h.Logger.Debug("Checking server %s with status %s", serverName, conn.Status)
 		if conn.Status != "connected" {
+			h.Logger.Debug("Skipping server %s - not connected (status: %s)", serverName, conn.Status)
 			continue
 		}
+		connectedCount++
 
 		// Discover tools based on protocol
+		h.Logger.Debug("Discovering tools for connected server %s", serverName)
 		tools := h.discoverK8sServerTools(serverName, conn)
+		h.Logger.Debug("Server %s returned %d tools", serverName, len(tools))
+		
 		for toolName, serverName := range tools {
+			h.Logger.Debug("Adding tool %s -> %s to cache", toolName, serverName)
 			h.toolCache[toolName] = serverName
 		}
 	}
 
 	h.cacheExpiry = time.Now().Add(10 * time.Minute)
-	h.Logger.Info("Discovered %d tools from %d servers", len(h.toolCache), len(connections))
+	h.Logger.Info("Discovered %d tools from %d connected servers (out of %d total)", 
+		len(h.toolCache), connectedCount, len(connections))
 }
 
 // Tool structure for OpenAPI generation
@@ -504,16 +514,27 @@ func (h *ProxyHandler) FindServerForTool(toolName string) (string, bool) {
 	h.toolCacheMu.RLock()
 	cacheEmpty := len(h.toolCache) == 0
 	cacheExpired := time.Now().After(h.cacheExpiry)
+	cacheSize := len(h.toolCache)
 	h.toolCacheMu.RUnlock()
+	
+	h.Logger.Debug("FindServerForTool: toolName=%s, cacheEmpty=%v, cacheExpired=%v, cacheSize=%d", 
+		toolName, cacheEmpty, cacheExpired, cacheSize)
 	
 	if cacheEmpty || cacheExpired {
 		h.Logger.Info("Tool cache is empty or expired, refreshing...")
 		h.discoverTools()
+		
+		// Check cache size after refresh
+		h.toolCacheMu.RLock()
+		newCacheSize := len(h.toolCache)
+		h.toolCacheMu.RUnlock()
+		h.Logger.Info("Tool cache refreshed: old size=%d, new size=%d", cacheSize, newCacheSize)
 	}
 	
 	// Now check the unified cache
 	h.toolCacheMu.RLock()
 	serverName, found := h.toolCache[toolName]
+	finalCacheSize := len(h.toolCache)
 	h.toolCacheMu.RUnlock()
 	
 	if found {
@@ -521,7 +542,13 @@ func (h *ProxyHandler) FindServerForTool(toolName string) (string, bool) {
 		return serverName, true
 	}
 	
-	h.Logger.Warning("Tool %s not found in unified cache of %d tools", toolName, len(h.toolCache))
+	h.Logger.Warning("Tool %s not found in unified cache of %d tools", toolName, finalCacheSize)
+	
+	// Debug: Print all cached tools
+	h.toolCacheMu.RLock()
+	h.Logger.Debug("Available tools in cache: %v", h.toolCache)
+	h.toolCacheMu.RUnlock()
+	
 	return "", false
 }
 
@@ -981,16 +1008,37 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 func (h *ProxyHandler) discoverK8sServerTools(serverName string, conn *discovery.MCPConnection) map[string]string {
 	tools := make(map[string]string)
 
-	// This would make an actual MCP tools/list call to the server
-	// For now, we'll return a placeholder based on capabilities
+	// Only attempt tool discovery if the server has the "tools" capability
+	hasToolsCapability := false
 	for _, capability := range conn.Capabilities {
 		if capability == "tools" {
-			// Make actual tools/list request here
-			// For now, just add a placeholder
-			tools[fmt.Sprintf("%s-tool", serverName)] = serverName
+			hasToolsCapability = true
+			break
 		}
 	}
 
+	if !hasToolsCapability {
+		h.Logger.Debug("Server %s does not have 'tools' capability", serverName)
+		return tools
+	}
+
+	// Make actual MCP tools/list call to discover real tools
+	h.Logger.Debug("Discovering tools for server %s using protocol %s", serverName, conn.Protocol)
+	
+	actualTools, err := h.makeToolsListRequest(serverName, conn)
+	if err != nil {
+		h.Logger.Warning("Failed to discover tools for server %s: %v", serverName, err)
+		// Don't add placeholder tools on error - return empty map
+		return tools
+	}
+
+	// Add real tools to cache
+	for _, tool := range actualTools {
+		tools[tool.Name] = serverName
+		h.Logger.Debug("Discovered tool %s from server %s", tool.Name, serverName)
+	}
+
+	h.Logger.Info("Successfully discovered %d tools from server %s", len(tools), serverName)
 	return tools
 }
 

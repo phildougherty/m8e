@@ -92,7 +92,7 @@ func (r *MCPProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 	}
 
-	logger.Info("Successfully reconciled MCPProxy")
+	logger.V(1).Info("Successfully reconciled MCPProxy")
 	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 }
 

@@ -28,9 +28,7 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewRestartCommand())
 	rootCmd.AddCommand(NewPsCommand())
 	rootCmd.AddCommand(NewTopCommand())
-	rootCmd.AddCommand(NewDashboardCommand())
-	rootCmd.AddCommand(NewTViewDashboardCommand()) // AI chat interface
-	rootCmd.AddCommand(NewChatCommand()) // Alternative terminal chat
+	rootCmd.AddCommand(NewChatCommand()) // AI chat interface
 	rootCmd.AddCommand(NewLogsCommand())
 	
 	// Add toolbox management commands

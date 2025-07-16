@@ -55,11 +55,14 @@ func runMCPServer(cmd *cobra.Command, args []string) error {
 	// Create HTTP server
 	router := mux.NewRouter()
 	
-	// Add routes
-	router.HandleFunc("/tools", handleGetTools(mcpServer)).Methods("GET")
-	router.HandleFunc("/tools/{tool}", handleCallTool(mcpServer)).Methods("POST")
+	// Add MCP JSON-RPC routes
+	router.HandleFunc("/", handleMCPRequest(mcpServer)).Methods("POST")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 	router.HandleFunc("/info", handleInfo(mcpServer)).Methods("GET")
+	
+	// Legacy REST routes for backward compatibility
+	router.HandleFunc("/tools", handleGetTools(mcpServer)).Methods("GET")
+	router.HandleFunc("/tools/{tool}", handleCallTool(mcpServer)).Methods("POST")
 	
 	// Add CORS middleware
 	router.Use(corsMiddleware)
@@ -93,6 +96,106 @@ func runMCPServer(cmd *cobra.Command, args []string) error {
 	
 	log.Println("Server stopped")
 	return nil
+}
+
+// MCPRequest represents an MCP JSON-RPC request
+type MCPRequest struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      interface{} `json:"id"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params,omitempty"`
+}
+
+// MCPResponse represents an MCP JSON-RPC response
+type MCPResponse struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      interface{} `json:"id"`
+	Result  interface{} `json:"result,omitempty"`
+	Error   *MCPError   `json:"error,omitempty"`
+}
+
+// MCPError represents an MCP JSON-RPC error
+type MCPError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func handleMCPRequest(mcpServer *mcp.MateyMCPServer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req MCPRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(MCPResponse{
+				JSONRPC: "2.0",
+				ID:      nil,
+				Error: &MCPError{
+					Code:    -32700,
+					Message: "Parse error",
+				},
+			})
+			return
+		}
+
+		var result interface{}
+		var mcpErr *MCPError
+
+		switch req.Method {
+		case "tools/list":
+			tools := mcpServer.GetTools()
+			result = tools
+		case "tools/call":
+			params, ok := req.Params.(map[string]interface{})
+			if !ok {
+				mcpErr = &MCPError{
+					Code:    -32602,
+					Message: "Invalid params",
+				}
+				break
+			}
+
+			toolName, ok := params["name"].(string)
+			if !ok {
+				mcpErr = &MCPError{
+					Code:    -32602,
+					Message: "Missing tool name",
+				}
+				break
+			}
+
+			arguments, _ := params["arguments"].(map[string]interface{})
+			if arguments == nil {
+				arguments = make(map[string]interface{})
+			}
+
+			toolResult, err := mcpServer.ExecuteTool(r.Context(), toolName, arguments)
+			if err != nil {
+				mcpErr = &MCPError{
+					Code:    -32603,
+					Message: err.Error(),
+				}
+			} else {
+				result = toolResult
+			}
+		default:
+			mcpErr = &MCPError{
+				Code:    -32601,
+				Message: "Method not found",
+			}
+		}
+
+		response := MCPResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  result,
+			Error:   mcpErr,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
 }
 
 func handleGetTools(mcpServer *mcp.MateyMCPServer) http.HandlerFunc {

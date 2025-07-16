@@ -4,6 +4,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -12,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,10 +61,6 @@ func installCRDs(dryRun bool) error {
 		return nil
 	}
 
-	// Note: config creation is handled by createK8sClientWithCRDs
-
-	// Note: Using controller-runtime client instead of deprecated apiextensions client
-
 	fmt.Println("Installing Matey CRDs...")
 
 	// Create CRD client
@@ -70,33 +69,11 @@ func installCRDs(dryRun bool) error {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	// Install MCPServer CRD
-	err = installMCPServerCRD(ctx, k8sClient)
+	// Install CRDs from YAML files
+	err = installCRDsFromYAML(ctx, k8sClient)
 	if err != nil {
-		return fmt.Errorf("failed to install MCPServer CRD: %w", err)
+		return fmt.Errorf("failed to install CRDs: %w", err)
 	}
-	fmt.Println("✓ MCPServer CRD installed")
-
-	// Install MCPMemory CRD
-	err = installMCPMemoryCRD(ctx, k8sClient)
-	if err != nil {
-		return fmt.Errorf("failed to install MCPMemory CRD: %w", err)
-	}
-	fmt.Println("✓ MCPMemory CRD installed")
-
-	// Install MCPTaskScheduler CRD
-	err = installMCPTaskSchedulerCRD(ctx, k8sClient)
-	if err != nil {
-		return fmt.Errorf("failed to install MCPTaskScheduler CRD: %w", err)
-	}
-	fmt.Println("✓ MCPTaskScheduler CRD installed")
-
-	// Install MCPProxy CRD
-	err = installMCPProxyCRD(ctx, k8sClient)
-	if err != nil {
-		return fmt.Errorf("failed to install MCPProxy CRD: %w", err)
-	}
-	fmt.Println("✓ MCPProxy CRD installed")
 
 	// Install RBAC resources
 	err = installServiceAccount(ctx, k8sClient)
@@ -117,7 +94,7 @@ func installCRDs(dryRun bool) error {
 	}
 	fmt.Println("✓ ClusterRoleBinding installed")
 
-	fmt.Println("\n🎉 Matey installation complete!")
+	fmt.Println("\nMatey installation complete!")
 	fmt.Println("You can now run 'matey up' or 'matey proxy' to start your services.")
 
 	return nil
@@ -168,284 +145,37 @@ func createK8sClientWithCRDs() (client.Client, error) {
 	return k8sClient, nil
 }
 
-// installMCPServerCRD installs the MCPServer CRD
-func installMCPServerCRD(ctx context.Context, k8sClient client.Client) error {
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mcpservers.mcp.matey.ai",
-			Annotations: map[string]string{
-				"controller-gen.kubebuilder.io/version": "v0.12.0",
-			},
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "mcp.matey.ai",
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:     "MCPServer",
-				ListKind: "MCPServerList",
-				Plural:   "mcpservers",
-				Singular: "mcpserver",
-				ShortNames: []string{"mcpsrv"},
-			},
-			Scope: apiextensionsv1.NamespaceScoped,
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-				{
-					Name:    "v1",
-					Served:  true,
-					Storage: true,
-					Schema: &apiextensionsv1.CustomResourceValidation{
-						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
-							Properties: map[string]apiextensionsv1.JSONSchemaProps{
-								"spec": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"image":    {Type: "string"},
-										"port":     {Type: "integer", Format: "int32"},
-										"protocol": {Type: "string"},
-										"replicas": {Type: "integer", Format: "int32"},
-									},
-								},
-								"status": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"phase":         {Type: "string"},
-										"replicas":      {Type: "integer", Format: "int32"},
-										"readyReplicas": {Type: "integer", Format: "int32"},
-									},
-								},
-							},
-						},
-					},
-					Subresources: &apiextensionsv1.CustomResourceSubresources{
-						Status: &apiextensionsv1.CustomResourceSubresourceStatus{},
-					},
-				},
-			},
-		},
+// installCRDsFromYAML installs CRDs from embedded YAML files
+func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
+	crdFileNames := []string{
+		"mcpserver.yaml",
+		"mcpmemory.yaml",
+		"mcptaskscheduler.yaml",
+		"mcpproxy.yaml",
 	}
 
-	err := k8sClient.Create(ctx, crd)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
-}
+	for _, fileName := range crdFileNames {
+		// Read the YAML file
+		yamlData, err := os.ReadFile(filepath.Join("config/crd", fileName))
+		if err != nil {
+			return fmt.Errorf("failed to read CRD file %s: %w", fileName, err)
+		}
 
-// installMCPMemoryCRD installs the MCPMemory CRD
-func installMCPMemoryCRD(ctx context.Context, k8sClient client.Client) error {
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mcpmemories.mcp.matey.ai",
-			Annotations: map[string]string{
-				"controller-gen.kubebuilder.io/version": "v0.12.0",
-			},
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "mcp.matey.ai",
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:     "MCPMemory",
-				ListKind: "MCPMemoryList",
-				Plural:   "mcpmemories",
-				Singular: "mcpmemory",
-				ShortNames: []string{"mcpmem"},
-			},
-			Scope: apiextensionsv1.NamespaceScoped,
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-				{
-					Name:    "v1",
-					Served:  true,
-					Storage: true,
-					Schema: &apiextensionsv1.CustomResourceValidation{
-						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
-							Properties: map[string]apiextensionsv1.JSONSchemaProps{
-								"spec": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"host":              {Type: "string"},
-										"port":              {Type: "integer", Format: "int32"},
-										"replicas":          {Type: "integer", Format: "int32"},
-										"databaseURL":       {Type: "string"},
-										"postgresEnabled":   {Type: "boolean"},
-										"postgresUser":      {Type: "string"},
-										"postgresPassword":  {Type: "string"},
-										"postgresDB":        {Type: "string"},
-										"postgresPort":      {Type: "integer", Format: "int32"},
-									},
-								},
-								"status": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"phase":          {Type: "string"},
-										"replicas":       {Type: "integer", Format: "int32"},
-										"readyReplicas":  {Type: "integer", Format: "int32"},
-										"postgresStatus": {Type: "string"},
-									},
-								},
-							},
-						},
-					},
-					Subresources: &apiextensionsv1.CustomResourceSubresources{
-						Status: &apiextensionsv1.CustomResourceSubresourceStatus{},
-					},
-				},
-			},
-		},
+		// Parse the YAML into a CRD object
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		if err := yaml.Unmarshal(yamlData, crd); err != nil {
+			return fmt.Errorf("failed to unmarshal CRD %s: %w", fileName, err)
+		}
+
+		// Create or update the CRD
+		err = k8sClient.Create(ctx, crd)
+		if err != nil && !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create CRD %s: %w", crd.Name, err)
+		}
+
+		fmt.Printf("✓ %s CRD installed\n", crd.Spec.Names.Kind)
 	}
 
-	err := k8sClient.Create(ctx, crd)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
-}
-
-// installMCPTaskSchedulerCRD installs the MCPTaskScheduler CRD
-func installMCPTaskSchedulerCRD(ctx context.Context, k8sClient client.Client) error {
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mcptaskschedulers.mcp.matey.ai",
-			Annotations: map[string]string{
-				"controller-gen.kubebuilder.io/version": "v0.12.0",
-			},
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "mcp.matey.ai",
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:     "MCPTaskScheduler",
-				ListKind: "MCPTaskSchedulerList",
-				Plural:   "mcptaskschedulers",
-				Singular: "mcptaskscheduler",
-				ShortNames: []string{"mcpts"},
-			},
-			Scope: apiextensionsv1.NamespaceScoped,
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-				{
-					Name:    "v1",
-					Served:  true,
-					Storage: true,
-					Schema: &apiextensionsv1.CustomResourceValidation{
-						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
-							Properties: map[string]apiextensionsv1.JSONSchemaProps{
-								"spec": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"image":             {Type: "string"},
-										"port":              {Type: "integer", Format: "int32"},
-										"host":              {Type: "string"},
-										"replicas":          {Type: "integer", Format: "int32"},
-										"databasePath":      {Type: "string"},
-										"logLevel":          {Type: "string"},
-										"mcpProxyURL":       {Type: "string"},
-										"mcpProxyAPIKey":    {Type: "string"},
-										"ollamaURL":         {Type: "string"},
-										"ollamaModel":       {Type: "string"},
-										"openRouterAPIKey":  {Type: "string"},
-										"openRouterModel":   {Type: "string"},
-									},
-								},
-								"status": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"phase":         {Type: "string"},
-										"replicas":      {Type: "integer", Format: "int32"},
-										"readyReplicas": {Type: "integer", Format: "int32"},
-									},
-								},
-							},
-						},
-					},
-					Subresources: &apiextensionsv1.CustomResourceSubresources{
-						Status: &apiextensionsv1.CustomResourceSubresourceStatus{},
-					},
-				},
-			},
-		},
-	}
-
-	err := k8sClient.Create(ctx, crd)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
-}
-
-// installMCPProxyCRD installs the MCPProxy CRD
-func installMCPProxyCRD(ctx context.Context, k8sClient client.Client) error {
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mcpproxies.mcp.matey.ai",
-			Annotations: map[string]string{
-				"controller-gen.kubebuilder.io/version": "v0.12.0",
-			},
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "mcp.matey.ai",
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Kind:     "MCPProxy",
-				ListKind: "MCPProxyList",
-				Plural:   "mcpproxies",
-				Singular: "mcpproxy",
-				ShortNames: []string{"mcpproxy"},
-			},
-			Scope: apiextensionsv1.NamespaceScoped,
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
-				{
-					Name:    "v1",
-					Served:  true,
-					Storage: true,
-					Schema: &apiextensionsv1.CustomResourceValidation{
-						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-							Type: "object",
-							Properties: map[string]apiextensionsv1.JSONSchemaProps{
-								"spec": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"port":        {Type: "integer", Format: "int32"},
-										"host":        {Type: "string"},
-										"replicas":    {Type: "integer", Format: "int32"},
-										"serviceType": {Type: "string"},
-										"auth": {
-											Type: "object",
-											Properties: map[string]apiextensionsv1.JSONSchemaProps{
-												"enabled": {Type: "boolean"},
-												"apiKey":  {Type: "string"},
-											},
-										},
-										"ingress": {
-											Type: "object",
-											Properties: map[string]apiextensionsv1.JSONSchemaProps{
-												"enabled": {Type: "boolean"},
-												"host":    {Type: "string"},
-											},
-										},
-										"serviceAccount": {Type: "string"},
-									},
-								},
-								"status": {
-									Type: "object",
-									Properties: map[string]apiextensionsv1.JSONSchemaProps{
-										"phase":         {Type: "string"},
-										"replicas":      {Type: "integer", Format: "int32"},
-										"readyReplicas": {Type: "integer", Format: "int32"},
-									},
-								},
-							},
-						},
-					},
-					Subresources: &apiextensionsv1.CustomResourceSubresources{
-						Status: &apiextensionsv1.CustomResourceSubresourceStatus{},
-					},
-				},
-			},
-		},
-	}
-
-	err := k8sClient.Create(ctx, crd)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	}
 	return nil
 }
 

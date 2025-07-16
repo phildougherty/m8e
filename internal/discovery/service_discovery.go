@@ -243,7 +243,7 @@ func (sd *K8sServiceDiscovery) handleServiceAdded(service *corev1.Service) {
 	sd.services[endpoint.Name] = *endpoint
 	sd.mu.Unlock()
 
-	sd.logger.Info("Discovered MCP service: %s (protocol: %s, url: %s)", 
+	sd.logger.Debug("Discovered MCP service: %s (protocol: %s, url: %s)", 
 		endpoint.Name, endpoint.Protocol, endpoint.URL)
 
 	// Notify handlers
@@ -263,7 +263,7 @@ func (sd *K8sServiceDiscovery) handleServiceModified(service *corev1.Service) {
 	sd.services[endpoint.Name] = *endpoint
 	sd.mu.Unlock()
 
-	sd.logger.Info("Updated MCP service: %s", endpoint.Name)
+	sd.logger.Debug("Updated MCP service: %s", endpoint.Name)
 
 	// Notify handlers
 	for _, handler := range sd.handlers {
@@ -282,7 +282,7 @@ func (sd *K8sServiceDiscovery) handleServiceDeleted(service *corev1.Service) {
 	delete(sd.services, serviceName)
 	sd.mu.Unlock()
 
-	sd.logger.Info("Removed MCP service: %s", serviceName)
+	sd.logger.Debug("Removed MCP service: %s", serviceName)
 
 	// Notify handlers
 	for _, handler := range sd.handlers {
@@ -396,7 +396,7 @@ func (sd *K8sServiceDiscovery) DiscoverMCPServers() ([]ServiceEndpoint, error) {
 		}
 	}
 
-	sd.logger.Info("Discovered %d MCP services", len(endpoints))
+	sd.logger.Info("Service discovery complete: %d MCP services", len(endpoints))
 	return endpoints, nil
 }
 

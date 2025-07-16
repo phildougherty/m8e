@@ -5,6 +5,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -13,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	
 	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/controllers"
 	"github.com/phildougherty/m8e/internal/crd"
 )
 
@@ -72,14 +76,49 @@ func runProxy(cmd *cobra.Command, port int, namespace, apiKey string) error {
 		fmt.Printf("Authentication: Disabled\n")
 	}
 
-	// Create MCPProxy resource instead of running directly
+	// Create MCPProxy resource 
 	if err := createMCPProxyResource(namespace, port, apiKey); err != nil {
 		return fmt.Errorf("failed to create MCPProxy resource: %w", err)
 	}
 
 	fmt.Printf("MCPProxy resource created successfully\n")
-	fmt.Printf("The controller will deploy the proxy automatically\n")
+	fmt.Printf("Starting controller manager to deploy the proxy...\n")
+
+	// Start controller manager to handle the MCPProxy resource
+	cfg := &config.ComposeConfig{} // Create minimal config for controller
+	controllerManager, err := controllers.NewControllerManager(namespace, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create controller manager: %w", err)
+	}
+
+	// Start the controller manager in a separate goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if err := controllerManager.Start(ctx); err != nil {
+			fmt.Printf("Controller manager error: %v\n", err)
+		}
+	}()
+
+	fmt.Printf("Controller manager started successfully\n")
+	fmt.Printf("Proxy deployment in progress...\n")
 	fmt.Printf("Check deployment status with: kubectl get mcpproxy -n %s\n", namespace)
+	fmt.Printf("Press Ctrl+C to stop the controller manager\n")
+
+	// Wait for interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	fmt.Printf("\nShutting down controller manager...\n")
+	cancel()
+	controllerManager.Stop()
+
+	// Give some time for graceful shutdown
+	time.Sleep(2 * time.Second)
+	fmt.Printf("Controller manager stopped\n")
+	
 	return nil
 }
 

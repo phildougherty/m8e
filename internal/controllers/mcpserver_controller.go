@@ -97,7 +97,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully reconciled MCPServer", "name", mcpServer.Name)
+	logger.V(1).Info("Successfully reconciled MCPServer", "name", mcpServer.Name)
 	return ctrl.Result{RequeueAfter: time.Second * 30}, nil
 }
 
@@ -145,7 +145,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 		return nil, err
 	}
 
-	logger.Info("Deployment reconciled", "operation", op, "name", deployment.Name)
+	logger.V(1).Info("Deployment reconciled", "operation", op, "name", deployment.Name)
 	return deployment, nil
 }
 
@@ -206,7 +206,7 @@ func (r *MCPServerReconciler) reconcileService(ctx context.Context, mcpServer *m
 		return nil, err
 	}
 
-	logger.Info("Service reconciled", "operation", op, "name", service.Name)
+	logger.V(1).Info("Service reconciled", "operation", op, "name", service.Name)
 	return service, nil
 }
 

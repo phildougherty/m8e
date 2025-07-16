@@ -91,6 +91,19 @@ spec:
                 items:
                   type: string
                 type: array
+              authentication:
+                description: Authentication configuration
+                properties:
+                  enabled:
+                    description: Whether authentication is enabled
+                    type: boolean
+                  requiredScope:
+                    description: Required OAuth scope
+                    type: string
+                  allowAPIKey:
+                    description: Whether API key authentication is allowed
+                    type: boolean
+                type: object
             type: object
           status:
             description: MCPMemoryStatus defines the observed state of MCPMemory

@@ -44,6 +44,11 @@ func (h *ProxyHandler) sendHTTPToolCall(conn *discovery.MCPConnection, request m
 	return h.sendHTTPRequestWithSession(conn.HTTPConnection, h.generateStringID(), request)
 }
 
+// SendHTTPToolCall sends a tools/call request via HTTP (exported for proxy endpoints)
+func (h *ProxyHandler) SendHTTPToolCall(conn *discovery.MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
+	return h.sendHTTPToolCall(conn, request)
+}
+
 // sendSSEToolCall sends a tools/call request via SSE
 func (h *ProxyHandler) sendSSEToolCall(conn *discovery.MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
 	if conn.SSEConnection == nil {
@@ -58,6 +63,11 @@ func (h *ProxyHandler) sendSSEToolCall(conn *discovery.MCPConnection, request ma
 
 	sessionURL := conn.SSEConnection.BaseURL + sessionEndpoint
 	return h.sendSSERequestAndWaitForResponse(sessionURL, request)
+}
+
+// SendSSEToolCall sends a tools/call request via SSE (exported for proxy endpoints)
+func (h *ProxyHandler) SendSSEToolCall(conn *discovery.MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
+	return h.sendSSEToolCall(conn, request)
 }
 
 func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Request, toolName string) {

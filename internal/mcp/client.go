@@ -25,10 +25,10 @@ func NewMCPClient(proxyURL string) *MCPClient {
 	return &MCPClient{
 		proxyURL: proxyURL,
 		httpClient: &http.Client{
-			Timeout: 2 * time.Minute, // Increased for long MCP responses
+			Timeout: 30 * time.Second, // Increased timeout for tool discovery
 		},
 		apiKey:     os.Getenv("MCP_API_KEY"),
-		retryCount: 3,
+		retryCount: 2, // Reduced retry count
 	}
 }
 
@@ -75,7 +75,14 @@ func (c *MCPClient) ListServers(ctx context.Context) ([]ServerInfo, error) {
 	}
 	
 	var servers []ServerInfo
-	if err := json.Unmarshal(resp.Result.([]byte), &servers); err != nil {
+	
+	// Handle the response format from the new MCP protocol endpoints
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal servers response: %w", err)
+	}
+	
+	if err := json.Unmarshal(resultBytes, &servers); err != nil {
 		return nil, fmt.Errorf("failed to parse servers response: %w", err)
 	}
 	
@@ -101,7 +108,14 @@ func (c *MCPClient) GetServerTools(ctx context.Context, serverName string) ([]To
 	}
 	
 	var tools []Tool
-	if err := json.Unmarshal(resp.Result.([]byte), &tools); err != nil {
+	
+	// Handle the response format from the new MCP protocol endpoints
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tools response: %w", err)
+	}
+	
+	if err := json.Unmarshal(resultBytes, &tools); err != nil {
 		return nil, fmt.Errorf("failed to parse tools response: %w", err)
 	}
 	
@@ -110,6 +124,69 @@ func (c *MCPClient) GetServerTools(ctx context.Context, serverName string) ([]To
 
 // CallTool calls a specific tool on an MCP server
 func (c *MCPClient) CallTool(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (*ToolResult, error) {
+	// Try direct tool call first (preferred method)
+	if result, err := c.callToolDirect(ctx, serverName, toolName, arguments); err == nil {
+		return result, nil
+	}
+
+	// If direct call fails, try MCP protocol format as fallback
+	return c.callToolMCP(ctx, serverName, toolName, arguments)
+}
+
+// callToolDirect calls a tool using direct proxy endpoint (e.g., /get_current_glucose)
+func (c *MCPClient) callToolDirect(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (*ToolResult, error) {
+	endpoint := fmt.Sprintf("/%s", toolName)
+	
+	// Create HTTP request directly to the proxy endpoint
+	reqBytes, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal arguments: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.proxyURL+endpoint, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	
+	// Add authentication if API key is available
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	httpResp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call tool %s on server %s: %w", toolName, serverName, err)
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(httpResp.Body)
+		return nil, fmt.Errorf("HTTP error %d: %s", httpResp.StatusCode, string(respBytes))
+	}
+
+	respBytes, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Try to parse as ToolResult first
+	var result ToolResult
+	if err := json.Unmarshal(respBytes, &result); err == nil {
+		return &result, nil
+	}
+
+	// If that fails, try to parse as plain text and convert to ToolResult
+	resultText := string(respBytes)
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: resultText}},
+		IsError: false,
+	}, nil
+}
+
+// callToolMCP calls a tool using MCP protocol format
+func (c *MCPClient) callToolMCP(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (*ToolResult, error) {
 	req := MCPRequest{
 		Method: "tools/call",
 		Params: map[string]interface{}{
@@ -118,7 +195,9 @@ func (c *MCPClient) CallTool(ctx context.Context, serverName, toolName string, a
 		},
 	}
 	
-	resp, err := c.makeRequest(ctx, fmt.Sprintf("/mcp/server/%s/tools/%s", serverName, toolName), req)
+	// Try server-specific endpoint first
+	endpoint := fmt.Sprintf("/mcp/server/%s/tools/call", serverName)
+	resp, err := c.makeRequest(ctx, endpoint, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call tool %s on server %s: %w", toolName, serverName, err)
 	}
@@ -128,7 +207,14 @@ func (c *MCPClient) CallTool(ctx context.Context, serverName, toolName string, a
 	}
 	
 	var result ToolResult
-	if err := json.Unmarshal(resp.Result.([]byte), &result); err != nil {
+	
+	// Handle the response format from MCP protocol endpoints
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tool result: %w", err)
+	}
+	
+	if err := json.Unmarshal(resultBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse tool result: %w", err)
 	}
 	
@@ -160,7 +246,7 @@ func (c *MCPClient) makeRequest(ctx context.Context, endpoint string, req MCPReq
 		if err != nil {
 			lastErr = err
 			if attempt < c.retryCount-1 {
-				time.Sleep(time.Duration(attempt+1) * time.Second)
+				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Reduced sleep time
 				continue
 			}
 			return nil, fmt.Errorf("failed to make request after %d attempts: %w", c.retryCount, err)
@@ -171,7 +257,7 @@ func (c *MCPClient) makeRequest(ctx context.Context, endpoint string, req MCPReq
 			respBytes, _ := io.ReadAll(httpResp.Body)
 			lastErr = fmt.Errorf("HTTP error %d: %s", httpResp.StatusCode, string(respBytes))
 			if attempt < c.retryCount-1 && httpResp.StatusCode >= 500 {
-				time.Sleep(time.Duration(attempt+1) * time.Second)
+				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Reduced sleep time
 				continue
 			}
 			return nil, lastErr
