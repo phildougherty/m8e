@@ -1,6 +1,17 @@
 run:
   timeout: 5m
 
+linters-settings:
+  mnd:
+    # Allow numbers in tests
+    checks:
+      - argument
+      - case
+      - condition
+      - operation
+      - return
+      - assign
+
 linters:
   enable:
     - errcheck

@@ -28,6 +28,9 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewRestartCommand())
 	rootCmd.AddCommand(NewPsCommand())
 	rootCmd.AddCommand(NewTopCommand())
+	rootCmd.AddCommand(NewDashboardCommand())
+	rootCmd.AddCommand(NewTViewDashboardCommand()) // AI chat interface
+	rootCmd.AddCommand(NewChatCommand()) // Alternative terminal chat
 	rootCmd.AddCommand(NewLogsCommand())
 	
 	// Add toolbox management commands
@@ -46,6 +49,9 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewMemoryCommand())
 	rootCmd.AddCommand(NewWorkflowCommand())
 	rootCmd.AddCommand(NewInspectCommand())
+	
+	// Add MCP server command
+	rootCmd.AddCommand(NewMCPServerCommand())
 
 	return rootCmd
 }

@@ -51,6 +51,7 @@ type ComposeConfig struct {
 	Volumes       map[string]VolumeConfig      `yaml:"volumes,omitempty"`
 	TaskScheduler *TaskScheduler               `yaml:"task_scheduler,omitempty"`
 	Memory        MemoryConfig                 `yaml:"memory"`
+	AI            AIConfig                     `yaml:"ai,omitempty"`
 }
 
 // OAuth 2.1 Configuration
@@ -633,6 +634,23 @@ type DashboardSecurity struct {
 type DashboardAdminLogin struct {
 	Enabled        bool   `yaml:"enabled"`
 	SessionTimeout string `yaml:"session_timeout"`
+}
+
+// AIConfig defines AI provider configuration
+type AIConfig struct {
+	DefaultProvider   string                       `yaml:"default_provider,omitempty"`
+	Providers         map[string]AIProviderConfig  `yaml:"providers,omitempty"`
+	FallbackProviders []string                     `yaml:"fallback_providers,omitempty"`
+}
+
+// AIProviderConfig defines configuration for a specific AI provider
+type AIProviderConfig struct {
+	APIKey       string `yaml:"api_key,omitempty"`
+	Endpoint     string `yaml:"endpoint,omitempty"`
+	DefaultModel string `yaml:"default_model,omitempty"`
+	MaxTokens    int    `yaml:"max_tokens,omitempty"`
+	Temperature  float64 `yaml:"temperature,omitempty"`
+	Timeout      string `yaml:"timeout,omitempty"`
 }
 
 // loadDotEnv loads environment variables from .env file in the same directory as the config file
