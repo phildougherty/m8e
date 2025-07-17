@@ -765,11 +765,13 @@ func (tc *TermChat) getSystemContext() string {
 		"Use your model's native function calling system. Examples:\n" +
 		"```\n" +
 		"// ✅ CORRECT - With required arguments\n" +
+		"list_workflows({})\n" +
 		"create_workflow({\n" +
 		"  \"name\": \"glucose-tracker\",\n" +
 		"  \"steps\": [{\"name\": \"check-glucose\", \"tool\": \"get_current_glucose\"}]\n" +
 		"})\n\n" +
 		"// ❌ WRONG - No arguments (will fail)\n" +
+		"list_workflows()\n" +
 		"create_workflow()\n" +
 		"```\n\n" +
 		"## 🔧 Available Function Schemas\n" +
@@ -778,36 +780,70 @@ func (tc *TermChat) getSystemContext() string {
 		"## 🌐 Dynamic MCP Tools\n" +
 		mcpTools +
 		"\n\n" +
-		"## 🚀 AGENTIC BEHAVIOR\n" +
-		"You are autonomous - work until the user's goal is 100% complete:\n" +
-		"1. **Understand** the user's goal\n" +
-		"2. **Execute** function calls with proper arguments\n" +
-		"3. **Create** actual working configurations (not examples)\n" +
-		"4. **Deploy** using matey tools\n" +
-		"5. **Verify** everything works\n" +
-		"6. **Continue** until fully complete\n\n" +
-		"### Workflow Creation Process\n" +
-		"When user asks to create a workflow:\n" +
-		"1. Call data gathering functions first (e.g., `get_current_glucose()`)\n" +
-		"2. **Immediately** call `create_workflow()` with proper arguments:\n" +
-		"   - Required: `name` (string), `steps` (array)\n" +
-		"   - Optional: `description`, `schedule`\n" +
-		"3. Call `matey_up()` to deploy\n" +
-		"4. Call `matey_ps()` to verify\n\n" +
-		"## 📋 Key Matey Commands\n" +
+		"## 🚀 MATEY PLATFORM CAPABILITIES\n" +
+		"You can interact with the Matey platform using the comprehensive MCP tools available:\n\n" +
+		"### 📊 Service Management\n" +
 		"- `matey_ps()` - Check server status\n" +
 		"- `matey_up()` - Start services\n" +
 		"- `matey_down()` - Stop services\n" +
 		"- `matey_logs({\"server\": \"name\"})` - Get logs\n" +
+		"- `start_service({\"name\": \"service-name\"})` - Start specific service\n" +
+		"- `stop_service({\"name\": \"service-name\"})` - Stop specific service\n" +
+		"- `reload_proxy({})` - Reload proxy configuration\n\n" +
+		"### 🔄 Workflow Management\n" +
+		"- `list_workflows({})` - List all workflows\n" +
+		"- `get_workflow({\"name\": \"workflow-name\"})` - Get workflow details\n" +
 		"- `create_workflow({\"name\": \"...\", \"steps\": [...]})` - Create workflows\n" +
+		"- `delete_workflow({\"name\": \"workflow-name\"})` - Delete workflow\n" +
+		"- `execute_workflow({\"name\": \"workflow-name\"})` - Execute workflow\n" +
+		"- `workflow_logs({\"name\": \"workflow-name\"})` - Get workflow logs\n" +
+		"- `pause_workflow({\"name\": \"workflow-name\"})` - Pause workflow\n" +
+		"- `resume_workflow({\"name\": \"workflow-name\"})` - Resume workflow\n" +
+		"- `workflow_templates({})` - Get workflow templates\n\n" +
+		"### 🧠 Memory & Task Management\n" +
+		"- `k8s_memory({\"action\": \"start|stop|status\"})` - Memory service management\n" +
+		"- `k8s_task_scheduler({\"action\": \"start|stop|status\"})` - Task scheduler management\n" +
+		"- `memory_store({\"key\": \"...\", \"value\": \"...\"})` - Store memory\n" +
+		"- `memory_retrieve({\"key\": \"...\"})` - Retrieve memory\n" +
+		"- `memory_list({})` - List memory entries\n" +
+		"- `memory_delete({\"key\": \"...\"})` - Delete memory\n" +
+		"- `task_create({\"name\": \"...\", \"type\": \"...\"})` - Create task\n" +
+		"- `task_list({})` - List tasks\n" +
+		"- `task_status({\"id\": \"...\"})` - Get task status\n" +
+		"- `task_cancel({\"id\": \"...\"})` - Cancel task\n\n" +
+		"### 🧰 Toolbox & Configuration\n" +
+		"- `toolbox_install({\"name\": \"tool-name\"})` - Install toolbox\n" +
+		"- `toolbox_list({})` - List toolboxes\n" +
+		"- `toolbox_remove({\"name\": \"tool-name\"})` - Remove toolbox\n" +
+		"- `config_get({\"key\": \"config-key\"})` - Get configuration\n" +
+		"- `config_set({\"key\": \"...\", \"value\": \"...\"})` - Set configuration\n" +
+		"- `config_list({})` - List configurations\n" +
 		"- `apply_config({\"config_yaml\": \"...\", \"config_type\": \"...\"})` - Apply K8s configs\n\n" +
+		"### 🌐 MCP Server Management\n" +
+		"- `add_mcp_server({\"name\": \"...\", \"url\": \"...\"})` - Add MCP server\n" +
+		"- `list_mcp_servers({})` - List MCP servers\n" +
+		"- `remove_mcp_server({\"name\": \"server-name\"})` - Remove MCP server\n" +
+		"- `test_mcp_server({\"name\": \"server-name\"})` - Test MCP server\n\n" +
+		"## 🎯 INTELLIGENT BEHAVIOR\n" +
+		"You are autonomous and should:\n" +
+		"1. **Analyze** the user's request to understand their goal\n" +
+		"2. **Select** the appropriate MCP tools to accomplish the task\n" +
+		"3. **Execute** function calls with proper arguments\n" +
+		"4. **Adapt** your approach based on the available tools and user needs\n" +
+		"5. **Verify** results and continue until the task is complete\n\n" +
+		"### Task Examples:\n" +
+		"- **\"List my workflows\"** → Use `list_workflows({})`\n" +
+		"- **\"Create a workflow\"** → Use `create_workflow()` with proper parameters\n" +
+		"- **\"Check server status\"** → Use `matey_ps()`\n" +
+		"- **\"Store some data\"** → Use `memory_store()` with key/value\n" +
+		"- **\"Install a tool\"** → Use `toolbox_install()` with tool name\n\n" +
 		"## ⚠️ CRITICAL REMINDERS\n" +
 		"- **ALWAYS provide function arguments as JSON objects**\n" +
 		"- **Check the function schemas above for required parameters**\n" +
-		"- **Never call functions without their required arguments**\n" +
-		"- **Work autonomously until the task is 100% complete**\n" +
-		"- **Create and deploy actual configurations, not examples**\n\n" +
-		"When ready, execute functions with proper arguments to help the user achieve their goals!"
+		"- **Use the appropriate tool for the user's specific request**\n" +
+		"- **Don't assume workflows need to be created - the user might want to list, view, or manage existing ones**\n" +
+		"- **Work autonomously until the task is 100% complete**\n\n" +
+		"When ready, execute the appropriate MCP functions to help the user achieve their goals!"
 }
 
 // generateFunctionSchemas generates detailed function schemas for the AI
@@ -1554,24 +1590,7 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 		messages = append(messages, funcResult)
 	}
 	
-	// Add explicit continuation instruction if this looks like a workflow creation task
-	lastUserMsg := ""
-	if aiMsgIndex > 0 {
-		for i := aiMsgIndex - 1; i >= 0; i-- {
-			if tc.chatHistory[i].Role == "user" {
-				lastUserMsg = strings.ToLower(tc.chatHistory[i].Content)
-				break
-			}
-		}
-	}
-	
-	// Add continuation prompt based on task type
-	if strings.Contains(lastUserMsg, "workflow") || strings.Contains(lastUserMsg, "create") || strings.Contains(lastUserMsg, "build") {
-		messages = append(messages, ai.Message{
-			Role:    "user", 
-			Content: "CONTINUE NOW: You MUST call create_workflow with proper JSON parameters. REQUIRED: name (string) and steps (array). Use this EXACT format:\n\ncreate_workflow({\n  \"name\": \"glucose-tracker\",\n  \"description\": \"Track glucose levels\",\n  \"steps\": [\n    {\"name\": \"check-glucose\", \"tool\": \"get_current_glucose\"}\n  ]\n})\n\nCall it RIGHT NOW with these parameters. Do not provide explanations first.",
-		})
-	}
+	// Let AI continue naturally without forcing specific function calls
 	
 	// Continue the conversation
 	streamCtx, cancel := context.WithTimeout(tc.ctx, 5*time.Minute)

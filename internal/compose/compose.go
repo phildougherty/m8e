@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/container"
 	"github.com/phildougherty/m8e/internal/controllers"
 	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
@@ -887,10 +888,56 @@ func List(configFile string) error {
 	return nil
 }
 
-// Logs returns logs from services (placeholder for future implementation)
+// Logs returns logs from services
 func Logs(configFile string, serviceNames []string, follow bool) error {
-	fmt.Println("Use kubectl logs to view pod logs")
-	fmt.Printf("Example: kubectl logs -n default -l app.kubernetes.io/name=memory\n")
+	cfg, err := config.LoadConfig(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	namespace := "default"
+
+	// Create Kubernetes runtime for logs
+	runtime, err := container.NewKubernetesRuntime(namespace)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes runtime: %w", err)
+	}
+
+	// If no service names specified, show logs from all defined services
+	if len(serviceNames) == 0 {
+		for name := range cfg.Servers {
+			serviceNames = append(serviceNames, name)
+		}
+	}
+
+	// Handle special service names
+	for i, name := range serviceNames {
+		switch name {
+		case "proxy":
+			serviceNames[i] = "matey-proxy"
+		case "task-scheduler":
+			serviceNames[i] = "matey-task-scheduler"
+		case "memory":
+			serviceNames[i] = "matey-memory"
+		}
+	}
+
+	// Show logs from each service
+	for _, serviceName := range serviceNames {
+		if len(serviceNames) > 1 {
+			fmt.Printf("=== Logs for %s ===\n", serviceName)
+		}
+		
+		err := runtime.ShowContainerLogs(serviceName, follow)
+		if err != nil {
+			fmt.Printf("Error getting logs for %s: %v\n", serviceName, err)
+		}
+		
+		if len(serviceNames) > 1 {
+			fmt.Println()
+		}
+	}
+
 	return nil
 }
 
