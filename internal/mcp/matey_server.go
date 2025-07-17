@@ -205,6 +205,7 @@ func (m *MateyMCPServer) GetTools() []Tool {
 								"tool":       map[string]interface{}{"type": "string"},
 								"parameters": map[string]interface{}{"type": "object"},
 							},
+							"required": []string{"name", "tool"},
 						},
 					},
 				},
@@ -510,7 +511,55 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 		}, fmt.Errorf("steps are required")
 	}
 	
-	// Create workflow YAML
+	// Process steps to ensure correct structure for CRD
+	processedSteps := make([]map[string]interface{}, 0, len(steps))
+	for i, step := range steps {
+		stepMap, ok := step.(map[string]interface{})
+		if !ok {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("step %d is not a valid object", i)}},
+				IsError: true,
+			}, fmt.Errorf("step %d is not a valid object", i)
+		}
+		
+		// Validate required fields
+		stepName, nameOk := stepMap["name"].(string)
+		stepTool, toolOk := stepMap["tool"].(string)
+		if !nameOk || !toolOk {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("step %d is missing required 'name' or 'tool' field", i)}},
+				IsError: true,
+			}, fmt.Errorf("step %d is missing required 'name' or 'tool' field", i)
+		}
+		
+		// Create properly structured step
+		processedStep := map[string]interface{}{
+			"name": stepName,
+			"tool": stepTool,
+		}
+		
+		// Add parameters if they exist
+		if parameters, ok := stepMap["parameters"].(map[string]interface{}); ok {
+			processedStep["parameters"] = parameters
+		}
+		
+		// Add other optional fields
+		if condition, ok := stepMap["condition"].(string); ok && condition != "" {
+			processedStep["condition"] = condition
+		}
+		
+		if continueOnError, ok := stepMap["continueOnError"].(bool); ok {
+			processedStep["continueOnError"] = continueOnError
+		}
+		
+		if dependsOn, ok := stepMap["dependsOn"].([]interface{}); ok && len(dependsOn) > 0 {
+			processedStep["dependsOn"] = dependsOn
+		}
+		
+		processedSteps = append(processedSteps, processedStep)
+	}
+	
+	// Create workflow YAML structure matching the CRD
 	workflow := map[string]interface{}{
 		"apiVersion": "mcp.matey.ai/v1",
 		"kind":       "Workflow",
@@ -518,31 +567,37 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 			"name": name,
 		},
 		"spec": map[string]interface{}{
-			"enabled": true,
-			"steps":   steps,
+			"enabled":  true,
+			"steps":    processedSteps,
+			"schedule": "0 0 * * *", // Default to daily at midnight
 		},
 	}
 	
+	// Add description as annotation if provided
 	if description, ok := args["description"].(string); ok && description != "" {
-		workflow["metadata"].(map[string]interface{})["description"] = description
+		metadata := workflow["metadata"].(map[string]interface{})
+		annotations := make(map[string]interface{})
+		annotations["description"] = description
+		metadata["annotations"] = annotations
 	}
 	
+	// Override default schedule if provided
 	if schedule, ok := args["schedule"].(string); ok && schedule != "" {
 		workflow["spec"].(map[string]interface{})["schedule"] = schedule
 	}
 	
-	// Convert to YAML
-	yamlBytes, err := json.Marshal(workflow)
+	// Convert to JSON (kubectl accepts both JSON and YAML)
+	jsonBytes, err := json.MarshalIndent(workflow, "", "  ")
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error creating workflow YAML: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error creating workflow JSON: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
 	// Apply the workflow
 	return m.applyConfig(ctx, map[string]interface{}{
-		"config_yaml": string(yamlBytes),
+		"config_yaml": string(jsonBytes),
 		"config_type": "workflow",
 	})
 }

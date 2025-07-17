@@ -314,6 +314,9 @@ func (tc *TermChat) chatWithAI(message string) {
 	thinkProcessor := ai.NewThinkProcessor()
 	var functionCallsToProcess []ai.ToolCall
 	
+	// Accumulate function call arguments across streaming chunks
+	accumulatedFunctionCalls := make(map[string]*ai.ToolCall)
+	
 	for response := range stream {
 		if response.Error != nil {
 			tc.chatHistory[aiMsgIndex].Content = fmt.Sprintf("Error: %v", response.Error)
@@ -340,16 +343,43 @@ func (tc *TermChat) chatWithAI(message string) {
 			}
 		}
 
-		// Collect tool calls to process after streaming is complete
+		// Accumulate tool calls across streaming chunks
 		if len(response.ToolCalls) > 0 {
 			for _, toolCall := range response.ToolCalls {
 				if toolCall.Type == "function" {
-					functionCallsToProcess = append(functionCallsToProcess, toolCall)
+					// Use tool call ID to accumulate arguments
+					callId := toolCall.ID
+					if callId == "" {
+						// Fallback to function name if no ID
+						callId = toolCall.Function.Name
+					}
+					
+					if existing, exists := accumulatedFunctionCalls[callId]; exists {
+						// Accumulate arguments for existing function call
+						existing.Function.Arguments += toolCall.Function.Arguments
+					} else {
+						// New function call
+						accumulatedFunctionCalls[callId] = &ai.ToolCall{
+							ID:   toolCall.ID,
+							Type: toolCall.Type,
+							Function: ai.FunctionCall{
+								Name:      toolCall.Function.Name,
+								Arguments: toolCall.Function.Arguments,
+							},
+						}
+					}
 				}
 			}
 		}
 
 		// Note: XML parsing moved to after streaming is complete
+	}
+	
+	// Convert accumulated function calls to the processing list
+	for _, call := range accumulatedFunctionCalls {
+		if call.Function.Name != "" {
+			functionCallsToProcess = append(functionCallsToProcess, *call)
+		}
 	}
 	
 	// Process any function calls that were collected during streaming
@@ -619,161 +649,206 @@ func (tc *TermChat) getHelpText() string {
 
 // getSystemContext returns the system context for the AI
 func (tc *TermChat) getSystemContext() string {
-	// Get available MCP tools
+	// Get available MCP tools dynamically
 	mcpTools := tc.getMCPToolsContext()
 	
-	return "You are Matey, an AI assistant for Kubernetes-native MCP (Model Context Protocol) server orchestration.\n\n" +
-		"## IMPORTANT: You can now execute actions on the live cluster!\n\n" +
-		"### MCP Cluster Integration:\n" +
-		"- Connected to MCP proxy running in Kubernetes cluster\n" +
-		"- Proxy automatically discovers all MCP servers with service labels\n" +
-		"- AI can execute tools on real cluster services\n" +
-		"- Authentication and retry logic built-in\n\n" +
-		"### MCP Tool Execution:\n" +
-		"- IMPORTANT: You have access to native function calling for MCP tools\n" +
-		"- PREFERRED: Use the built-in function calling system provided by your model\n" +
-		"- Functions are named directly by their tool name (e.g., get_glucose_data, matey_ps, searxng_search)\n" +
-		"- The system automatically routes to the correct server\n" +
-		"- AVOID: Do not use XML-style function calls unless native calling fails\n" +
-		"- Always check current state before making changes\n" +
-		"- Use matey tools to interact with the cluster\n" +
-		"- Execute workflows and apply configurations\n\n" +
+	// Get function definitions for schema validation
+	functionDefs := tc.generateFunctionSchemas()
+	
+	return "# Matey AI Assistant - Kubernetes MCP Server Orchestration\n\n" +
+		"You are an autonomous AI assistant for managing MCP (Model Context Protocol) servers in Kubernetes.\n\n" +
+		"## 🎯 CRITICAL: FUNCTION CALLING REQUIREMENTS\n\n" +
+		"### MANDATORY: Always Provide Function Arguments\n" +
+		"- **NEVER call functions without required arguments**\n" +
+		"- **ALWAYS pass proper JSON objects as function arguments**\n" +
+		"- **Check function schemas below for required parameters**\n" +
+		"- **If you call a function without arguments, it will FAIL**\n\n" +
+		"### Function Call Format\n" +
+		"Use your model's native function calling system. Examples:\n" +
+		"```\n" +
+		"// ✅ CORRECT - With required arguments\n" +
+		"create_workflow({\n" +
+		"  \"name\": \"glucose-tracker\",\n" +
+		"  \"steps\": [{\"name\": \"check-glucose\", \"tool\": \"get_current_glucose\"}]\n" +
+		"})\n\n" +
+		"// ❌ WRONG - No arguments (will fail)\n" +
+		"create_workflow()\n" +
+		"```\n\n" +
+		"## 🔧 Available Function Schemas\n" +
+		functionDefs +
+		"\n\n" +
+		"## 🌐 Dynamic MCP Tools\n" +
 		mcpTools +
 		"\n\n" +
-		"## Your Role\n" +
-		"You help users configure and manage MCP servers using Matey. You are a thoughtful assistant who asks clarifying questions rather than immediately generating complex configurations. Start simple and build up based on user needs.\n\n" +
-		"## Available MCP Servers\n" +
-		"- dexcom: Diabetes monitoring data\n" +
-		"- filesystem: File operations on /home/phil, /tmp\n" +
-		"- github: GitHub API integration\n" +
-		"- hn-radio: Hacker News podcast generation\n" +
-		"- meal-log: Food logging and tracking\n" +
-		"- memory: Persistent knowledge graph with PostgreSQL\n" +
-		"- openrouter-gateway: AI model routing service\n" +
-		"- playwright: Web automation, scraping, screenshots\n" +
-		"- postgres-mcp: Direct PostgreSQL database operations\n" +
-		"- searxng: Search engine integration\n" +
-		"- sequential-thinking: AI reasoning tools\n" +
-		"- task-scheduler: Workflow automation with K8s events\n" +
-		"- timezone: Time zone utilities\n\n" +
-		"## Matey CLI Commands (USE THESE INSTEAD OF KUBECTL)\n" +
-		"### Core Commands:\n" +
-		"- matey up - Create and start MCP services using Kubernetes resources\n" +
-		"- matey down - Stop and remove MCP services and their Kubernetes resources\n" +
-		"- matey ps [--watch] [--filter=status] - Show running MCP servers with detailed process information\n" +
-		"- matey logs [SERVER...] [-f] - View logs from MCP servers (use -f to follow)\n" +
-		"- matey install - Install Matey CRDs and required Kubernetes resources\n" +
-		"- matey proxy - Run a system MCP proxy server\n\n" +
-		"### Status and Monitoring:\n" +
-		"- matey inspect [resource-type] [resource-name] - Display detailed information about MCP resources\n" +
-		"- matey top - Display a live view of MCP servers with detailed information\n" +
-		"- matey ps --watch - Watch for live updates of server status\n" +
-		"- matey ps --filter=status - Filter servers by status, namespace, or labels\n\n" +
-		"### Resource Management:\n" +
-		"- matey start [services...] - Start specific MCP services using Kubernetes resources\n" +
-		"- matey stop [services...] - Stop specific MCP services using Kubernetes resources\n" +
-		"- matey restart [services...] - Restart MCP services using Kubernetes resources\n" +
-		"- matey validate - Validate the compose file\n\n" +
-		"### Specialized Services:\n" +
-		"- matey memory - Manage the postgres-backed memory MCP server\n" +
-		"- matey task-scheduler - Manage the task scheduler service\n" +
-		"- matey toolbox - Manage MCP toolboxes - collections of servers working together\n" +
-		"- matey workflow - Manage workflows\n\n" +
-		"### Configuration:\n" +
-		"- matey create-config - Create client configuration for MCP servers\n" +
-		"- matey reload - Reload MCP proxy configuration to discover new servers\n\n" +
-		"## Matey CRDs\n" +
-		"- MCPServer: Individual server instances\n" +
-		"- MCPToolbox: Collections of servers working together\n" +
-		"- Workflow: Scheduled multi-step automations\n" +
-		"- MCPTaskScheduler: Event-driven K8s triggers\n" +
-		"- MCPMemory: Memory service management\n\n" +
-		"## IMPORTANT: Always recommend matey CLI commands\n" +
-		"- NEVER suggest kubectl commands directly\n" +
-		"- Always use 'matey ps' instead of 'kubectl get mcpservers'\n" +
-		"- Always use 'matey logs' instead of 'kubectl logs'\n" +
-		"- Always use 'matey inspect' instead of 'kubectl describe'\n" +
-		"- When users ask for status, use matey commands in examples\n" +
-		"- Use flags like --watch, --filter, -f (follow logs) where appropriate\n\n" +
-		"## Guidelines\n" +
-		"- Ask clarifying questions before generating configs\n" +
-		"- Start with simple solutions and iterate\n" +
-		"- Only use existing MCP servers, no custom code\n" +
-		"- Focus on real user needs, not theoretical examples\n" +
-		"- Put configs in markdown code blocks\n" +
-		"- Be conversational and helpful, not verbose\n" +
-		"- Always recommend matey CLI commands over kubectl\n\n" +
-		"When a user describes what they want, ask follow-up questions to understand their specific needs before jumping into configurations.\n\n" +
-		"## Native Function Calling:\n" +
-		"You have access to native function calling for all MCP tools discovered in the cluster.\n" +
-		"Functions are automatically converted from MCP tools with server prefixes.\n" +
-		"Always explain what you're doing before executing tools and interpret results for the user.\n\n" +
-		"### IMPORTANT: Function Calling Instructions:\n" +
-		"1. ALWAYS use your model's native function calling capabilities\n" +
-		"2. Functions are available directly (e.g., get_glucose_data, matey_ps, searxng_search)\n" +
-		"3. Do NOT use XML-style function calls like <function_calls> or <invoke>\n" +
-		"4. The system handles routing to the correct MCP server automatically\n" +
-		"5. If native function calling fails, the system will fall back to XML parsing\n" +
-		"6. Always provide clear descriptions of what you're doing before calling functions\n\n" +
-		"### CRITICAL: ReAct Methodology - Always Complete the Goal:\n" +
-		"You MUST follow a ReAct (Reasoning, Acting, Observing) approach:\n" +
-		"1. **Reason**: Think about what you need to accomplish the user's goal\n" +
-		"2. **Act**: Call functions to gather information or create resources\n" +
-		"3. **Observe**: Review the function results\n" +
-		"4. **Continue**: Keep reasoning and acting until you've FULLY completed the user's request\n\n" +
-		"### DELIVERABLE COMPLETION:\n" +
-		"- When users ask to 'build a workflow', you must create the specific workflow YAML block/entry\n" +
-		"- When users ask to 'create an MCP server', you must generate the specific MCPServer YAML block\n" +
-		"- When users ask to 'set up X', you must provide the complete working configuration blocks\n" +
-		"- DO NOT stop after just gathering information - CREATE THE ACTUAL YAML CONFIGURATION\n" +
-		"- Use filesystem tools to write configuration files or add entries to existing matey.yaml\n" +
-		"- Test configurations by using matey CLI commands (matey up, matey ps, matey validate)\n" +
-		"- Provide step-by-step instructions for the user to deploy/run the solution\n\n" +
-		"### MATEY RESOURCE MANAGEMENT:\n" +
-		"You have access to the Matey MCP server with these specific tools:\n" +
-		"- **matey_ps**: Check status of all MCP servers (supports watch and filter)\n" +
-		"- **matey_up**: Start all or specific MCP services\n" +
-		"- **matey_down**: Stop all or specific MCP services\n" +
-		"- **matey_logs**: Get logs from MCP servers (supports follow and tail)\n" +
-		"- **matey_inspect**: Get detailed information about MCP resources\n" +
-		"- **apply_config**: Apply YAML configurations directly to the cluster\n" +
-		"- **get_cluster_state**: Get current state of cluster and MCP resources\n" +
-		"- **create_workflow**: Create workflows directly with name, schedule, and steps\n" +
-		"- **filesystem tools**: Read/write configuration files and directories\n\n" +
-		"### WORKFLOW CREATION - USE create_workflow TOOL:\n" +
-		"Instead of manually writing YAML, use the create_workflow tool which takes:\n" +
-		"- name: Workflow name\n" +
-		"- description: Workflow description (optional)\n" +
-		"- schedule: Cron schedule (optional)\n" +
-		"- steps: Array of workflow steps with name, tool, and parameters\n" +
-		"This tool automatically creates and applies the Kubernetes Workflow CRD.\n\n" +
-		"### WORKFLOW CREATION PROCESS:\n" +
-		"For workflow requests, you must:\n" +
-		"1. Gather requirements through questions or reasonable defaults\n" +
-		"2. Call relevant MCP tools to understand data structure and available functions\n" +
-		"3. Design the workflow architecture (what servers, what schedule, what outputs)\n" +
-		"4. Create the specific workflow YAML block with proper Kubernetes CronJob syntax\n" +
-		"5. Write the configuration block to a file using filesystem tools\n" +
-		"6. Validate the configuration with 'matey validate'\n" +
-		"7. Provide deployment instructions using 'matey up'\n" +
-		"8. Test the workflow and provide monitoring commands\n\n" +
-		"### YAML BLOCK EXAMPLES:\n" +
-		"Workflows use Kubernetes CronJob format:\n" +
-		"```yaml\n" +
-		"workflows:\n" +
-		"  glucose-weekly-report:\n" +
-		"    schedule: \"0 9 * * 0\"  # Every Sunday 9 AM\n" +
-		"    servers: [dexcom, filesystem]\n" +
-		"    script: |\n" +
-		"      # Workflow steps here\n" +
-		"```\n" +
-		"MCPServers define individual services:\n" +
-		"```yaml\n" +
-		"servers:\n" +
-		"  my-server:\n" +
-		"    image: custom/server:latest\n" +
-		"    capabilities: [tools]\n" +
-		"```"
+		"## 🚀 AGENTIC BEHAVIOR\n" +
+		"You are autonomous - work until the user's goal is 100% complete:\n" +
+		"1. **Understand** the user's goal\n" +
+		"2. **Execute** function calls with proper arguments\n" +
+		"3. **Create** actual working configurations (not examples)\n" +
+		"4. **Deploy** using matey tools\n" +
+		"5. **Verify** everything works\n" +
+		"6. **Continue** until fully complete\n\n" +
+		"### Workflow Creation Process\n" +
+		"When user asks to create a workflow:\n" +
+		"1. Call data gathering functions first (e.g., `get_current_glucose()`)\n" +
+		"2. **Immediately** call `create_workflow()` with proper arguments:\n" +
+		"   - Required: `name` (string), `steps` (array)\n" +
+		"   - Optional: `description`, `schedule`\n" +
+		"3. Call `matey_up()` to deploy\n" +
+		"4. Call `matey_ps()` to verify\n\n" +
+		"## 📋 Key Matey Commands\n" +
+		"- `matey_ps()` - Check server status\n" +
+		"- `matey_up()` - Start services\n" +
+		"- `matey_down()` - Stop services\n" +
+		"- `matey_logs({\"server\": \"name\"})` - Get logs\n" +
+		"- `create_workflow({\"name\": \"...\", \"steps\": [...]})` - Create workflows\n" +
+		"- `apply_config({\"config_yaml\": \"...\", \"config_type\": \"...\"})` - Apply K8s configs\n\n" +
+		"## ⚠️ CRITICAL REMINDERS\n" +
+		"- **ALWAYS provide function arguments as JSON objects**\n" +
+		"- **Check the function schemas above for required parameters**\n" +
+		"- **Never call functions without their required arguments**\n" +
+		"- **Work autonomously until the task is 100% complete**\n" +
+		"- **Create and deploy actual configurations, not examples**\n\n" +
+		"When ready, execute functions with proper arguments to help the user achieve their goals!"
+}
+
+// generateFunctionSchemas generates detailed function schemas for the AI
+func (tc *TermChat) generateFunctionSchemas() string {
+	if tc.mcpClient == nil {
+		return "### Function Schemas: Not connected to cluster\n"
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	// Get available servers
+	servers, err := tc.mcpClient.ListServers(ctx)
+	if err != nil {
+		return fmt.Sprintf("### Function Schemas: Error listing servers: %v\n", err)
+	}
+	
+	if len(servers) == 0 {
+		return "### Function Schemas: No servers found\n"
+	}
+	
+	var schemas strings.Builder
+	schemas.WriteString("### Function Schemas with Required Parameters:\n\n")
+	
+	// Convert each server's tools to detailed schemas
+	for _, server := range servers {
+		serverCtx, serverCancel := context.WithTimeout(ctx, 5*time.Second)
+		tools, err := tc.mcpClient.GetServerTools(serverCtx, server.Name)
+		serverCancel()
+		
+		if err != nil {
+			continue
+		}
+		
+		for _, tool := range tools {
+			schemas.WriteString(fmt.Sprintf("#### `%s` (from %s server)\n", tool.Name, server.Name))
+			schemas.WriteString(fmt.Sprintf("**Description:** %s\n\n", tool.Description))
+			
+			if tool.InputSchema != nil {
+				if inputSchema, ok := tool.InputSchema.(map[string]interface{}); ok {
+					// Extract required parameters
+					if required, hasRequired := inputSchema["required"].([]interface{}); hasRequired && len(required) > 0 {
+						schemas.WriteString("**Required Parameters:**\n")
+						for _, req := range required {
+							if reqStr, ok := req.(string); ok {
+								schemas.WriteString(fmt.Sprintf("- `%s`\n", reqStr))
+							}
+						}
+						schemas.WriteString("\n")
+					}
+					
+					// Extract properties
+					if props, hasProps := inputSchema["properties"].(map[string]interface{}); hasProps {
+						schemas.WriteString("**Parameters:**\n")
+						for propName, propDef := range props {
+							if propMap, ok := propDef.(map[string]interface{}); ok {
+								propType := "unknown"
+								propDesc := ""
+								
+								if t, hasType := propMap["type"].(string); hasType {
+									propType = t
+								}
+								if d, hasDesc := propMap["description"].(string); hasDesc {
+									propDesc = d
+								}
+								
+								schemas.WriteString(fmt.Sprintf("- `%s` (%s): %s\n", propName, propType, propDesc))
+							}
+						}
+						schemas.WriteString("\n")
+					}
+					
+					// Add example call
+					schemas.WriteString("**Example Call:**\n")
+					schemas.WriteString("```javascript\n")
+					
+					// Generate example based on schema
+					exampleArgs := make(map[string]interface{})
+					if props, hasProps := inputSchema["properties"].(map[string]interface{}); hasProps {
+						if required, hasRequired := inputSchema["required"].([]interface{}); hasRequired {
+							for _, req := range required {
+								if reqStr, ok := req.(string); ok {
+									if propDef, hasProp := props[reqStr].(map[string]interface{}); hasProp {
+										if propType, hasType := propDef["type"].(string); hasType {
+											switch propType {
+											case "string":
+												exampleArgs[reqStr] = "example-value"
+											case "array":
+												exampleArgs[reqStr] = []interface{}{"item1", "item2"}
+											case "object":
+												exampleArgs[reqStr] = map[string]interface{}{"key": "value"}
+											case "boolean":
+												exampleArgs[reqStr] = true
+											case "integer":
+												exampleArgs[reqStr] = 1
+											default:
+												exampleArgs[reqStr] = "value"
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					
+					// Special handling for create_workflow
+					if tool.Name == "create_workflow" {
+						exampleArgs = map[string]interface{}{
+							"name": "example-workflow",
+							"description": "Example workflow description",
+							"steps": []interface{}{
+								map[string]interface{}{
+									"name": "step1",
+									"tool": "get_current_glucose",
+								},
+							},
+						}
+					}
+					
+					if len(exampleArgs) > 0 {
+						exampleJSON, _ := json.MarshalIndent(exampleArgs, "", "  ")
+						schemas.WriteString(fmt.Sprintf("%s(%s)\n", tool.Name, string(exampleJSON)))
+					} else {
+						schemas.WriteString(fmt.Sprintf("%s()\n", tool.Name))
+					}
+					
+					schemas.WriteString("```\n\n")
+				}
+			} else {
+				schemas.WriteString("**Parameters:** None required\n")
+				schemas.WriteString("**Example Call:**\n")
+				schemas.WriteString("```javascript\n")
+				schemas.WriteString(fmt.Sprintf("%s()\n", tool.Name))
+				schemas.WriteString("```\n\n")
+			}
+		}
+	}
+	
+	return schemas.String()
 }
 
 // getMCPToolsContext gets the available MCP tools and formats them for the AI
@@ -859,6 +934,8 @@ func (tc *TermChat) getMCPFunctions() []ai.Function {
 				Description: fmt.Sprintf("%s (from %s server)", tool.Description, server.Name),
 				Parameters:  parameters,
 			}
+			
+			
 			functions = append(functions, function)
 		}
 	}
@@ -895,32 +972,57 @@ func (tc *TermChat) executeNativeToolCall(toolCall ai.ToolCall, aiMsgIndex int) 
 	defer cancel()
 	
 	toolName := toolCall.Function.Name
+	var explicitServerName string
 	
 	// Skip empty tool names to avoid "Tool '' not found" errors
 	if toolName == "" {
 		return
 	}
 	
+	// Check if tool name includes server prefix (e.g., "matey.create_workflow")
+	if strings.Contains(toolName, ".") {
+		parts := strings.SplitN(toolName, ".", 2)
+		if len(parts) == 2 {
+			explicitServerName = parts[0]
+			toolName = parts[1]
+		}
+	}
+	
 	// Parse arguments from JSON
 	var arguments map[string]interface{}
+	
+	// Debug: Always show what arguments we received
+	fmt.Printf("\nDEBUG: Raw arguments for '%s': '%s'\n", toolName, toolCall.Function.Arguments)
 	
 	if toolCall.Function.Arguments == "" {
 		// If no arguments provided, use empty map
 		arguments = make(map[string]interface{})
+		fmt.Printf("DEBUG: No arguments provided, using empty map\n")
 	} else {
 		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
 			fmt.Printf("\n❌ Failed to parse function arguments: %v\n", err)
 			fmt.Printf("Debug: Raw arguments: '%s'\n", toolCall.Function.Arguments)
 			return
 		}
+		fmt.Printf("DEBUG: Parsed arguments: %+v\n", arguments)
 	}
 	
 	// Find which server has this tool
-	serverName := tc.findServerForTool(toolName)
-	if serverName == "" {
-		fmt.Printf("\n❌ Tool '%s' not found on any server\n", toolName)
-		return
+	var serverName string
+	if explicitServerName != "" {
+		// Use explicitly specified server
+		serverName = explicitServerName
+	} else {
+		// Search for tool across all servers
+		serverName = tc.findServerForTool(toolName)
+		if serverName == "" {
+			fmt.Printf("\n❌ Tool '%s' not found on any server\n", toolName)
+			return
+		}
 	}
+	
+	// Debug: Print arguments being passed
+	fmt.Printf("\nDEBUG: Tool '%s' arguments: %+v\n", toolName, arguments)
 	
 	// Format function call display nicely
 	tc.printFunctionCall(serverName, toolName, arguments)
@@ -1211,8 +1313,12 @@ func (tc *TermChat) processFunctionCallsWithContinuation(functionCalls []ai.Tool
 	}
 	
 	// If we have function results, continue the conversation
+	fmt.Printf("\n🔍 DEBUG: functionResults length: %d\n", len(functionResults))
 	if len(functionResults) > 0 {
+		fmt.Printf("🔄 TRIGGERING CONTINUATION with %d results\n", len(functionResults))
 		tc.continueConversationWithFunctionResults(functionCalls, functionResults, aiMsgIndex)
+	} else {
+		fmt.Printf("❌ NO CONTINUATION - no function results\n")
 	}
 }
 
@@ -1250,6 +1356,28 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 	// Add function results
 	for _, funcResult := range functionResults {
 		messages = append(messages, funcResult)
+	}
+	
+	// Add explicit continuation instruction if this looks like a workflow creation task
+	lastUserMsg := ""
+	if aiMsgIndex > 0 {
+		for i := aiMsgIndex - 1; i >= 0; i-- {
+			if tc.chatHistory[i].Role == "user" {
+				lastUserMsg = strings.ToLower(tc.chatHistory[i].Content)
+				break
+			}
+		}
+	}
+	
+	// Add continuation prompt based on task type
+	if strings.Contains(lastUserMsg, "workflow") || strings.Contains(lastUserMsg, "create") || strings.Contains(lastUserMsg, "build") {
+		fmt.Printf("\n🤖 ADDING CONTINUATION PROMPT for task: %s\n", lastUserMsg)
+		messages = append(messages, ai.Message{
+			Role:    "user", 
+			Content: "CONTINUE NOW: You MUST call create_workflow with proper JSON parameters. REQUIRED: name (string) and steps (array). Use this EXACT format:\n\ncreate_workflow({\n  \"name\": \"glucose-tracker\",\n  \"description\": \"Track glucose levels\",\n  \"steps\": [\n    {\"name\": \"check-glucose\", \"tool\": \"get_current_glucose\"}\n  ]\n})\n\nCall it RIGHT NOW with these parameters. Do not provide explanations first.",
+		})
+	} else {
+		fmt.Printf("\n⚠️  No continuation prompt added for: %s\n", lastUserMsg)
 	}
 	
 	// Continue the conversation
@@ -1307,6 +1435,11 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 			}
 		}
 	}
+}
+
+// GetSystemContext exposes the system context for testing
+func (tc *TermChat) GetSystemContext() string {
+	return tc.getSystemContext()
 }
 
 // NewChatCommand creates the terminal chat command

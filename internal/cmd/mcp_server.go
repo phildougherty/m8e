@@ -55,14 +55,167 @@ func runMCPServer(cmd *cobra.Command, args []string) error {
 	// Create HTTP server
 	router := mux.NewRouter()
 	
-	// Add MCP JSON-RPC routes
-	router.HandleFunc("/", handleMCPRequest(mcpServer)).Methods("POST")
+	log.Printf("Registering routes...")
+	
+	// Add MCP JSON-RPC routes  
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		
+		var req map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id": nil,
+				"error": map[string]interface{}{
+					"code": -32700,
+					"message": "Parse error",
+				},
+			})
+			return
+		}
+		
+		method, _ := req["method"].(string)
+		id := req["id"]
+		
+		if method == "initialize" {
+			// MCP protocol initialization
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id": id,
+				"result": map[string]interface{}{
+					"protocolVersion": "2024-11-05",
+					"capabilities": map[string]interface{}{
+						"tools": map[string]interface{}{},
+					},
+					"serverInfo": map[string]interface{}{
+						"name":    "matey",
+						"version": "0.0.4",
+					},
+				},
+			})
+			return
+		}
+		
+		if method == "notifications/initialized" {
+			// Notification that client has been initialized - no response needed
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id": id,
+				"result": nil,
+			})
+			return
+		}
+		
+		if method == "tools/list" {
+			tools := mcpServer.GetTools()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id": id,
+				"result": map[string]interface{}{
+					"tools": tools,
+				},
+			})
+			return
+		}
+		
+		if method == "tools/call" {
+			params, ok := req["params"].(map[string]interface{})
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id": id,
+					"error": map[string]interface{}{
+						"code": -32602,
+						"message": "Invalid params",
+					},
+				})
+				return
+			}
+			
+			toolName, ok := params["name"].(string)
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id": id,
+					"error": map[string]interface{}{
+						"code": -32602,
+						"message": "Missing tool name",
+					},
+				})
+				return
+			}
+			
+			arguments, _ := params["arguments"].(map[string]interface{})
+			if arguments == nil {
+				arguments = make(map[string]interface{})
+			}
+			
+			// Execute the tool
+			result, err := mcpServer.ExecuteTool(r.Context(), toolName, arguments)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id": id,
+					"error": map[string]interface{}{
+						"code": -32603,
+						"message": err.Error(),
+					},
+				})
+				return
+			}
+			
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id": id,
+				"result": result,
+			})
+			return
+		}
+		
+		// Method not found
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id": id,
+			"error": map[string]interface{}{
+				"code": -32601,
+				"message": "Method not found",
+			},
+		})
+	})
+	log.Printf("Registered POST /")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
+	log.Printf("Registered GET /health")
 	router.HandleFunc("/info", handleInfo(mcpServer)).Methods("GET")
+	log.Printf("Registered GET /info")
+	
+	// Test route
+	router.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Test route hit: %s %s", r.Method, r.URL.Path)
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "Test route works!")
+	}).Methods("GET")
+	log.Printf("Registered GET /test")
 	
 	// Legacy REST routes for backward compatibility
 	router.HandleFunc("/tools", handleGetTools(mcpServer)).Methods("GET")
+	log.Printf("Registered GET /tools")
 	router.HandleFunc("/tools/{tool}", handleCallTool(mcpServer)).Methods("POST")
+	log.Printf("Registered POST /tools/{tool}")
 	
 	// Add CORS middleware
 	router.Use(corsMiddleware)
@@ -122,8 +275,11 @@ type MCPError struct {
 
 func handleMCPRequest(mcpServer *mcp.MateyMCPServer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("MCP JSON-RPC request: %s %s", r.Method, r.URL.Path)
+		
 		var req MCPRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("JSON decode error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(MCPResponse{
@@ -140,7 +296,24 @@ func handleMCPRequest(mcpServer *mcp.MateyMCPServer) http.HandlerFunc {
 		var result interface{}
 		var mcpErr *MCPError
 
+		log.Printf("Processing MCP method: %s", req.Method)
+		
 		switch req.Method {
+		case "initialize":
+			// MCP protocol initialization
+			result = map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"capabilities": map[string]interface{}{
+					"tools": map[string]interface{}{},
+				},
+				"serverInfo": map[string]interface{}{
+					"name":    "matey",
+					"version": "0.0.4",
+				},
+			}
+		case "notifications/initialized":
+			// Notification that client has been initialized - no response needed
+			result = nil
 		case "tools/list":
 			tools := mcpServer.GetTools()
 			result = tools

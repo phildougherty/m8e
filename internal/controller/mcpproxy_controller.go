@@ -102,7 +102,7 @@ func (r *MCPProxyReconciler) reconcileDeployment(ctx context.Context, mcpProxy *
 	// Define the desired Deployment
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      mcpProxy.Name + "-proxy",
+			Name:      mcpProxy.Name,
 			Namespace: mcpProxy.Namespace,
 			Labels:    r.labelsForMCPProxy(mcpProxy),
 		},
@@ -243,7 +243,7 @@ func (r *MCPProxyReconciler) reconcileService(ctx context.Context, mcpProxy *crd
 	// Define the desired Service
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      mcpProxy.Name + "-proxy",
+			Name:      mcpProxy.Name,
 			Namespace: mcpProxy.Namespace,
 			Labels:    r.labelsForMCPProxy(mcpProxy),
 		},
