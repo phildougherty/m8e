@@ -1,0 +1,10 @@
+apiVersion: mcp.matey.ai/v1
+kind: Workflow
+metadata:
+  name: test-glucose-workflow
+spec:
+  enabled: true
+  schedule: "0 0 * * *"
+  steps:
+  - name: check-glucose
+    tool: get_current_glucose

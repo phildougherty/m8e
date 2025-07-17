@@ -31,6 +31,8 @@ type TermChat struct {
 	termWidth       int
 	termHeight      int
 	markdownRenderer *glamour.TermRenderer
+	verboseMode     bool // Toggle for compact/verbose output
+	functionResults map[string]string // Store full results for toggle
 }
 
 // TermChatMessage represents a chat message
@@ -106,6 +108,8 @@ func NewTermChat() *TermChat {
 		chatHistory:      make([]TermChatMessage, 0),
 		markdownRenderer: renderer,
 		mcpClient:       mcpClient,
+		verboseMode:     false, // Start in compact mode
+		functionResults: make(map[string]string),
 	}
 }
 
@@ -199,12 +203,73 @@ func (tc *TermChat) runSimple() {
 	
 	// No need for input box - just clean prompt
 
+	// For now, use simple input mode until raw input is properly implemented
+	tc.runSimpleInput()
+}
+
+// runWithRawInput handles raw terminal input for keyboard shortcuts
+func (tc *TermChat) runWithRawInput() {
+	var inputBuffer strings.Builder
+	buffer := make([]byte, 1)
+	
+	for {
+		fmt.Printf("\n\033[1;34m❯ \033[0m")
+		inputBuffer.Reset()
+		
+		for {
+			n, err := os.Stdin.Read(buffer)
+			if err != nil || n == 0 {
+				return
+			}
+			
+			switch buffer[0] {
+			case 18: // Ctrl+R
+				tc.verboseMode = !tc.verboseMode
+				mode := "compact"
+				if tc.verboseMode {
+					mode = "verbose"
+				}
+				fmt.Printf("\n\033[90mSwitched to %s mode\033[0m\n", mode)
+				continue
+			case 3: // Ctrl+C
+				return
+			case 4: // Ctrl+D
+				return
+			case 13: // Enter
+				input := strings.TrimSpace(inputBuffer.String())
+				if input != "" {
+					tc.processInput(input)
+					if input == "/exit" || input == "/quit" {
+						return
+					}
+				}
+				goto nextInput
+			case 127: // Backspace
+				if inputBuffer.Len() > 0 {
+					content := inputBuffer.String()
+					inputBuffer.Reset()
+					inputBuffer.WriteString(content[:len(content)-1])
+					fmt.Printf("\b \b")
+				}
+			default:
+				if buffer[0] >= 32 && buffer[0] < 127 { // Printable characters
+					inputBuffer.WriteByte(buffer[0])
+					fmt.Printf("%c", buffer[0])
+				}
+			}
+		}
+		nextInput:
+	}
+}
+
+// runSimpleInput handles simple line-based input (fallback)
+func (tc *TermChat) runSimpleInput() {
 	// Use bufio scanner for proper line reading
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Main chat loop - exactly like Claude Code
 	for {
-			// Simple clean prompt
+		// Simple clean prompt
 		fmt.Printf("\n\033[1;34m❯ \033[0m")
 		
 		if !scanner.Scan() {
@@ -217,21 +282,27 @@ func (tc *TermChat) runSimple() {
 			continue
 		}
 		
-		// Handle commands
-		if strings.HasPrefix(input, "/") {
-			if tc.handleCommand(input) {
-				break // Exit command
-			}
-			continue
+		tc.processInput(input)
+		if input == "/exit" || input == "/quit" {
+			break
 		}
-
-		// Add user message and print it
-		tc.addMessage("user", input)
-		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
-
-		// Chat with AI
-		tc.chatWithAI(input)
 	}
+}
+
+// processInput handles user input
+func (tc *TermChat) processInput(input string) {
+	// Handle commands
+	if strings.HasPrefix(input, "/") {
+		tc.handleCommand(input)
+		return
+	}
+
+	// Add user message and print it
+	tc.addMessage("user", input)
+	tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+
+	// Chat with AI
+	tc.chatWithAI(input)
 }
 
 // addMessage adds a message to chat history
@@ -347,16 +418,29 @@ func (tc *TermChat) chatWithAI(message string) {
 		if len(response.ToolCalls) > 0 {
 			for _, toolCall := range response.ToolCalls {
 				if toolCall.Type == "function" {
-					// Use tool call ID to accumulate arguments
-					callId := toolCall.ID
+					// Use function name as key to ensure consistent accumulation
+					// This handles the OpenRouter streaming pattern where function name is only in first chunk
+					callId := toolCall.Function.Name
 					if callId == "" {
-						// Fallback to function name if no ID
-						callId = toolCall.Function.Name
+						// For empty function names, use the first non-empty function name we've seen
+						for _, existing := range accumulatedFunctionCalls {
+							if existing.Function.Name != "" {
+								callId = existing.Function.Name
+								break
+							}
+						}
+						if callId == "" {
+							callId = "unknown"
+						}
 					}
 					
 					if existing, exists := accumulatedFunctionCalls[callId]; exists {
 						// Accumulate arguments for existing function call
 						existing.Function.Arguments += toolCall.Function.Arguments
+						// Update function name if it was empty before
+						if existing.Function.Name == "" && toolCall.Function.Name != "" {
+							existing.Function.Name = toolCall.Function.Name
+						}
 					} else {
 						// New function call
 						accumulatedFunctionCalls[callId] = &ai.ToolCall{
@@ -498,6 +582,14 @@ func (tc *TermChat) handleCommand(command string) bool {
 	case "/exit", "/quit":
 		fmt.Println("Goodbye!")
 		return true
+	case "/compact":
+		tc.verboseMode = false
+		tc.addMessage("system", "Switched to compact mode. Use Ctrl+R to toggle verbose mode.")
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+	case "/verbose":
+		tc.verboseMode = true
+		tc.addMessage("system", "Switched to verbose mode. Use Ctrl+R to toggle compact mode.")
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
 	default:
 		tc.addMessage("system", fmt.Sprintf("Unknown command: %s\nType '/help' for available commands", parts[0]))
 		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
@@ -609,6 +701,8 @@ func (tc *TermChat) getHelpText() string {
 		"| `/help` | Show this command list |\n" +
 		"| `/status` | Show system and connection status |\n" +
 		"| `/clear` | Clear chat history |\n" +
+		"| `/compact` | Switch to compact function output |\n" +
+		"| `/verbose` | Switch to verbose function output |\n" +
 		"| `/exit` or `/quit` | Exit chat |\n\n" +
 		"## AI Provider Commands:\n\n" +
 		"| Command | Description |\n" +
@@ -644,7 +738,11 @@ func (tc *TermChat) getHelpText() string {
 		"matey top                # Live server view\n" +
 		"```\n\n" +
 		"---\n\n" +
-		"**Just describe what you want to build and I'll help you configure it!**"
+		"**Just describe what you want to build and I'll help you configure it!**\n\n" +
+		"**Function Output Modes:**\n\n" +
+		"- **Compact mode** (default): Shows concise function results\n" +
+		"- **Verbose mode**: Shows full function output\n" +
+		"- **Toggle**: Use Ctrl+R to switch between modes\n"
 }
 
 // getSystemContext returns the system context for the AI
@@ -991,20 +1089,17 @@ func (tc *TermChat) executeNativeToolCall(toolCall ai.ToolCall, aiMsgIndex int) 
 	// Parse arguments from JSON
 	var arguments map[string]interface{}
 	
-	// Debug: Always show what arguments we received
-	fmt.Printf("\nDEBUG: Raw arguments for '%s': '%s'\n", toolName, toolCall.Function.Arguments)
-	
-	if toolCall.Function.Arguments == "" {
+	if toolCall.Function.Arguments == "" || toolCall.Function.Arguments == "{}" {
 		// If no arguments provided, use empty map
 		arguments = make(map[string]interface{})
-		fmt.Printf("DEBUG: No arguments provided, using empty map\n")
 	} else {
+		// Try to parse arguments, but be more forgiving of malformed JSON
 		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
-			fmt.Printf("\n❌ Failed to parse function arguments: %v\n", err)
-			fmt.Printf("Debug: Raw arguments: '%s'\n", toolCall.Function.Arguments)
-			return
+			// If parsing fails, check if it's a streaming issue where arguments weren't fully assembled
+			fmt.Printf("\n⚠️  Failed to parse function arguments: %v\n", err)
+			// For now, use empty map and continue - this might be a streaming issue
+			arguments = make(map[string]interface{})
 		}
-		fmt.Printf("DEBUG: Parsed arguments: %+v\n", arguments)
 	}
 	
 	// Find which server has this tool
@@ -1021,11 +1116,17 @@ func (tc *TermChat) executeNativeToolCall(toolCall ai.ToolCall, aiMsgIndex int) 
 		}
 	}
 	
-	// Debug: Print arguments being passed
-	fmt.Printf("\nDEBUG: Tool '%s' arguments: %+v\n", toolName, arguments)
-	
-	// Format function call display nicely
-	tc.printFunctionCall(serverName, toolName, arguments)
+	// In compact mode, show minimal function call info
+	if !tc.verboseMode {
+		fmt.Printf("\n\033[1;35m[CALL]\033[0m %s.%s", serverName, toolName)
+		if len(arguments) > 0 {
+			fmt.Printf(" (with args)")
+		}
+		fmt.Printf(" -> ")
+	} else {
+		// Verbose mode: show full function call
+		tc.printFunctionCall(serverName, toolName, arguments)
+	}
 	
 	// Execute the tool call
 	result := tc.mcpClient.ExecuteToolCall(ctx, serverName, toolName, arguments)
@@ -1039,26 +1140,104 @@ func (tc *TermChat) executeNativeToolCall(toolCall ai.ToolCall, aiMsgIndex int) 
 
 // printFunctionCall prints a nicely formatted function call
 func (tc *TermChat) printFunctionCall(serverName, toolName string, arguments map[string]interface{}) {
-	// Create a concise, elegant function call display
-	fmt.Printf("\n\033[1;35m╭─ Function Call ─────────────────────────╮\033[0m\n")
-	fmt.Printf("\033[1;35m│\033[0m \033[1;37m%s\033[0m\033[1;90m.\033[0m\033[1;36m%s\033[0m", serverName, toolName)
-	
-	// Add arguments if they exist
-	if len(arguments) > 0 {
-		argStr := ""
-		for key, value := range arguments {
-			if argStr != "" {
-				argStr += ", "
+	if tc.verboseMode {
+		// Verbose mode: show full function call box
+		fmt.Printf("\n\033[1;35m╭─ Function Call ─────────────────────────╮\033[0m\n")
+		fmt.Printf("\033[1;35m│\033[0m \033[1;37m%s\033[0m\033[1;90m.\033[0m\033[1;36m%s\033[0m", serverName, toolName)
+		
+		// Add arguments if they exist
+		if len(arguments) > 0 {
+			argStr := ""
+			for key, value := range arguments {
+				if argStr != "" {
+					argStr += ", "
+				}
+				argStr += fmt.Sprintf("%s: %v", key, value)
 			}
-			argStr += fmt.Sprintf("%s: %v", key, value)
+			if len(argStr) > 30 {
+				argStr = argStr[:27] + "..."
+			}
+			fmt.Printf("\033[1;90m(%s)\033[0m", argStr)
 		}
-		if len(argStr) > 30 {
-			argStr = argStr[:27] + "..."
+		
+		fmt.Printf("\n\033[1;35m╰─────────────────────────────────────────╯\033[0m\n")
+	} else {
+		// Compact mode: show simple function call
+		argStr := ""
+		if len(arguments) > 0 {
+			for key, value := range arguments {
+				if argStr != "" {
+					argStr += ", "
+				}
+				argStr += fmt.Sprintf("%s: %v", key, value)
+			}
+			if len(argStr) > 40 {
+				argStr = argStr[:37] + "..."
+			}
+			argStr = fmt.Sprintf("(%s)", argStr)
 		}
-		fmt.Printf("\033[1;90m(%s)\033[0m", argStr)
+		fmt.Printf("\n\033[1;35m[CALL]\033[0m %s.%s%s", serverName, toolName, argStr)
+	}
+}
+
+// generateCompactResult creates a compact single-line summary of function results
+func (tc *TermChat) generateCompactResult(serverName, toolName string, result string) string {
+	isError := strings.Contains(result, "Error calling") || strings.Contains(result, "Tool error")
+	isSuccess := strings.Contains(result, "executed successfully")
+	
+	if isError {
+		return fmt.Sprintf("[ERROR] %s.%s -> %s", serverName, toolName, tc.extractErrorMessage(result))
 	}
 	
-	fmt.Printf("\n\033[1;35m╰─────────────────────────────────────────╯\033[0m\n")
+	if isSuccess {
+		return fmt.Sprintf("[SUCCESS] %s.%s -> %s", serverName, toolName, tc.extractSuccessMessage(result))
+	}
+	
+	return fmt.Sprintf("[RESULT] %s.%s -> %s", serverName, toolName, tc.extractMainContent(result))
+}
+
+// extractErrorMessage extracts the core error message
+func (tc *TermChat) extractErrorMessage(result string) string {
+	lines := strings.Split(result, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Error:") || strings.Contains(line, "error:") {
+			return tc.truncateText(line, 60)
+		}
+	}
+	return tc.truncateText(result, 60)
+}
+
+// extractSuccessMessage extracts the key success information
+func (tc *TermChat) extractSuccessMessage(result string) string {
+	lines := strings.Split(result, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.Contains(line, "executed successfully") {
+			return tc.truncateText(line, 60)
+		}
+	}
+	return "completed"
+}
+
+// extractMainContent extracts the main content from any result
+func (tc *TermChat) extractMainContent(result string) string {
+	lines := strings.Split(result, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return tc.truncateText(line, 60)
+		}
+	}
+	return "no output"
+}
+
+// truncateText truncates text to maxLength with ellipsis
+func (tc *TermChat) truncateText(text string, maxLength int) string {
+	if len(text) <= maxLength {
+		return text
+	}
+	return text[:maxLength-3] + "..."
 }
 
 // printFunctionResult prints a nicely formatted function result
@@ -1067,18 +1246,30 @@ func (tc *TermChat) printFunctionResult(result string) {
 	isError := strings.Contains(result, "Error calling") || strings.Contains(result, "Tool error")
 	isSuccess := strings.Contains(result, "executed successfully")
 	
-	if isError {
-		fmt.Printf("\n\033[1;31m╭─ Function Result (Error) ───────────────╮\033[0m\n")
-		fmt.Printf("\033[1;31m│\033[0m %s\n", tc.renderMarkdown(result))
-		fmt.Printf("\033[1;31m╰─────────────────────────────────────────╯\033[0m\n")
-	} else if isSuccess {
-		fmt.Printf("\n\033[1;32m╭─ Function Result (Success) ─────────────╮\033[0m\n")
-		fmt.Printf("\033[1;32m│\033[0m %s\n", tc.renderMarkdown(result))
-		fmt.Printf("\033[1;32m╰─────────────────────────────────────────╯\033[0m\n")
+	if tc.verboseMode {
+		// Verbose mode: show full result
+		if isError {
+			fmt.Printf("\n\033[1;31m╭─ Function Result (Error) ───────────────╮\033[0m\n")
+			fmt.Printf("\033[1;31m│\033[0m %s\n", tc.renderMarkdown(result))
+			fmt.Printf("\033[1;31m╰─────────────────────────────────────────╯\033[0m\n")
+		} else if isSuccess {
+			fmt.Printf("\n\033[1;32m╭─ Function Result (Success) ─────────────╮\033[0m\n")
+			fmt.Printf("\033[1;32m│\033[0m %s\n", tc.renderMarkdown(result))
+			fmt.Printf("\033[1;32m╰─────────────────────────────────────────╯\033[0m\n")
+		} else {
+			fmt.Printf("\n\033[1;34m╭─ Function Result ───────────────────────╮\033[0m\n")
+			fmt.Printf("\033[1;34m│\033[0m %s\n", tc.renderMarkdown(result))
+			fmt.Printf("\033[1;34m╰─────────────────────────────────────────╯\033[0m\n")
+		}
 	} else {
-		fmt.Printf("\n\033[1;34m╭─ Function Result ───────────────────────╮\033[0m\n")
-		fmt.Printf("\033[1;34m│\033[0m %s\n", tc.renderMarkdown(result))
-		fmt.Printf("\033[1;34m╰─────────────────────────────────────────╯\033[0m\n")
+		// Compact mode: show compact summary inline
+		if isError {
+			fmt.Printf("\033[1;31m[ERROR]\033[0m %s\n", tc.extractErrorMessage(result))
+		} else if isSuccess {
+			fmt.Printf("\033[1;32m[SUCCESS]\033[0m %s\n", tc.extractSuccessMessage(result))
+		} else {
+			fmt.Printf("\033[1;34m[RESULT]\033[0m %s\n", tc.extractMainContent(result))
+		}
 	}
 }
 
@@ -1198,8 +1389,17 @@ func (tc *TermChat) executeXMLFunctionCall(toolName string, arguments map[string
 		return
 	}
 	
-	// Format function call display nicely
-	tc.printFunctionCall(serverName, toolName, arguments)
+	// In compact mode, show minimal function call info
+	if !tc.verboseMode {
+		fmt.Printf("\n\033[1;35m[CALL]\033[0m %s.%s", serverName, toolName)
+		if len(arguments) > 0 {
+			fmt.Printf(" (with args)")
+		}
+		fmt.Printf(" -> ")
+	} else {
+		// Verbose mode: show full function call
+		tc.printFunctionCall(serverName, toolName, arguments)
+	}
 	
 	// Execute the tool call
 	result := tc.mcpClient.ExecuteToolCall(ctx, serverName, toolName, arguments)
@@ -1313,12 +1513,8 @@ func (tc *TermChat) processFunctionCallsWithContinuation(functionCalls []ai.Tool
 	}
 	
 	// If we have function results, continue the conversation
-	fmt.Printf("\n🔍 DEBUG: functionResults length: %d\n", len(functionResults))
 	if len(functionResults) > 0 {
-		fmt.Printf("🔄 TRIGGERING CONTINUATION with %d results\n", len(functionResults))
 		tc.continueConversationWithFunctionResults(functionCalls, functionResults, aiMsgIndex)
-	} else {
-		fmt.Printf("❌ NO CONTINUATION - no function results\n")
 	}
 }
 
@@ -1371,13 +1567,10 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 	
 	// Add continuation prompt based on task type
 	if strings.Contains(lastUserMsg, "workflow") || strings.Contains(lastUserMsg, "create") || strings.Contains(lastUserMsg, "build") {
-		fmt.Printf("\n🤖 ADDING CONTINUATION PROMPT for task: %s\n", lastUserMsg)
 		messages = append(messages, ai.Message{
 			Role:    "user", 
 			Content: "CONTINUE NOW: You MUST call create_workflow with proper JSON parameters. REQUIRED: name (string) and steps (array). Use this EXACT format:\n\ncreate_workflow({\n  \"name\": \"glucose-tracker\",\n  \"description\": \"Track glucose levels\",\n  \"steps\": [\n    {\"name\": \"check-glucose\", \"tool\": \"get_current_glucose\"}\n  ]\n})\n\nCall it RIGHT NOW with these parameters. Do not provide explanations first.",
 		})
-	} else {
-		fmt.Printf("\n⚠️  No continuation prompt added for: %s\n", lastUserMsg)
 	}
 	
 	// Continue the conversation
@@ -1399,6 +1592,10 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 	
 	// Stream the continuation response
 	thinkProcessor := ai.NewThinkProcessor()
+	var continuationFunctionCalls []ai.ToolCall
+	
+	// Use the same argument accumulation logic as main chat flow
+	accumulatedFunctionCalls := make(map[string]*ai.ToolCall)
 	
 	for response := range stream {
 		if response.Error != nil {
@@ -1425,14 +1622,60 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 			}
 		}
 
-		// Handle additional function calls in the continuation
+		// Accumulate tool calls across streaming chunks (same as main flow)
 		if len(response.ToolCalls) > 0 {
-			// For simplicity, execute them immediately (could be recursive)
 			for _, toolCall := range response.ToolCalls {
 				if toolCall.Type == "function" {
-					tc.executeNativeToolCall(toolCall, aiMsgIndex)
+					
+					// Use function name as key to ensure consistent accumulation
+					callId := toolCall.Function.Name
+					if callId == "" {
+						// For empty function names, use the first non-empty function name we've seen
+						for _, existing := range accumulatedFunctionCalls {
+							if existing.Function.Name != "" {
+								callId = existing.Function.Name
+								break
+							}
+						}
+						if callId == "" {
+							callId = "unknown"
+						}
+					}
+					
+					if existing, exists := accumulatedFunctionCalls[callId]; exists {
+						// Accumulate arguments for existing function call
+						existing.Function.Arguments += toolCall.Function.Arguments
+						// Update function name if it was empty before
+						if existing.Function.Name == "" && toolCall.Function.Name != "" {
+							existing.Function.Name = toolCall.Function.Name
+						}
+					} else {
+						// New function call
+						accumulatedFunctionCalls[callId] = &ai.ToolCall{
+							ID:   toolCall.ID,
+							Type: toolCall.Type,
+							Function: ai.FunctionCall{
+								Name:      toolCall.Function.Name,
+								Arguments: toolCall.Function.Arguments,
+							},
+						}
+					}
 				}
 			}
+		}
+	}
+	
+	// Convert accumulated function calls to processing list
+	for _, call := range accumulatedFunctionCalls {
+		if call.Function.Name != "" {
+			continuationFunctionCalls = append(continuationFunctionCalls, *call)
+		}
+	}
+	
+	// Execute accumulated function calls
+	for _, toolCall := range continuationFunctionCalls {
+		if toolCall.Type == "function" {
+			tc.executeNativeToolCall(toolCall, aiMsgIndex)
 		}
 	}
 }

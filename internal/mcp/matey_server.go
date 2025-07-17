@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/phildougherty/m8e/internal/compose"
 )
 
 // MateyMCPServer provides MCP tools for interacting with Matey and the cluster
@@ -242,102 +244,103 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 	}
 }
 
-// mateyPS executes 'matey ps' command
+// mateyPS executes 'matey ps' command using compose library
 func (m *MateyMCPServer) mateyPS(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	cmdArgs := []string{"ps"}
-	
-	if watch, ok := args["watch"].(bool); ok && watch {
-		cmdArgs = append(cmdArgs, "--watch")
-	}
-	
-	if filter, ok := args["filter"].(string); ok && filter != "" {
-		cmdArgs = append(cmdArgs, "--filter", filter)
-	}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
+	// Use compose library directly instead of subprocess
+	status, err := compose.Status(m.configFile)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error running matey ps: %v\nOutput: %s", err, output)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting service status: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
+	// Format output similar to matey ps
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("%-20s %-15s %-10s\n", "SERVICE", "STATUS", "TYPE"))
+	output.WriteString(strings.Repeat("-", 50))
+	output.WriteString("\n")
+	
+	for name, svc := range status.Services {
+		// Apply filter if specified
+		if filter, ok := args["filter"].(string); ok && filter != "" {
+			if !strings.Contains(name, filter) && !strings.Contains(svc.Status, filter) && !strings.Contains(svc.Type, filter) {
+				continue
+			}
+		}
+		output.WriteString(fmt.Sprintf("%-20s %-15s %-10s\n", name, svc.Status, svc.Type))
+	}
+	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
+		Content: []Content{{Type: "text", Text: output.String()}},
 	}, nil
 }
 
-// mateyUp executes 'matey up' command
+// mateyUp executes 'matey up' command using compose library
 func (m *MateyMCPServer) mateyUp(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	cmdArgs := []string{"up"}
-	
+	// Extract service names from arguments
+	var serviceNames []string
 	if services, ok := args["services"].([]interface{}); ok && len(services) > 0 {
 		for _, service := range services {
 			if s, ok := service.(string); ok {
-				cmdArgs = append(cmdArgs, s)
+				serviceNames = append(serviceNames, s)
 			}
 		}
 	}
 	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
+	// Use compose library directly instead of subprocess
+	err := compose.Up(m.configFile, serviceNames)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error running matey up: %v\nOutput: %s", err, output)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error starting services: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
+	// Return success message
+	var output strings.Builder
+	if len(serviceNames) > 0 {
+		output.WriteString(fmt.Sprintf("Successfully started services: %s\n", strings.Join(serviceNames, ", ")))
+	} else {
+		output.WriteString("Successfully started all enabled services\n")
+	}
+	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
+		Content: []Content{{Type: "text", Text: output.String()}},
 	}, nil
 }
 
-// mateyDown executes 'matey down' command
+// mateyDown executes 'matey down' command using compose library
 func (m *MateyMCPServer) mateyDown(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	cmdArgs := []string{"down"}
-	
+	// Extract service names from arguments
+	var serviceNames []string
 	if services, ok := args["services"].([]interface{}); ok && len(services) > 0 {
 		for _, service := range services {
 			if s, ok := service.(string); ok {
-				cmdArgs = append(cmdArgs, s)
+				serviceNames = append(serviceNames, s)
 			}
 		}
 	}
 	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
+	// Use compose library directly instead of subprocess
+	err := compose.Down(m.configFile, serviceNames)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error running matey down: %v\nOutput: %s", err, output)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error stopping services: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
+	// Return success message
+	var output strings.Builder
+	if len(serviceNames) > 0 {
+		output.WriteString(fmt.Sprintf("Successfully stopped services: %s\n", strings.Join(serviceNames, ", ")))
+	} else {
+		output.WriteString("Successfully stopped all services\n")
+	}
+	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
+		Content: []Content{{Type: "text", Text: output.String()}},
 	}, nil
 }
 

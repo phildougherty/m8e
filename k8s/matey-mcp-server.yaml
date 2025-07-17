@@ -21,7 +21,7 @@ spec:
       containers:
       - name: matey-mcp-server
         image: mcp.robotrad.io/matey:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         command: ["./matey"]
         args: ["mcp-server", "--port", "8081"]
         ports:

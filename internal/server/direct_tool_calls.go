@@ -165,6 +165,21 @@ func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		// Check if the client expects JSON-RPC format
+		userAgent := r.Header.Get("User-Agent")
+		accept := r.Header.Get("Accept")
+		
+		// Check if this is a standard MCP client that expects JSON-RPC
+		if strings.Contains(accept, "application/json") || 
+		   strings.Contains(userAgent, "MCP") || 
+		   strings.Contains(userAgent, "claude") || 
+		   strings.Contains(userAgent, "curl") {
+			h.logger.Info("Client expects JSON-RPC format - returning full response")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(response)
+			return
+		}
+
 		// Extract and format the successful result for OpenWebUI - return clean text
 		if result, exists := response["result"]; exists {
 			h.logger.Info("Found result in response")

@@ -1,0 +1,86 @@
+apiVersion: mcp.matey.ai/v1
+kind: MCPTaskScheduler
+metadata:
+  name: enhanced-scheduler
+  namespace: default
+spec:
+  image: mcpcompose/task-scheduler:latest
+  port: 8084
+  host: "0.0.0.0"
+  databasePath: "/app/data/scheduler.db"
+  logLevel: "info"
+  
+  # Enhanced scheduler configuration
+  schedulerConfig:
+    defaultTimeout: "5m"
+    maxConcurrentTasks: 10
+    retryPolicy:
+      maxRetries: 3
+      retryDelay: "30s"
+      backoffStrategy: "exponential"
+    taskStorageEnabled: true
+    taskHistoryLimit: 100
+    taskCleanupPolicy: "auto"
+    
+    # Event-driven workflow triggers
+    eventTriggers:
+      - name: "pod-failure-handler"
+        type: "k8s-event"
+        workflow: "incident-response-workflow"
+        cooldownDuration: "60s"
+        kubernetesEvent:
+          kind: "Pod"
+          reason: "Failed"
+          namespace: "production"
+        conditions:
+          - field: "message"
+            operator: "contains"
+            value: "ImagePullBackOff"
+      
+      - name: "deployment-rollback"
+        type: "k8s-event"
+        workflow: "rollback-deployment"
+        cooldownDuration: "120s"
+        kubernetesEvent:
+          kind: "Deployment"
+          reason: "ProgressDeadlineExceeded"
+          namespace: "production"
+    
+    # Conditional dependency configuration
+    conditionalDependencies:
+      enabled: true
+      defaultStrategy: "fail-fast"
+      resolutionTimeout: "10m"
+      crossWorkflowEnabled: true
+    
+    # Auto-scaling configuration
+    autoScaling:
+      enabled: true
+      minConcurrentTasks: 2
+      maxConcurrentTasks: 50
+      targetCPUUtilization: 70
+      targetMemoryUtilization: 80
+      scaleUpCooldown: "30s"
+      scaleDownCooldown: "300s"
+      metricsInterval: "15s"
+      customMetrics:
+        - name: "queue-depth"
+          type: "external"
+          targetValue: "100"
+          selector:
+            queue: "task-queue"
+  
+  # Resource configuration
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  
+  # Security configuration
+  security:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000

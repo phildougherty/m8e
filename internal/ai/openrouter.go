@@ -104,8 +104,6 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 		return responseChan, NewProviderError(p.Name(), "failed to marshal request", "marshal_error")
 	}
 	
-	// DEBUG: Log the full request being sent to OpenRouter
-	fmt.Printf("\n🔍 DEBUG: Full OpenRouter request:\n%s\n", string(reqBytes))
 	
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "POST", p.config.Endpoint+"/chat/completions", bytes.NewBuffer(reqBytes))

@@ -1524,6 +1524,21 @@ func (h *ProxyHandler) maintainEnhancedSSEConnections() {
 
 // shouldProcessForOpenWebUI determines if a response should be processed for OpenWebUI compatibility
 func (h *ProxyHandler) shouldProcessForOpenWebUI(r *http.Request, responseBody []byte) bool {
+	// Check if the client expects JSON-RPC format
+	// If User-Agent indicates it's a standard MCP client or if Accept header specifies JSON, 
+	// don't process for OpenWebUI
+	userAgent := r.Header.Get("User-Agent")
+	accept := r.Header.Get("Accept")
+	
+	// Check if this is a standard MCP client that expects JSON-RPC
+	if strings.Contains(accept, "application/json") || 
+	   strings.Contains(userAgent, "MCP") || 
+	   strings.Contains(userAgent, "claude") || 
+	   strings.Contains(userAgent, "curl") {
+		h.Logger.Info("Client expects JSON-RPC format - NOT processing for OpenWebUI")
+		return false
+	}
+	
 	// Check if response looks like MCP JSON-RPC with tools/call result
 	var responseData map[string]interface{}
 	if json.Unmarshal(responseBody, &responseData) == nil {

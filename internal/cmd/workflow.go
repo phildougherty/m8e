@@ -540,9 +540,11 @@ func getKubernetesClient() (client.Client, error) {
 	if err := scheme.AddToScheme(s); err != nil {
 		return nil, fmt.Errorf("failed to add core types to scheme: %w", err)
 	}
-
-	// Register our CRD types
-	s.AddKnownTypes(crd.WorkflowGVK.GroupVersion(), &crd.Workflow{}, &crd.WorkflowList{})
+	
+	// Add our CRD types to the scheme
+	if err := crd.AddToScheme(s); err != nil {
+		return nil, fmt.Errorf("failed to add CRD types to scheme: %w", err)
+	}
 
 	c, err := client.New(config, client.Options{Scheme: s})
 	if err != nil {
