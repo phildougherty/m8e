@@ -1,0 +1,452 @@
+# Production Matey Configuration Example
+# This example shows a production-ready setup with high availability,
+# security, monitoring, and comprehensive features
+
+version: "3.8"
+
+services:
+  # Filesystem server with production settings
+  filesystem:
+    image: mcp/filesystem-server:0.1.0
+    protocol: stdio
+    command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+    volumes:
+      - workspace-data:/workspace
+    replicas: 3
+    resources:
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+    security:
+      run_as_user: 1000
+      run_as_group: 1000
+      read_only_root_filesystem: true
+      allow_privilege_escalation: false
+    health:
+      check:
+        http:
+          path: /health
+          port: 8080
+        interval: 30s
+        timeout: 5s
+        retries: 3
+        
+  # Web search with load balancing
+  web-search:
+    image: mcp/web-search:0.1.0
+    protocol: http
+    port: 8080
+    replicas: 5
+    environment:
+      - SEARCH_API_KEY=${SEARCH_API_KEY}
+      - RATE_LIMIT=1000
+      - CACHE_TTL=300
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+    security:
+      run_as_user: 1000
+      run_as_group: 1000
+      read_only_root_filesystem: true
+    health:
+      check:
+        http:
+          path: /health
+          port: 8080
+        interval: 15s
+        timeout: 5s
+        retries: 3
+        
+  # High-availability PostgreSQL for memory
+  memory:
+    image: postgres:15
+    port: 5432
+    replicas: 3
+    environment:
+      - POSTGRES_DB=matey_memory
+      - POSTGRES_USER=matey
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_REPLICATION_MODE=master
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${DB_REPLICATION_PASSWORD}
+    volumes:
+      - memory-data:/var/lib/postgresql/data
+    resources:
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+    security:
+      run_as_user: 999
+      run_as_group: 999
+      fs_group: 999
+    health:
+      check:
+        exec:
+          command: ["pg_isready", "-U", "matey", "-d", "matey_memory"]
+        interval: 30s
+        timeout: 5s
+        retries: 3
+        
+  # Task scheduler with high availability
+  task-scheduler:
+    image: mcp/task-scheduler:0.1.0
+    protocol: http
+    port: 8081
+    replicas: 3
+    environment:
+      - DB_URL=postgresql://matey:${DB_PASSWORD}@memory:5432/matey_memory
+      - SCHEDULER_WORKERS=10
+      - MAX_CONCURRENT_JOBS=50
+    depends_on:
+      - memory
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+    security:
+      run_as_user: 1000
+      run_as_group: 1000
+      read_only_root_filesystem: true
+      
+  # Database tools
+  database-tools:
+    image: mcp/database-tools:0.1.0
+    protocol: http
+    port: 8082
+    replicas: 2
+    environment:
+      - DB_URL=postgresql://matey:${DB_PASSWORD}@memory:5432/matey_memory
+      - QUERY_TIMEOUT=30s
+      - MAX_CONNECTIONS=20
+    depends_on:
+      - memory
+    resources:
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+    security:
+      run_as_user: 1000
+      run_as_group: 1000
+      read_only_root_filesystem: true
+
+# Production volume configuration
+volumes:
+  workspace-data:
+    driver: kubernetes
+    driver_opts:
+      type: csi
+      driver: ebs.csi.aws.com
+      size: 100Gi
+      type: gp3
+      encrypted: true
+      
+  memory-data:
+    driver: kubernetes
+    driver_opts:
+      type: csi
+      driver: ebs.csi.aws.com
+      size: 200Gi
+      type: gp3
+      iops: 3000
+      throughput: 125
+      encrypted: true
+
+# Production networking
+networks:
+  default:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.0.0.0/16
+
+# Multiple AI providers with failover
+ai_providers:
+  - name: openai-primary
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4
+    max_tokens: 4000
+    temperature: 0.7
+    timeout: 30s
+    retry_attempts: 3
+    fallback: claude-primary
+    
+  - name: claude-primary
+    type: claude
+    api_key: ${CLAUDE_API_KEY}
+    model: claude-3-sonnet-20240229
+    max_tokens: 4000
+    temperature: 0.7
+    timeout: 30s
+    retry_attempts: 3
+    fallback: openai-secondary
+    
+  - name: openai-secondary
+    type: openai
+    api_key: ${OPENAI_API_KEY_SECONDARY}
+    model: gpt-3.5-turbo
+    max_tokens: 4000
+    temperature: 0.7
+    timeout: 30s
+    retry_attempts: 3
+    
+  - name: ollama-local
+    type: ollama
+    endpoint: http://ollama:11434
+    model: llama2:13b
+    context_length: 4096
+    temperature: 0.7
+    timeout: 60s
+    keep_alive: 10m
+
+# Production authentication and authorization
+auth:
+  enabled: true
+  type: oauth
+  oauth:
+    providers:
+      - name: github
+        client_id: ${GITHUB_CLIENT_ID}
+        client_secret: ${GITHUB_CLIENT_SECRET}
+        scopes: [user:email, read:user]
+        redirect_uri: https://matey.example.com/auth/github/callback
+        
+      - name: google
+        client_id: ${GOOGLE_CLIENT_ID}
+        client_secret: ${GOOGLE_CLIENT_SECRET}
+        scopes: [openid, email, profile]
+        redirect_uri: https://matey.example.com/auth/google/callback
+        
+  jwt:
+    secret: ${JWT_SECRET}
+    algorithm: HS256
+    expiration: 8h
+    refresh_enabled: true
+    refresh_expiration: 30d
+    
+  rbac:
+    enabled: true
+    roles:
+      - name: admin
+        permissions:
+          - "servers:*"
+          - "workflows:*"
+          - "tools:*"
+          - "users:*"
+          
+      - name: developer
+        permissions:
+          - "servers:read"
+          - "servers:write"
+          - "workflows:read"
+          - "workflows:write"
+          - "tools:execute"
+          
+      - name: readonly
+        permissions:
+          - "servers:read"
+          - "workflows:read"
+          - "tools:read"
+
+# Production service discovery
+discovery:
+  enabled: true
+  provider: kubernetes
+  cross_namespace: true
+  health_check_interval: 15s
+  timeout: 5s
+  retries: 3
+  dns:
+    search_domains:
+      - matey.svc.cluster.local
+      - svc.cluster.local
+      - cluster.local
+    nameservers:
+      - 10.96.0.10
+      - 8.8.8.8
+      - 8.8.4.4
+
+# Production features
+features:
+  ai_integration: true
+  workflow_engine: true
+  memory_service: true
+  task_scheduler: true
+  audit_logging: true
+  metrics: true
+  tracing: true
+  dashboard: true
+  rate_limiting: true
+  
+  experimental:
+    auto_scaling: true
+    service_mesh: true
+    gitops: false
+
+# Production networking
+networking:
+  service_mesh:
+    enabled: true
+    provider: istio
+    features:
+      - traffic_management
+      - security
+      - observability
+      
+  policies:
+    - name: default-deny
+      type: ingress
+      action: deny
+      
+    - name: allow-internal
+      type: ingress
+      action: allow
+      from:
+        - namespace: matey-system
+      to:
+        - service: "*"
+      ports:
+        - protocol: TCP
+          port: 8080
+          
+  load_balancer:
+    algorithm: round_robin
+    health_check:
+      path: /health
+      interval: 10s
+      timeout: 5s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+      
+  tls:
+    enabled: true
+    cert_manager: true
+    certificates:
+      - name: matey-api-cert
+        domains:
+          - matey.example.com
+          - api.matey.example.com
+        issuer: letsencrypt-prod
+
+# Resource management
+resources:
+  defaults:
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+      
+  quotas:
+    namespace: matey-prod
+    limits:
+      requests.cpu: "20"
+      requests.memory: "40Gi"
+      limits.cpu: "40"
+      limits.memory: "80Gi"
+      persistentvolumeclaims: "20"
+      
+  hpa:
+    enabled: true
+    min_replicas: 3
+    max_replicas: 20
+    target_cpu_utilization: 70
+    target_memory_utilization: 80
+    
+  vpa:
+    enabled: true
+    update_mode: Auto
+    min_allowed:
+      cpu: 100m
+      memory: 50Mi
+    max_allowed:
+      cpu: 2
+      memory: 4Gi
+
+# Production monitoring
+monitoring:
+  prometheus:
+    enabled: true
+    endpoint: /metrics
+    port: 9090
+    scrape_interval: 15s
+    retention: 30d
+    
+  grafana:
+    enabled: true
+    admin_password: ${GRAFANA_ADMIN_PASSWORD}
+    dashboards:
+      - name: matey-overview
+        file: dashboards/overview.json
+      - name: matey-performance
+        file: dashboards/performance.json
+        
+  alerts:
+    enabled: true
+    webhook: ${SLACK_WEBHOOK_URL}
+    rules:
+      - name: high-cpu
+        condition: cpu > 80
+        duration: 5m
+        severity: warning
+        
+      - name: high-memory
+        condition: memory > 85
+        duration: 5m
+        severity: warning
+        
+      - name: service-down
+        condition: up == 0
+        duration: 1m
+        severity: critical
+        
+      - name: high-error-rate
+        condition: error_rate > 5
+        duration: 2m
+        severity: warning
+        
+  logging:
+    level: info
+    format: json
+    outputs:
+      - stdout
+      - file: /var/log/matey.log
+    rotation:
+      max_size: 100MB
+      max_files: 10
+      compress: true
+      
+  tracing:
+    enabled: true
+    jaeger:
+      endpoint: http://jaeger:14268/api/traces
+      sampler_rate: 0.1
+      
+  audit:
+    enabled: true
+    log_file: /var/log/matey-audit.log
+    events:
+      - user_login
+      - user_logout
+      - resource_create
+      - resource_update
+      - resource_delete
+      - permission_denied
