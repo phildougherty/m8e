@@ -1347,3 +1347,12 @@ func SaveConfig(filePath string, config *ComposeConfig) error {
 
 	return nil
 }
+
+// ToYAML converts the configuration to YAML string
+func ToYAML(config *ComposeConfig) (string, error) {
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal config: %w", err)
+	}
+	return string(data), nil
+}

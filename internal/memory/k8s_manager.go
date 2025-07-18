@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -128,8 +129,41 @@ func (m *K8sManager) Restart() error {
 // Status returns the status of the memory service
 func (m *K8sManager) Status() (string, error) {
 	ctx := context.Background()
+	
+	// Check actual pod status first for real-time accuracy
+	podList := &corev1.PodList{}
+	err := m.client.List(ctx, podList, client.InNamespace(m.namespace), client.MatchingLabels{"app.kubernetes.io/name": "memory"})
+	if err == nil && len(podList.Items) > 0 {
+		pod := podList.Items[0]
+		
+		// Check for CrashLoopBackOff or other failure states
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.State.Waiting != nil && 
+				containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
+				return "failed", nil
+			}
+		}
+		
+		// Check pod phase
+		switch pod.Status.Phase {
+		case corev1.PodRunning:
+			// Check if container is ready
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					return "running", nil
+				}
+			}
+			return "starting", nil
+		case corev1.PodFailed:
+			return "failed", nil
+		case corev1.PodPending:
+			return "pending", nil
+		}
+	}
+	
+	// Fallback to CRD status
 	memory := &crd.MCPMemory{}
-	err := m.client.Get(ctx, types.NamespacedName{
+	err = m.client.Get(ctx, types.NamespacedName{
 		Name:      "memory",
 		Namespace: m.namespace,
 	}, memory)

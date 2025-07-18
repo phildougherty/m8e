@@ -12,8 +12,10 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -228,7 +230,7 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 	}
 
 	// Check task scheduler status
-	if c.config.TaskScheduler.Enabled {
+	if c.config.TaskScheduler != nil && c.config.TaskScheduler.Enabled {
 		tsStatus, err := c.taskSchedulerManager.GetStatus()
 		if err != nil {
 			tsStatus = "error"
@@ -242,6 +244,14 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 
 	// Check MCP server statuses via Kubernetes API
 	for serverName := range c.config.Servers {
+		// Skip memory and task-scheduler if they have dedicated configurations
+		if serverName == "memory" && c.config.Memory.Enabled {
+			continue
+		}
+		if serverName == "task-scheduler" && c.config.TaskScheduler != nil && c.config.TaskScheduler.Enabled {
+			continue
+		}
+		
 		serverStatus := c.getMCPServerStatus(serverName)
 		status.Services[serverName] = &ServiceStatus{
 			Name:   serverName,
@@ -260,87 +270,114 @@ func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 	// Always use our k8sClient to ensure consistent scheme
 	clientToUse := c.k8sClient
 	
-	// Try to get MCPServer CRD status first
-	mcpServer := &crd.MCPServer{}
-	err := clientToUse.Get(ctx, client.ObjectKey{
-		Name:      serverName,
-		Namespace: c.namespace,
-	}, mcpServer)
-	
-	if err == nil {
-		// MCPServer CRD exists, use its status
-		switch mcpServer.Status.Phase {
-		case crd.MCPServerPhaseRunning:
-			return "running"
-		case crd.MCPServerPhasePending:
-			return "pending"
-		case crd.MCPServerPhaseCreating:
-			return "creating"
-		case crd.MCPServerPhaseStarting:
-			return "starting"
-		case crd.MCPServerPhaseTerminating:
-			return "terminating"
-		case crd.MCPServerPhaseFailed:
-			return "failed"
-		case "":
-			return "stopped"
-		default:
-			return "unknown"
-		}
-	}
-	
-	// MCPServer CRD not found or error, fall back to deployment status
-	if client.IgnoreNotFound(err) != nil {
-		// Real error, not just not found
-		c.logger.Warning("Error getting MCPServer %s: %v", serverName, err)
-		return "error"
-	}
-	
-	// Get the deployment for this server
+	// Get the deployment for this server first (most accurate real-time status)
 	deployment := &appsv1.Deployment{}
-	err = clientToUse.Get(ctx, client.ObjectKey{
+	err := clientToUse.Get(ctx, client.ObjectKey{
 		Name:      serverName,
 		Namespace: c.namespace,
 	}, deployment)
 	
 	if err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			return "not-found"
+		if client.IgnoreNotFound(err) != nil {
+			c.logger.Warning("Error getting Deployment %s: %v", serverName, err)
+			return "error"
 		}
-		c.logger.Warning("Error getting Deployment %s: %v", serverName, err)
-		return "error"
+		// No deployment found, check if MCPServer CRD exists
+		mcpServer := &crd.MCPServer{}
+		err = clientToUse.Get(ctx, client.ObjectKey{
+			Name:      serverName,
+			Namespace: c.namespace,
+		}, mcpServer)
+		
+		if err == nil {
+			// MCPServer CRD exists but no deployment - use CRD status
+			switch mcpServer.Status.Phase {
+			case crd.MCPServerPhaseRunning:
+				return "running"
+			case crd.MCPServerPhasePending:
+				return "pending"
+			case crd.MCPServerPhaseCreating:
+				return "creating"
+			case crd.MCPServerPhaseStarting:
+				return "starting"
+			case crd.MCPServerPhaseTerminating:
+				return "terminating"
+			case crd.MCPServerPhaseFailed:
+				return "failed"
+			case "":
+				return "stopped"
+			default:
+				return "unknown"
+			}
+		}
+		
+		// Neither deployment nor CRD found
+		return "stopped"
 	}
 
-	// Check deployment status
-	if deployment.Status.ReadyReplicas > 0 {
-		return "running"
-	}
-
-	// Check if there are any pods and their status
+	// Deployment exists - check pods for more accurate status
 	podList := &corev1.PodList{}
 	err = clientToUse.List(ctx, podList, client.InNamespace(c.namespace), client.MatchingLabels{"app": serverName})
 	if err != nil {
 		c.logger.Warning("Error getting pods for %s: %v", serverName, err)
-		return "error"
+		// Fall back to deployment status
+		if deployment.Status.ReadyReplicas > 0 {
+			return "running"
+		}
+		return "starting"
 	}
 	
 	if len(podList.Items) == 0 {
 		return "pending"
 	}
 
-	// Check first pod status
-	pod := podList.Items[0]
-	switch pod.Status.Phase {
-	case corev1.PodRunning:
-		// If pod is running but deployment says 0 ready replicas, it's still starting
-		return "starting"
-	case corev1.PodPending:
-		return "pending"
-	case corev1.PodFailed:
-		return "failed"
-	default:
-		return "unknown"
+	// Check pod status for most accurate real-time status
+	for _, pod := range podList.Items {
+		// First check container statuses for CrashLoopBackOff regardless of phase
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.State.Waiting != nil && 
+				containerStatus.State.Waiting.Reason == "CrashLoopBackOff" {
+				return "failed"
+			}
+		}
+		
+		switch pod.Status.Phase {
+		case corev1.PodRunning:
+			// Check if all containers are ready
+			allReady := true
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status != corev1.ConditionTrue {
+					allReady = false
+					break
+				}
+			}
+			if allReady && deployment.Status.ReadyReplicas > 0 {
+				return "running"
+			}
+			return "starting"
+		case corev1.PodPending:
+			// Check if it's stuck in pending due to image pull or other issues
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue {
+					// Pod is scheduled but still pending, likely container issues
+					return "starting"
+				}
+			}
+			return "pending"
+		case corev1.PodFailed:
+			return "failed"
+		case corev1.PodSucceeded:
+			// This shouldn't happen for long-running services
+			return "stopped"
+		}
 	}
+
+	// Fallback to deployment status
+	if deployment.Status.ReadyReplicas > 0 {
+		return "running"
+	}
+	
+	return "starting"
 }
 
 // startAllEnabledServices starts all services that are enabled in config
@@ -509,24 +546,303 @@ func (c *K8sComposer) stopSpecificServices(serviceNames []string) error {
 
 // ensureControllerManagerRunning ensures the controller manager is running
 func (c *K8sComposer) ensureControllerManagerRunning() error {
-	// Check if we already have a controller manager running
-	if c.controllerManager != nil && c.controllerManager.IsReady() {
-		c.logger.Info("Controller manager already running")
+	// Check if controller manager deployment already exists and is running
+	if c.isControllerManagerDeploymentRunning() {
+		c.logger.Info("Controller manager deployment already running")
 		return nil
 	}
 
-	c.logger.Info("Starting Matey controller manager...")
+	c.logger.Info("Deploying Matey controller manager...")
 	
-	// Start the controller manager in the background
-	cm, err := controllers.StartControllerManagerInBackground(c.namespace, c.config)
-	if err != nil {
-		return fmt.Errorf("failed to start controller manager: %w", err)
+	// Deploy the controller manager as a pod
+	if err := c.deployControllerManager(); err != nil {
+		return fmt.Errorf("failed to deploy controller manager: %w", err)
 	}
 
-	c.controllerManager = cm
-	c.logger.Info("Controller manager started successfully")
+	c.logger.Info("Controller manager deployment created successfully")
 	
 	return nil
+}
+
+// isControllerManagerDeploymentRunning checks if the controller manager deployment is running
+func (c *K8sComposer) isControllerManagerDeploymentRunning() bool {
+	ctx := context.Background()
+	deployment := &appsv1.Deployment{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      "matey-controller-manager",
+		Namespace: c.namespace,
+	}, deployment)
+	
+	if err != nil {
+		return false
+	}
+	
+	// Check if deployment has ready replicas
+	return deployment.Status.ReadyReplicas > 0
+}
+
+// deployControllerManager deploys the controller manager as a Kubernetes deployment
+func (c *K8sComposer) deployControllerManager() error {
+	ctx := context.Background()
+	
+	// Create ConfigMap with matey.yaml
+	if err := c.createControllerManagerConfigMap(); err != nil {
+		return fmt.Errorf("failed to create controller manager config map: %w", err)
+	}
+	
+	// Create the deployment
+	deployment := c.createControllerManagerDeployment()
+	
+	// Apply the deployment
+	existingDeployment := &appsv1.Deployment{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      deployment.Name,
+		Namespace: deployment.Namespace,
+	}, existingDeployment)
+	
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// Create new deployment
+			if err := c.k8sClient.Create(ctx, deployment); err != nil {
+				return fmt.Errorf("failed to create controller manager deployment: %w", err)
+			}
+			c.logger.Info("Created controller manager deployment")
+		} else {
+			return fmt.Errorf("failed to get existing controller manager deployment: %w", err)
+		}
+	} else {
+		// Update existing deployment
+		existingDeployment.Spec = deployment.Spec
+		if err := c.k8sClient.Update(ctx, existingDeployment); err != nil {
+			return fmt.Errorf("failed to update controller manager deployment: %w", err)
+		}
+		c.logger.Info("Updated controller manager deployment")
+	}
+	
+	// Create service for metrics
+	service := c.createControllerManagerService()
+	existingService := &corev1.Service{}
+	err = c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      service.Name,
+		Namespace: service.Namespace,
+	}, existingService)
+	
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// Create new service
+			if err := c.k8sClient.Create(ctx, service); err != nil {
+				return fmt.Errorf("failed to create controller manager service: %w", err)
+			}
+			c.logger.Info("Created controller manager service")
+		} else {
+			return fmt.Errorf("failed to get existing controller manager service: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// createControllerManagerConfigMap creates a ConfigMap with the matey configuration
+func (c *K8sComposer) createControllerManagerConfigMap() error {
+	ctx := context.Background()
+	
+	// Convert config to YAML
+	configYAML, err := config.ToYAML(c.config)
+	if err != nil {
+		return fmt.Errorf("failed to convert config to YAML: %w", err)
+	}
+	
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-config",
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"app":                          "matey-controller-manager",
+				"app.kubernetes.io/name":       "matey-controller-manager",
+				"app.kubernetes.io/component":  "controller-manager",
+				"app.kubernetes.io/managed-by": "matey",
+			},
+		},
+		Data: map[string]string{
+			"matey.yaml": configYAML,
+		},
+	}
+	
+	// Check if ConfigMap exists
+	existingConfigMap := &corev1.ConfigMap{}
+	err = c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      configMap.Name,
+		Namespace: configMap.Namespace,
+	}, existingConfigMap)
+	
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// Create new ConfigMap
+			if err := c.k8sClient.Create(ctx, configMap); err != nil {
+				return fmt.Errorf("failed to create controller manager config map: %w", err)
+			}
+			c.logger.Info("Created controller manager config map")
+		} else {
+			return fmt.Errorf("failed to get existing controller manager config map: %w", err)
+		}
+	} else {
+		// Update existing ConfigMap
+		existingConfigMap.Data = configMap.Data
+		if err := c.k8sClient.Update(ctx, existingConfigMap); err != nil {
+			return fmt.Errorf("failed to update controller manager config map: %w", err)
+		}
+		c.logger.Info("Updated controller manager config map")
+	}
+	
+	return nil
+}
+
+// createControllerManagerDeployment creates a Deployment for the controller manager
+func (c *K8sComposer) createControllerManagerDeployment() *appsv1.Deployment {
+	replicas := int32(1)
+	
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-controller-manager",
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"app":                          "matey-controller-manager",
+				"app.kubernetes.io/name":       "matey-controller-manager",
+				"app.kubernetes.io/component":  "controller-manager",
+				"app.kubernetes.io/managed-by": "matey",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "matey-controller-manager",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":                          "matey-controller-manager",
+						"app.kubernetes.io/name":       "matey-controller-manager",
+						"app.kubernetes.io/component":  "controller-manager",
+						"app.kubernetes.io/managed-by": "matey",
+					},
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "matey-controller",
+					Containers: []corev1.Container{
+						{
+							Name:  "controller-manager",
+							Image: "mcp.robotrad.io/matey:latest",
+							Command: []string{"/app/matey"},
+							Args: []string{
+								"controller-manager",
+								"--config=/config/matey.yaml",
+								"--namespace=" + c.namespace,
+								"--log-level=info",
+							},
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "metrics",
+									ContainerPort: 8083,
+									Protocol:      corev1.ProtocolTCP,
+								},
+								{
+									Name:          "health",
+									ContainerPort: 8082,
+									Protocol:      corev1.ProtocolTCP,
+								},
+								{
+									Name:          "webhook",
+									ContainerPort: 9443,
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/healthz",
+										Port: intstr.FromInt(8082),
+									},
+								},
+								InitialDelaySeconds: 15,
+								PeriodSeconds:       20,
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/readyz",
+										Port: intstr.FromInt(8082),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       10,
+							},
+							Resources: corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "config",
+									MountPath: "/config",
+									ReadOnly:  true,
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "config",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: "matey-config",
+									},
+								},
+							},
+						},
+					},
+					TerminationGracePeriodSeconds: &[]int64{10}[0],
+				},
+			},
+		},
+	}
+}
+
+// createControllerManagerService creates a Service for the controller manager metrics
+func (c *K8sComposer) createControllerManagerService() *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-controller-manager-metrics",
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"app":                          "matey-controller-manager",
+				"app.kubernetes.io/name":       "matey-controller-manager",
+				"app.kubernetes.io/component":  "controller-manager",
+				"app.kubernetes.io/managed-by": "matey",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": "matey-controller-manager",
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "metrics",
+					Port:       8083,
+					TargetPort: intstr.FromInt(8083),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+		},
+	}
 }
 
 // createK8sClient creates a Kubernetes client with a comprehensive scheme

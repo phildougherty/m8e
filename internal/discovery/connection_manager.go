@@ -470,16 +470,23 @@ func (dcm *DynamicConnectionManager) checkHTTPHealth(conn *MCPConnection) bool {
 		return false
 	}
 
-	// Test actual MCP protocol response with a tools/list request
+	// Test actual MCP protocol response with an initialize request
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Create a minimal tools/list request
+	// Create a minimal initialize request (no session establishment needed)
 	request := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "health-check",
-		"method":  "tools/list",
-		"params":  map[string]interface{}{},
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"clientInfo": map[string]interface{}{
+				"name":    "matey-health-check",
+				"version": "1.0.0",
+			},
+			"capabilities": map[string]interface{}{},
+		},
 	}
 
 	response, err := dcm.sendHTTPHealthRequest(ctx, conn, request)
@@ -563,16 +570,23 @@ func (dcm *DynamicConnectionManager) checkSSEHealth(conn *MCPConnection) bool {
 		return false
 	}
 
-	// Test actual MCP protocol response with a tools/list request
+	// Test actual MCP protocol response with an initialize request
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Create a minimal tools/list request
+	// Create a minimal initialize request (no session establishment needed)
 	request := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "health-check",
-		"method":  "tools/list",
-		"params":  map[string]interface{}{},
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"clientInfo": map[string]interface{}{
+				"name":    "matey-health-check",
+				"version": "1.0.0",
+			},
+			"capabilities": map[string]interface{}{},
+		},
 	}
 
 	response, err := dcm.sendSSEHealthRequest(ctx, conn, request)

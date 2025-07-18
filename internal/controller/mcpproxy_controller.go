@@ -208,7 +208,7 @@ func (r *MCPProxyReconciler) updateDeploymentStatus(ctx context.Context, mcpProx
 	// Get the deployment
 	deployment := &appsv1.Deployment{}
 	err := r.Get(ctx, client.ObjectKey{
-		Name:      mcpProxy.Name + "-proxy",
+		Name:      mcpProxy.Name,
 		Namespace: mcpProxy.Namespace,
 	}, deployment)
 	if err != nil {
@@ -307,7 +307,7 @@ func (r *MCPProxyReconciler) reconcileIngress(ctx context.Context, mcpProxy *crd
 	// Define the desired Ingress
 	ingress := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        mcpProxy.Name + "-proxy",
+			Name:        mcpProxy.Name,
 			Namespace:   mcpProxy.Namespace,
 			Labels:      r.labelsForMCPProxy(mcpProxy),
 			Annotations: mcpProxy.Spec.Ingress.Annotations,
@@ -324,7 +324,7 @@ func (r *MCPProxyReconciler) reconcileIngress(ctx context.Context, mcpProxy *crd
 									PathType: &pathType,
 									Backend: networkingv1.IngressBackend{
 										Service: &networkingv1.IngressServiceBackend{
-											Name: mcpProxy.Name + "-proxy",
+											Name: mcpProxy.Name,
 											Port: networkingv1.ServiceBackendPort{
 												Number: r.getPort(mcpProxy),
 											},

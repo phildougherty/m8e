@@ -1457,7 +1457,7 @@ func (tc *TermChat) printFunctionResult(result string) {
 
 // stripXMLFunctionCalls removes XML function call tags from content for display
 func (tc *TermChat) stripXMLFunctionCalls(content string) string {
-	// Remove function_calls blocks
+	// Remove function_calls blocks completely (including all nested content)
 	for strings.Contains(content, "<function_calls>") {
 		start := strings.Index(content, "<function_calls>")
 		end := strings.Index(content, "</function_calls>")
@@ -1474,6 +1474,28 @@ func (tc *TermChat) stripXMLFunctionCalls(content string) string {
 		end := strings.Index(content, "</function_result>")
 		if start != -1 && end != -1 && end > start {
 			content = content[:start] + content[end+len("</function_result>"):]
+		} else {
+			break
+		}
+	}
+	
+	// Remove any remaining invoke blocks that might be outside function_calls
+	for strings.Contains(content, "<invoke") {
+		start := strings.Index(content, "<invoke")
+		end := strings.Index(content, "</invoke>")
+		if start != -1 && end != -1 && end > start {
+			content = content[:start] + content[end+len("</invoke>"):]
+		} else {
+			break
+		}
+	}
+	
+	// Remove any remaining parameter tags
+	for strings.Contains(content, "<parameter") {
+		start := strings.Index(content, "<parameter")
+		end := strings.Index(content, "</parameter>")
+		if start != -1 && end != -1 && end > start {
+			content = content[:start] + content[end+len("</parameter>"):]
 		} else {
 			break
 		}

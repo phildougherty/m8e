@@ -129,6 +129,34 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 		},
 	}
 
+	// Check if the deployment already exists
+	err := r.Get(ctx, client.ObjectKey{Name: mcpServer.Name, Namespace: mcpServer.Namespace}, deployment)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Deployment does not exist, create it
+			op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
+				// Set owner reference
+				if err := controllerutil.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
+					return err
+				}
+
+				// Build deployment spec
+				deployment.Spec = r.buildDeploymentSpec(mcpServer)
+				return nil
+			})
+			if err != nil {
+				logger.Error(err, "Failed to create Deployment")
+				return nil, err
+			}
+			logger.V(1).Info("Deployment created", "operation", op, "name", deployment.Name)
+			return deployment, nil
+		}
+		// Some other error occurred
+		logger.Error(err, "Failed to get Deployment")
+		return nil, err
+	}
+
+	// Deployment exists, update it
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		// Set owner reference
 		if err := controllerutil.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
@@ -141,11 +169,11 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcpServer
 	})
 
 	if err != nil {
-		logger.Error(err, "Failed to create or update Deployment")
+		logger.Error(err, "Failed to update Deployment")
 		return nil, err
 	}
 
-	logger.V(1).Info("Deployment reconciled", "operation", op, "name", deployment.Name)
+	logger.V(1).Info("Deployment updated", "operation", op, "name", deployment.Name)
 	return deployment, nil
 }
 

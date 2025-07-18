@@ -50,6 +50,9 @@ func NewRootCommand(version string) *cobra.Command {
 	
 	// Add MCP server command
 	rootCmd.AddCommand(NewMCPServerCommand())
+	
+	// Add controller manager command
+	rootCmd.AddCommand(NewControllerManagerCommand())
 
 	return rootCmd
 }
