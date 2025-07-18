@@ -77,7 +77,7 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 		cfg.Memory.Host = "0.0.0.0"
 	}
 	if cfg.Memory.DatabaseURL == "" {
-		cfg.Memory.DatabaseURL = "postgresql://postgres:password@matey-postgres-memory:5432/memory_graph?sslmode=disable"
+		cfg.Memory.DatabaseURL = "postgresql://postgres:password@memory-postgres:5432/memory_graph?sslmode=disable"
 	}
 	if !cfg.Memory.PostgresEnabled {
 		cfg.Memory.PostgresEnabled = true
@@ -158,10 +158,8 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 	// Add postgres-memory to servers config too
 	cfg.Servers["postgres-memory"] = config.ServerConfig{
 		Image:       "postgres:15-alpine",
-		User:        "postgres",
 		ReadOnly:    false,
-		Privileged:  false,
-		SecurityOpt: []string{"no-new-privileges:true"},
+		Privileged:  true, // Postgres needs root access to initialize database
 		Env: map[string]string{
 			"POSTGRES_DB":       cfg.Memory.PostgresDB,
 			"POSTGRES_USER":     cfg.Memory.PostgresUser,

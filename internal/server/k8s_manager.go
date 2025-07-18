@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
@@ -277,6 +279,16 @@ func createK8sClient() (client.Client, error) {
 
 	// Create the scheme with CRDs
 	scheme := runtime.NewScheme()
+	
+	// Add core Kubernetes types
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add core v1 scheme: %w", err)
+	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add apps v1 scheme: %w", err)
+	}
+	
+	// Add our CRDs
 	if err := crd.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add CRD scheme: %w", err)
 	}

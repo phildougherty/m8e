@@ -4,6 +4,7 @@ package compose
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,6 +107,10 @@ func (c *K8sComposer) Down(serviceNames []string) error {
 
 	c.logger.Info("Stopping MCP services")
 	
+	// Clean up any stale resources first
+	if err := c.cleanupStaleResources(); err != nil {
+		c.logger.Warning("Failed to clean up stale resources: %v", err)
+	}
 
 	// If no specific services requested, stop all services
 	if len(serviceNames) == 0 {
@@ -252,13 +257,8 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 	ctx := context.Background()
 	
-	// Use controller manager's client if available, otherwise fall back to k8sClient
-	var clientToUse client.Client
-	if c.controllerManager != nil && c.controllerManager.GetClient() != nil {
-		clientToUse = c.controllerManager.GetClient()
-	} else {
-		clientToUse = c.k8sClient
-	}
+	// Always use our k8sClient to ensure consistent scheme
+	clientToUse := c.k8sClient
 	
 	// Try to get MCPServer CRD status first
 	mcpServer := &crd.MCPServer{}
@@ -274,8 +274,16 @@ func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 			return "running"
 		case crd.MCPServerPhasePending:
 			return "pending"
+		case crd.MCPServerPhaseCreating:
+			return "creating"
+		case crd.MCPServerPhaseStarting:
+			return "starting"
+		case crd.MCPServerPhaseTerminating:
+			return "terminating"
 		case crd.MCPServerPhaseFailed:
 			return "failed"
+		case "":
+			return "stopped"
 		default:
 			return "unknown"
 		}
@@ -284,6 +292,7 @@ func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 	// MCPServer CRD not found or error, fall back to deployment status
 	if client.IgnoreNotFound(err) != nil {
 		// Real error, not just not found
+		c.logger.Warning("Error getting MCPServer %s: %v", serverName, err)
 		return "error"
 	}
 	
@@ -298,6 +307,7 @@ func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 		if client.IgnoreNotFound(err) == nil {
 			return "not-found"
 		}
+		c.logger.Warning("Error getting Deployment %s: %v", serverName, err)
 		return "error"
 	}
 
@@ -309,7 +319,12 @@ func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 	// Check if there are any pods and their status
 	podList := &corev1.PodList{}
 	err = clientToUse.List(ctx, podList, client.InNamespace(c.namespace), client.MatchingLabels{"app": serverName})
-	if err != nil || len(podList.Items) == 0 {
+	if err != nil {
+		c.logger.Warning("Error getting pods for %s: %v", serverName, err)
+		return "error"
+	}
+	
+	if len(podList.Items) == 0 {
 		return "pending"
 	}
 
@@ -514,7 +529,7 @@ func (c *K8sComposer) ensureControllerManagerRunning() error {
 	return nil
 }
 
-// createK8sClient creates a Kubernetes client
+// createK8sClient creates a Kubernetes client with a comprehensive scheme
 func createK8sClient() (client.Client, error) {
 	// Try in-cluster config first
 	config, err := rest.InClusterConfig()
@@ -526,8 +541,18 @@ func createK8sClient() (client.Client, error) {
 		}
 	}
 
-	// Create the scheme
+	// Create the scheme with all required types
 	scheme := runtime.NewScheme()
+	
+	// Add core Kubernetes types
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add core v1 scheme: %w", err)
+	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add apps v1 scheme: %w", err)
+	}
+	
+	// Add our CRDs
 	if err := crd.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add CRD scheme: %w", err)
 	}
@@ -541,7 +566,38 @@ func createK8sClient() (client.Client, error) {
 	return k8sClient, nil
 }
 
-// startMCPServer creates and deploys an MCPServer resource
+// cleanupStaleResources removes stale MCPServer resources that may cause conflicts
+func (c *K8sComposer) cleanupStaleResources() error {
+	ctx := context.Background()
+	
+	// List all MCPServer resources
+	mcpServerList := &crd.MCPServerList{}
+	err := c.k8sClient.List(ctx, mcpServerList, client.InNamespace(c.namespace))
+	if err != nil {
+		c.logger.Warning("Failed to list MCPServer resources: %v", err)
+		return nil // Don't fail the entire operation
+	}
+	
+	// Check for servers that are in terminating state for too long
+	for _, server := range mcpServerList.Items {
+		if server.Status.Phase == crd.MCPServerPhaseTerminating {
+			// If terminating for more than 2 minutes, force cleanup
+			if server.DeletionTimestamp != nil && 
+				time.Since(server.DeletionTimestamp.Time) > 2*time.Minute {
+				c.logger.Info("Force cleaning up stale MCPServer: %s", server.Name)
+				// Remove finalizers to allow deletion
+				server.Finalizers = nil
+				if err := c.k8sClient.Update(ctx, &server); err != nil {
+					c.logger.Warning("Failed to remove finalizers from %s: %v", server.Name, err)
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// startMCPServer creates and deploys an MCPServer resource with conflict resolution
 func (c *K8sComposer) startMCPServer(name string, serverConfig config.ServerConfig) error {
 	ctx := context.Background()
 	
@@ -552,33 +608,55 @@ func (c *K8sComposer) startMCPServer(name string, serverConfig config.ServerConf
 		return nil
 	}
 	
-	// Check if MCPServer already exists
-	existingServer := &crd.MCPServer{}
-	err := c.k8sClient.Get(ctx, client.ObjectKey{
-		Name:      name,
-		Namespace: c.namespace,
-	}, existingServer)
-	
-	if err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			// Server doesn't exist, create it
-			c.logger.Info("Creating MCPServer resource: %s", name)
-			if err := c.k8sClient.Create(ctx, mcpServer); err != nil {
-				return fmt.Errorf("failed to create MCPServer %s: %w", name, err)
+	// Retry logic for resource conflicts
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		if i > 0 {
+			c.logger.Info("Retrying MCPServer operation for %s (attempt %d/3)", name, i+1)
+			time.Sleep(time.Duration(i) * time.Second)
+		}
+		
+		// Check if MCPServer already exists
+		existingServer := &crd.MCPServer{}
+		err := c.k8sClient.Get(ctx, client.ObjectKey{
+			Name:      name,
+			Namespace: c.namespace,
+		}, existingServer)
+		
+		if err != nil {
+			if client.IgnoreNotFound(err) == nil {
+				// Server doesn't exist, create it
+				c.logger.Info("Creating MCPServer resource: %s", name)
+				if err := c.k8sClient.Create(ctx, mcpServer); err != nil {
+					lastErr = fmt.Errorf("failed to create MCPServer %s: %w", name, err)
+					if strings.Contains(err.Error(), "already exists") {
+						continue // Retry
+					}
+					return lastErr
+				}
+				return nil // Success
+			} else {
+				lastErr = fmt.Errorf("failed to check if MCPServer %s exists: %w", name, err)
+				continue // Retry
 			}
 		} else {
-			return fmt.Errorf("failed to check if MCPServer %s exists: %w", name, err)
-		}
-	} else {
-		// Server exists, update it
-		c.logger.Info("Updating MCPServer resource: %s", name)
-		mcpServer.ResourceVersion = existingServer.ResourceVersion
-		if err := c.k8sClient.Update(ctx, mcpServer); err != nil {
-			return fmt.Errorf("failed to update MCPServer %s: %w", name, err)
+			// Server exists, update it with proper resource version
+			c.logger.Info("Updating MCPServer resource: %s", name)
+			mcpServer.ResourceVersion = existingServer.ResourceVersion
+			mcpServer.UID = existingServer.UID
+			
+			if err := c.k8sClient.Update(ctx, mcpServer); err != nil {
+				lastErr = fmt.Errorf("failed to update MCPServer %s: %w", name, err)
+				if strings.Contains(err.Error(), "object has been modified") {
+					continue // Retry
+				}
+				return lastErr
+			}
+			return nil // Success
 		}
 	}
 	
-	return nil
+	return lastErr
 }
 
 // stopMCPServer stops an MCP server by deleting its Kubernetes resources
@@ -598,16 +676,17 @@ func (c *K8sComposer) stopMCPServer(name string) error {
 		if client.IgnoreNotFound(err) == nil {
 			c.logger.Info("MCPServer %s not found, may already be deleted", name)
 		} else {
-			return fmt.Errorf("failed to delete MCPServer %s: %w", name, err)
+			c.logger.Warning("Failed to delete MCPServer %s: %v", name, err)
+			// Continue with cleanup even if MCPServer deletion fails
 		}
 	} else {
 		c.logger.Info("MCPServer %s deleted successfully", name)
 	}
 	
-	// The controller will handle cleanup of associated Deployments, Services, ConfigMaps, etc.
-	// But we can also try to clean up manually as fallback
+	// Give the controller time to clean up, but also do manual cleanup
+	time.Sleep(1 * time.Second)
 	
-	// Delete associated Deployment
+	// Delete associated Deployment with better error handling
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -616,11 +695,19 @@ func (c *K8sComposer) stopMCPServer(name string) error {
 	}
 	
 	err = c.k8sClient.Delete(ctx, deployment)
-	if err != nil && client.IgnoreNotFound(err) != nil {
-		c.logger.Warning("Failed to delete Deployment %s: %v", name, err)
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			c.logger.Warning("Failed to delete Deployment %s: %v", name, err)
+			// Check if it's a scheme error and try to work around it
+			if strings.Contains(err.Error(), "no kind is registered") {
+				c.logger.Info("Deployment %s cleanup will be handled by controller", name)
+			}
+		}
+	} else {
+		c.logger.Info("Deployment %s deleted successfully", name)
 	}
 	
-	// Delete associated Service
+	// Delete associated Service with better error handling
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -629,8 +716,16 @@ func (c *K8sComposer) stopMCPServer(name string) error {
 	}
 	
 	err = c.k8sClient.Delete(ctx, service)
-	if err != nil && client.IgnoreNotFound(err) != nil {
-		c.logger.Warning("Failed to delete Service %s: %v", name, err)
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			c.logger.Warning("Failed to delete Service %s: %v", name, err)
+			// Check if it's a scheme error and try to work around it
+			if strings.Contains(err.Error(), "no kind is registered") {
+				c.logger.Info("Service %s cleanup will be handled by controller", name)
+			}
+		}
+	} else {
+		c.logger.Info("Service %s deleted successfully", name)
 	}
 	
 	c.logger.Info("MCP server %s stopped successfully", name)
@@ -789,13 +884,35 @@ func (c *K8sComposer) convertServerConfigToMCPServer(name string, serverConfig c
 	
 	// Set volumes if configured
 	for _, volume := range serverConfig.Volumes {
-		// Parse volume mount (e.g., "/host/path:/container/path:rw")
+		// Parse volume mount (e.g., "/host/path:/container/path:rw" or "volume-name:/container/path")
 		parts := strings.Split(volume, ":")
 		if len(parts) >= 2 {
+			hostPath := parts[0]
+			
+			// If hostPath doesn't start with /, it's a named volume - resolve to data directory
+			if !strings.HasPrefix(hostPath, "/") {
+				// Use configurable data directory (defaults to ./data)
+				dataDir := os.Getenv("MATEY_DATA_DIR")
+				if dataDir == "" {
+					dataDir = "./data"
+				}
+				hostPath = fmt.Sprintf("%s/%s", dataDir, hostPath)
+				
+				// Convert relative path to absolute path for Kubernetes
+				if !strings.HasPrefix(hostPath, "/") {
+					pwd, err := os.Getwd()
+					if err == nil {
+						// Clean up relative path components before joining
+						cleanPath := strings.TrimPrefix(hostPath, "./")
+						hostPath = fmt.Sprintf("%s/%s", pwd, cleanPath)
+					}
+				}
+			}
+			
 			mcpServer.Spec.Volumes = append(mcpServer.Spec.Volumes, crd.VolumeSpec{
 				Name:      fmt.Sprintf("volume-%d", len(mcpServer.Spec.Volumes)),
 				MountPath: parts[1],
-				HostPath:  parts[0],
+				HostPath:  hostPath,
 			})
 		}
 	}

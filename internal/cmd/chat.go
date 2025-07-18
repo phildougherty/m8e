@@ -33,6 +33,9 @@ type TermChat struct {
 	markdownRenderer *glamour.TermRenderer
 	verboseMode     bool // Toggle for compact/verbose output
 	functionResults map[string]string // Store full results for toggle
+	approvalMode    ApprovalMode // Controls autonomous behavior level
+	maxTurns        int          // Maximum continuation turns to prevent infinite loops
+	currentTurns    int          // Current turn count for this conversation
 }
 
 // TermChatMessage represents a chat message
@@ -110,6 +113,9 @@ func NewTermChat() *TermChat {
 		mcpClient:       mcpClient,
 		verboseMode:     false, // Start in compact mode
 		functionResults: make(map[string]string),
+		approvalMode:    DEFAULT, // Start in manual mode for safety
+		maxTurns:        10, // Reasonable limit to prevent infinite loops
+		currentTurns:    0,  // Reset turn counter
 	}
 }
 
@@ -203,7 +209,7 @@ func (tc *TermChat) runSimple() {
 	
 	// No need for input box - just clean prompt
 
-	// For now, use simple input mode until raw input is properly implemented
+	// Use simple input mode for command testing
 	tc.runSimpleInput()
 }
 
@@ -230,6 +236,28 @@ func (tc *TermChat) runWithRawInput() {
 					mode = "verbose"
 				}
 				fmt.Printf("\n\033[90mSwitched to %s mode\033[0m\n", mode)
+				continue
+			case 25: // Ctrl+Y
+				// Toggle between YOLO and DEFAULT mode
+				if tc.approvalMode == YOLO {
+					tc.approvalMode = DEFAULT
+				} else {
+					tc.approvalMode = YOLO
+				}
+				fmt.Printf("\n\033[90mApproval mode: %s - %s\033[0m\n", 
+					tc.approvalMode.GetModeIndicatorNoEmoji(), 
+					tc.approvalMode.Description())
+				continue
+			case 9: // Tab (we'll use this for AUTO_EDIT toggle since Shift+Tab is complex)
+				// Toggle between AUTO_EDIT and DEFAULT mode
+				if tc.approvalMode == AUTO_EDIT {
+					tc.approvalMode = DEFAULT
+				} else {
+					tc.approvalMode = AUTO_EDIT
+				}
+				fmt.Printf("\n\033[90mApproval mode: %s - %s\033[0m\n", 
+					tc.approvalMode.GetModeIndicatorNoEmoji(), 
+					tc.approvalMode.Description())
 				continue
 			case 3: // Ctrl+C
 				return
@@ -293,16 +321,36 @@ func (tc *TermChat) runSimpleInput() {
 func (tc *TermChat) processInput(input string) {
 	// Handle commands
 	if strings.HasPrefix(input, "/") {
-		tc.handleCommand(input)
-		return
+		if tc.handleCommand(input) {
+			return // Command processed successfully, including exit commands
+		}
+		return // Command processed (even if not found)
 	}
 
 	// Add user message and print it
 	tc.addMessage("user", input)
 	tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
 
-	// Chat with AI
-	tc.chatWithAI(input)
+	// Reset turn counter for new user input
+	tc.currentTurns = 0
+
+	// Use conversation flow architecture
+	tc.executeConversationFlow(input)
+}
+
+// executeConversationFlow implements the gemini-cli style conversation flow
+func (tc *TermChat) executeConversationFlow(userInput string) {
+	// Create a new conversation turn
+	turn := NewConversationTurn(tc, userInput)
+	
+	// Execute the turn with automatic continuation
+	ctx, cancel := context.WithTimeout(tc.ctx, 10*time.Minute) // Generous timeout for complex tasks
+	defer cancel()
+	
+	if err := turn.Execute(ctx); err != nil {
+		tc.addMessage("system", fmt.Sprintf("Conversation flow error: %v", err))
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+	}
 }
 
 // addMessage adds a message to chat history
@@ -469,6 +517,9 @@ func (tc *TermChat) chatWithAI(message string) {
 	// Process any function calls that were collected during streaming
 	if len(functionCallsToProcess) > 0 {
 		tc.processFunctionCallsWithContinuation(functionCallsToProcess, aiMsgIndex)
+	} else {
+		// Check if AI is asking for permission and force continuation
+		tc.checkForPermissionSeekingAndContinue(aiMsgIndex)
 	}
 	
 	// After streaming is complete, parse and execute any XML function calls
@@ -549,6 +600,9 @@ func (tc *TermChat) handleCommand(command string) bool {
 		return false
 	}
 
+	// Debug output (remove in production)
+	// fmt.Printf("\n[DEBUG] Processing command: '%s'\n", parts[0])
+
 	switch parts[0] {
 	case "/help":
 		tc.addMessage("system", tc.getHelpText())
@@ -573,6 +627,30 @@ func (tc *TermChat) handleCommand(command string) bool {
 		tc.listModels()
 	case "/status":
 		tc.showStatus()
+	case "/approval":
+		if len(parts) > 1 {
+			if mode, err := ParseApprovalMode(parts[1]); err == nil {
+				tc.approvalMode = mode
+				tc.addMessage("system", fmt.Sprintf("Approval mode set to: %s - %s", mode.GetModeIndicatorNoEmoji(), mode.Description()))
+			} else {
+				tc.addMessage("system", fmt.Sprintf("Invalid approval mode: %s\nValid modes: DEFAULT, AUTO_EDIT, YOLO", parts[1]))
+			}
+		} else {
+			tc.addMessage("system", fmt.Sprintf("Current approval mode: %s - %s\nUsage: /approval <mode>\nValid modes: DEFAULT, AUTO_EDIT, YOLO", tc.approvalMode.GetModeIndicatorNoEmoji(), tc.approvalMode.Description()))
+		}
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+	case "/yolo":
+		tc.approvalMode = YOLO
+		tc.addMessage("system", fmt.Sprintf("Approval mode set to: %s - %s", YOLO.GetModeIndicatorNoEmoji(), YOLO.Description()))
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+	case "/auto":
+		tc.approvalMode = AUTO_EDIT
+		tc.addMessage("system", fmt.Sprintf("Approval mode set to: %s - %s", AUTO_EDIT.GetModeIndicatorNoEmoji(), AUTO_EDIT.Description()))
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+	case "/manual":
+		tc.approvalMode = DEFAULT
+		tc.addMessage("system", fmt.Sprintf("Approval mode set to: %s - %s", DEFAULT.GetModeIndicatorNoEmoji(), DEFAULT.Description()))
+		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
 	case "/clear":
 		tc.chatHistory = tc.chatHistory[:0]
 		tc.addMessage("system", "Chat history cleared.")
@@ -669,8 +747,24 @@ func (tc *TermChat) listModels() {
 
 // showStatus displays system status
 func (tc *TermChat) showStatus() {
-	status := fmt.Sprintf("Provider: %s\nModel: %s\nMessages: %d", 
-		tc.currentProvider, tc.currentModel, len(tc.chatHistory))
+	status := fmt.Sprintf("**Current Status:**\n\n"+
+		"- **Provider:** %s\n"+
+		"- **Model:** %s\n"+
+		"- **Messages:** %d\n"+
+		"- **Approval Mode:** %s - %s\n"+
+		"- **Output Mode:** %s\n\n"+
+		"**Keyboard Shortcuts:**\n"+
+		"- `Ctrl+Y`: Toggle YOLO/DEFAULT mode\n"+
+		"- `Tab`: Toggle AUTO_EDIT/DEFAULT mode\n"+
+		"- `Ctrl+R`: Toggle verbose/compact output", 
+		tc.currentProvider, tc.currentModel, len(tc.chatHistory),
+		tc.approvalMode.GetModeIndicatorNoEmoji(), tc.approvalMode.Description(),
+		func() string {
+			if tc.verboseMode {
+				return "Verbose"
+			}
+			return "Compact"
+		}())
 	tc.addMessage("system", status)
 	tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
 }
@@ -680,15 +774,20 @@ func (tc *TermChat) getWelcomeMessage() string {
 	return "# Welcome to Matey AI Chat\n\n" +
 		"I help you orchestrate **MCP server applications** using Kubernetes.\n\n" +
 		"## Quick Start:\n\n" +
-		"    Show me running servers\n" +
-		"    Get my latest glucose readings\n" +
-		"    Search for \"kubernetes tutorial\"\n" +
-		"    Create a workflow for daily reports\n" +
-		"    Help me set up GitHub integration\n\n" +
+		"    Deploy a new microservice to production\n" +
+		"    Set up automated backup workflows\n" +
+		"    Create a monitoring dashboard for my cluster\n" +
+		"    Build a CI/CD pipeline with GitHub Actions\n" +
+		"    Analyze my resource usage and optimize costs\n" +
+		"    Configure alerting for critical services\n\n" +
 		"## Commands:\n\n" +
 		"•  `/help`  - Show available commands\n" +
 		"•  `/status`  - System status\n" +
+		"•  `/yolo`  - Full autonomy mode\n" +
+		"•  `/auto`  - Auto-edit mode\n" +
+		"•  `/manual`  - Manual confirmation mode\n" +
 		"•  `/clear`  - Clear chat\n\n" +
+		fmt.Sprintf("**Current Mode:** %s\n\n", tc.approvalMode.GetModeIndicatorNoEmoji()) +
 		"Just tell me what you want to build or ask about your servers!"
 }
 
@@ -703,6 +802,10 @@ func (tc *TermChat) getHelpText() string {
 		"| `/clear` | Clear chat history |\n" +
 		"| `/compact` | Switch to compact function output |\n" +
 		"| `/verbose` | Switch to verbose function output |\n" +
+		"| `/approval <mode>` | Set approval mode (DEFAULT/AUTO_EDIT/YOLO) |\n" +
+		"| `/yolo` | Switch to YOLO mode (full autonomy) |\n" +
+		"| `/auto` | Switch to AUTO_EDIT mode |\n" +
+		"| `/manual` | Switch to DEFAULT mode (manual) |\n" +
 		"| `/exit` or `/quit` | Exit chat |\n\n" +
 		"## AI Provider Commands:\n\n" +
 		"| Command | Description |\n" +
@@ -716,6 +819,19 @@ func (tc *TermChat) getHelpText() string {
 		"- **ollama** - Local models (llama3, qwen3, etc.)\n" +
 		"- **claude** - Direct Anthropic API\n" +
 		"- **openai** - GPT-4 and OpenAI models\n\n" +
+		"## Approval Modes:\n\n" +
+		"| Mode | Description |\n" +
+		"|------|-------------|\n" +
+		"| `DEFAULT` | Manual confirmation for all actions |\n" +
+		"| `AUTO_EDIT` | Auto-approve file edits and safe operations |\n" +
+		"| `YOLO` | Auto-approve everything (full autonomy) |\n\n" +
+		"## Keyboard Shortcuts:\n\n" +
+		"| Key | Action |\n" +
+		"|-----|--------|\n" +
+		"| `Ctrl+R` | Toggle verbose/compact mode |\n" +
+		"| `Ctrl+Y` | Toggle YOLO/DEFAULT approval mode |\n" +
+		"| `Tab` | Toggle AUTO_EDIT/DEFAULT approval mode |\n" +
+		"| `Ctrl+C` | Exit chat |\n\n" +
 		"## Example Usage:\n\n" +
 		"```\n" +
 		"/provider ollama\n" +
@@ -754,35 +870,49 @@ func (tc *TermChat) getSystemContext() string {
 	functionDefs := tc.generateFunctionSchemas()
 	
 	return "# Matey AI Assistant - Kubernetes MCP Server Orchestration\n\n" +
-		"You are an autonomous AI assistant for managing MCP (Model Context Protocol) servers in Kubernetes.\n\n" +
-		"## 🎯 CRITICAL: FUNCTION CALLING REQUIREMENTS\n\n" +
-		"### MANDATORY: Always Provide Function Arguments\n" +
-		"- **NEVER call functions without required arguments**\n" +
+		"You are an autonomous interactive CLI agent specializing in Kubernetes MCP server orchestration and management. Your primary goal is to help users safely and efficiently, executing actions immediately without asking for permission.\n\n" +
+		"## Core Mandates\n\n" +
+		"- **AUTONOMOUS CONVERSATION:** This is a natural conversation where tool calls are part of the dialogue flow\n" +
+		"- **IMMEDIATE EXECUTION:** Execute function calls as they become necessary in the conversation\n" +
+		"- **CONTINUE NATURALLY:** After tool execution, continue the conversation to complete the user's request\n" +
+		"- **NO PERMISSION SEEKING:** NEVER ask 'Would you like me to...', 'Should I...', or 'Do you want me to...'\n" +
+		"- **CONVERSATIONAL FLOW:** Chain function calls as part of natural conversation progression\n" +
+		"- **COMPLETE TASKS:** Work until the user's request is fully accomplished\n" +
+		"- **BE DIRECT:** Minimal explanations, maximum action - this is a working conversation\n\n" +
+		"### CRITICAL FUNCTION EXECUTION REQUIREMENTS\n" +
+		"- **NEVER call functions without required arguments - ALL CALLS WILL FAIL**\n" +
 		"- **ALWAYS pass proper JSON objects as function arguments**\n" +
 		"- **Check function schemas below for required parameters**\n" +
-		"- **If you call a function without arguments, it will FAIL**\n\n" +
-		"### Function Call Format\n" +
-		"Use your model's native function calling system. Examples:\n" +
+		"- **create_workflow REQUIRES 'name' and 'steps' parameters - DO NOT call with empty arguments**\n\n" +
+		"### Function Call Format - MANDATORY EXAMPLES\n" +
+		"Use your model's native function calling system. CRITICAL EXAMPLES:\n" +
 		"```\n" +
-		"// ✅ CORRECT - With required arguments\n" +
-		"list_workflows({})\n" +
+		"// ✅ CORRECT - create_workflow with REQUIRED arguments\n" +
 		"create_workflow({\n" +
-		"  \"name\": \"glucose-tracker\",\n" +
-		"  \"steps\": [{\"name\": \"check-glucose\", \"tool\": \"get_current_glucose\"}]\n" +
+		"  \"name\": \"monitoring-workflow\",\n" +
+		"  \"description\": \"Monitor system health\",\n" +
+		"  \"steps\": [\n" +
+		"    {\"name\": \"check-health\", \"tool\": \"health_check\"},\n" +
+		"    {\"name\": \"send-alert\", \"tool\": \"send_notification\"}\n" +
+		"  ]\n" +
 		"})\n\n" +
-		"// ❌ WRONG - No arguments (will fail)\n" +
-		"list_workflows()\n" +
+		"// ✅ CORRECT - Other functions with empty params if no required args\n" +
+		"list_workflows({})\n" +
+		"matey_ps({})\n\n" +
+		"// ❌ ABSOLUTELY WRONG - create_workflow without arguments (GUARANTEED FAILURE)\n" +
+		"create_workflow({})\n" +
 		"create_workflow()\n" +
 		"```\n\n" +
-		"## 🔧 Available Function Schemas\n" +
+		"**CRITICAL:** If you call create_workflow without 'name' and 'steps', you will get \"name is required\" error.\n\n" +
+		"## Available Function Schemas\n" +
 		functionDefs +
 		"\n\n" +
-		"## 🌐 Dynamic MCP Tools\n" +
+		"## Dynamic MCP Tools\n" +
 		mcpTools +
 		"\n\n" +
-		"## 🚀 MATEY PLATFORM CAPABILITIES\n" +
+		"## MATEY PLATFORM CAPABILITIES\n" +
 		"You can interact with the Matey platform using the comprehensive MCP tools available:\n\n" +
-		"### 📊 Service Management\n" +
+		"### Service Management\n" +
 		"- `matey_ps()` - Check server status\n" +
 		"- `matey_up()` - Start services\n" +
 		"- `matey_down()` - Stop services\n" +
@@ -790,7 +920,7 @@ func (tc *TermChat) getSystemContext() string {
 		"- `start_service({\"name\": \"service-name\"})` - Start specific service\n" +
 		"- `stop_service({\"name\": \"service-name\"})` - Stop specific service\n" +
 		"- `reload_proxy({})` - Reload proxy configuration\n\n" +
-		"### 🔄 Workflow Management\n" +
+		"### Workflow Management\n" +
 		"- `list_workflows({})` - List all workflows\n" +
 		"- `get_workflow({\"name\": \"workflow-name\"})` - Get workflow details\n" +
 		"- `create_workflow({\"name\": \"...\", \"steps\": [...]})` - Create workflows\n" +
@@ -800,7 +930,7 @@ func (tc *TermChat) getSystemContext() string {
 		"- `pause_workflow({\"name\": \"workflow-name\"})` - Pause workflow\n" +
 		"- `resume_workflow({\"name\": \"workflow-name\"})` - Resume workflow\n" +
 		"- `workflow_templates({})` - Get workflow templates\n\n" +
-		"### 🧠 Memory & Task Management\n" +
+		"### Memory & Task Management\n" +
 		"- `k8s_memory({\"action\": \"start|stop|status\"})` - Memory service management\n" +
 		"- `k8s_task_scheduler({\"action\": \"start|stop|status\"})` - Task scheduler management\n" +
 		"- `memory_store({\"key\": \"...\", \"value\": \"...\"})` - Store memory\n" +
@@ -811,7 +941,7 @@ func (tc *TermChat) getSystemContext() string {
 		"- `task_list({})` - List tasks\n" +
 		"- `task_status({\"id\": \"...\"})` - Get task status\n" +
 		"- `task_cancel({\"id\": \"...\"})` - Cancel task\n\n" +
-		"### 🧰 Toolbox & Configuration\n" +
+		"### Toolbox & Configuration\n" +
 		"- `toolbox_install({\"name\": \"tool-name\"})` - Install toolbox\n" +
 		"- `toolbox_list({})` - List toolboxes\n" +
 		"- `toolbox_remove({\"name\": \"tool-name\"})` - Remove toolbox\n" +
@@ -819,31 +949,45 @@ func (tc *TermChat) getSystemContext() string {
 		"- `config_set({\"key\": \"...\", \"value\": \"...\"})` - Set configuration\n" +
 		"- `config_list({})` - List configurations\n" +
 		"- `apply_config({\"config_yaml\": \"...\", \"config_type\": \"...\"})` - Apply K8s configs\n\n" +
-		"### 🌐 MCP Server Management\n" +
+		"### MCP Server Management\n" +
 		"- `add_mcp_server({\"name\": \"...\", \"url\": \"...\"})` - Add MCP server\n" +
 		"- `list_mcp_servers({})` - List MCP servers\n" +
 		"- `remove_mcp_server({\"name\": \"server-name\"})` - Remove MCP server\n" +
 		"- `test_mcp_server({\"name\": \"server-name\"})` - Test MCP server\n\n" +
-		"## 🎯 INTELLIGENT BEHAVIOR\n" +
-		"You are autonomous and should:\n" +
-		"1. **Analyze** the user's request to understand their goal\n" +
-		"2. **Select** the appropriate MCP tools to accomplish the task\n" +
-		"3. **Execute** function calls with proper arguments\n" +
-		"4. **Adapt** your approach based on the available tools and user needs\n" +
-		"5. **Verify** results and continue until the task is complete\n\n" +
+		"## Primary Workflows\n\n" +
+		"### MCP Server Orchestration Tasks\n" +
+		"When requested to perform orchestration tasks like managing services, workflows, or debugging:\n" +
+		"1. **Understand:** Analyze the user's request and current system state using available MCP tools\n" +
+		"2. **Execute:** Use appropriate MCP functions to accomplish the task immediately\n" +
+		"3. **Verify:** Check results and continue with follow-up actions as needed\n" +
+		"4. **Complete:** Ensure the full task is accomplished without stopping halfway\n\n" +
+		"### Complex Multi-Step Tasks\n" +
+		"**Goal:** Autonomously implement and deliver complete solutions using all available MCP tools\n" +
+		"1. **Analyze Requirements:** Understand the user's request for workflows, configurations, or system changes\n" +
+		"2. **Execute Plan:** Implement using appropriate MCP functions (create_workflow, config management, etc.)\n" +
+		"3. **Verify and Continue:** Check results and continue with additional steps until fully complete\n\n" +
+		"## Tone and Style (CLI Interaction)\n" +
+		"- **Concise & Direct:** Professional, direct tone suitable for CLI environment\n" +
+		"- **Minimal Output:** Aim for fewer than 3 lines of text output per response when practical\n" +
+		"- **No Chitchat:** Avoid conversational filler, preambles, or postambles\n" +
+		"- **Tools vs Text:** Use tools for actions, text only for essential communication\n" +
+		"- **Action-Oriented:** Execute immediately, explain only when necessary\n\n" +
 		"### Task Examples:\n" +
 		"- **\"List my workflows\"** → Use `list_workflows({})`\n" +
 		"- **\"Create a workflow\"** → Use `create_workflow()` with proper parameters\n" +
 		"- **\"Check server status\"** → Use `matey_ps()`\n" +
 		"- **\"Store some data\"** → Use `memory_store()` with key/value\n" +
 		"- **\"Install a tool\"** → Use `toolbox_install()` with tool name\n\n" +
-		"## ⚠️ CRITICAL REMINDERS\n" +
-		"- **ALWAYS provide function arguments as JSON objects**\n" +
-		"- **Check the function schemas above for required parameters**\n" +
-		"- **Use the appropriate tool for the user's specific request**\n" +
-		"- **Don't assume workflows need to be created - the user might want to list, view, or manage existing ones**\n" +
-		"- **Work autonomously until the task is 100% complete**\n\n" +
-		"When ready, execute the appropriate MCP functions to help the user achieve their goals!"
+		"## Tool Usage Guidelines\n" +
+		"- **Function Arguments:** Always provide function arguments as JSON objects\n" +
+		"- **Schema Validation:** Check function schemas above for required parameters\n" +
+		"- **Error Handling:** If a function fails, try a different approach or check requirements first\n" +
+		"- **Avoid Loops:** Don't repeat the same failing function call - adapt your strategy\n" +
+		"- **Appropriate Tools:** Select the right MCP tool for each specific request\n" +
+		"- **Context Awareness:** Use tools to gather current state and understand requirements\n\n" +
+		"## Final Reminder\n" +
+		"You are an autonomous agent. Execute functions immediately to accomplish user goals. Work until tasks are 100% complete. Never ask for permission - analyze, decide, and act.\n\n" +
+		"Available tools dynamically adapt based on connected MCP servers. Use them efficiently to help users achieve their Kubernetes orchestration goals!"
 }
 
 // generateFunctionSchemas generates detailed function schemas for the AI
@@ -1102,6 +1246,8 @@ func (tc *TermChat) executeNativeToolCall(toolCall ai.ToolCall, aiMsgIndex int) 
 		return
 	}
 	
+	// Note: Approval checking is now handled in the turn-based conversation flow
+	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	
@@ -1336,6 +1482,52 @@ func (tc *TermChat) stripXMLFunctionCalls(content string) string {
 	return content
 }
 
+// requestFunctionConfirmation asks the user to confirm a function call
+func (tc *TermChat) requestFunctionConfirmation(functionName, arguments string) bool {
+	fmt.Printf("\n\033[1;33m⚠️  Function Call Confirmation\033[0m\n")
+	fmt.Printf("Function: \033[1;36m%s\033[0m\n", functionName)
+	if arguments != "" && arguments != "{}" {
+		fmt.Printf("Arguments: \033[90m%s\033[0m\n", arguments)
+	}
+	fmt.Printf("\nApproval Mode: \033[1;90m%s\033[0m\n", tc.approvalMode.GetModeIndicatorNoEmoji())
+	fmt.Printf("\nOptions:\n")
+	fmt.Printf("  \033[1;32m[y]\033[0m Proceed once\n")
+	fmt.Printf("  \033[1;31m[n]\033[0m Cancel\n")
+	if tc.approvalMode != AUTO_EDIT {
+		fmt.Printf("  \033[1;34m[a]\033[0m Always proceed (upgrade to %s mode)\n", AUTO_EDIT.String())
+	}
+	fmt.Printf("  \033[1;35m[Y]\033[0m YOLO mode (auto-approve everything)\n")
+	fmt.Printf("\nYour choice [y/n/a/Y]: ")
+
+	var response string
+	fmt.Scanln(&response)
+	
+	response = strings.TrimSpace(response)
+	switch response {
+	case "y", "Y", "yes", "":
+		if response == "Y" {
+			// Uppercase Y means YOLO mode
+			tc.approvalMode = YOLO
+			fmt.Printf("\033[90mUpgraded to %s mode\033[0m\n", YOLO.GetModeIndicatorNoEmoji())
+		}
+		return true
+	case "n", "no":
+		return false
+	case "a", "always":
+		if tc.approvalMode != AUTO_EDIT {
+			tc.approvalMode = AUTO_EDIT
+			fmt.Printf("\033[90mUpgraded to %s mode\033[0m\n", AUTO_EDIT.GetModeIndicatorNoEmoji())
+		}
+		return true
+	case "yolo", "YOLO":
+		tc.approvalMode = YOLO
+		fmt.Printf("\033[90mUpgraded to %s mode\033[0m\n", YOLO.GetModeIndicatorNoEmoji())
+		return true
+	default:
+		return false
+	}
+}
+
 // parseAndExecuteXMLFunctionCalls parses XML-style function calls from content
 func (tc *TermChat) parseAndExecuteXMLFunctionCalls(content string, aiMsgIndex int) {
 	// Look for <function_calls> blocks
@@ -1406,6 +1598,8 @@ func (tc *TermChat) executeXMLFunctionCall(toolName string, arguments map[string
 		fmt.Printf("\nMCP client not available\n")
 		return
 	}
+	
+	// Note: Approval checking is now handled in the turn-based conversation flow
 	
 	// Skip empty tool names to avoid "Tool '' not found" errors
 	if toolName == "" {
@@ -1548,14 +1742,252 @@ func (tc *TermChat) processFunctionCallsWithContinuation(functionCalls []ai.Tool
 		}
 	}
 	
-	// If we have function results, continue the conversation
+	// If we have function results, continue the conversation automatically
 	if len(functionResults) > 0 {
 		tc.continueConversationWithFunctionResults(functionCalls, functionResults, aiMsgIndex)
+	} else {
+		// Even without function calls, check if AI should continue
+		tc.checkAndContinueIfNeeded(aiMsgIndex)
+	}
+}
+
+// checkAndContinueIfNeeded checks if the AI should continue working automatically
+func (tc *TermChat) checkAndContinueIfNeeded(aiMsgIndex int) {
+	content := strings.ToLower(tc.chatHistory[aiMsgIndex].Content)
+	
+	// Patterns that indicate the AI should continue working
+	continuationIndicators := []string{
+		"next, i will",
+		"now i'll",
+		"next step is to",
+		"i'll now",
+		"let me continue",
+		"continuing with",
+		"next, let me",
+		"now let me",
+		"i should also",
+		"additionally, i will",
+	}
+	
+	// Patterns that indicate the task is incomplete
+	incompletePatterns := []string{
+		"creating",
+		"setting up",
+		"configuring",
+		"installing",
+		"deploying",
+		"in progress",
+		"starting",
+		"initializing",
+	}
+	
+	shouldContinue := false
+	
+	// Check for explicit continuation indicators
+	for _, indicator := range continuationIndicators {
+		if strings.Contains(content, indicator) {
+			shouldContinue = true
+			break
+		}
+	}
+	
+	// Check for incomplete task patterns
+	if !shouldContinue {
+		for _, pattern := range incompletePatterns {
+			if strings.Contains(content, pattern) {
+				shouldContinue = true
+				break
+			}
+		}
+	}
+	
+	// If the response seems to end abruptly without clear completion
+	if !shouldContinue {
+		// Look for responses that don't end with clear completion markers
+		completionMarkers := []string{
+			"complete", "finished", "done", "ready", "successfully created",
+			"all set", "configured", "deployed successfully",
+		}
+		
+		hasCompletionMarker := false
+		for _, marker := range completionMarkers {
+			if strings.Contains(content, marker) {
+				hasCompletionMarker = true
+				break
+			}
+		}
+		
+		// If no completion marker and response is longer than basic acknowledgment
+		if !hasCompletionMarker && len(content) > 50 {
+			shouldContinue = true
+		}
+	}
+	
+	if shouldContinue {
+		// Check turn limit to prevent infinite loops
+		if tc.currentTurns >= tc.maxTurns {
+			fmt.Printf("\nReached maximum continuation turns (%d). Stopping to prevent infinite loops.\n", tc.maxTurns)
+			return
+		}
+		
+		tc.currentTurns++
+		fmt.Printf("\nAI response indicates continuation needed. Automatically continuing (turn %d/%d)...\n", tc.currentTurns, tc.maxTurns)
+		tc.forceAutonomousContinuation(aiMsgIndex)
+	}
+}
+
+// checkForPermissionSeekingAndContinue detects if AI is asking for permission and forces continuation
+func (tc *TermChat) checkForPermissionSeekingAndContinue(aiMsgIndex int) {
+	content := strings.ToLower(tc.chatHistory[aiMsgIndex].Content)
+	
+	// Check for permission-seeking patterns
+	permissionPatterns := []string{
+		"would you like me to",
+		"should i",
+		"do you want me to",
+		"let me know if you want",
+		"i can help you with",
+		"next steps would be",
+		"you could also",
+		"what would you like to do",
+		"how would you like to proceed",
+		"shall i",
+		"would you prefer",
+		"do you need me to",
+	}
+	
+	isSeekingPermission := false
+	for _, pattern := range permissionPatterns {
+		if strings.Contains(content, pattern) {
+			isSeekingPermission = true
+			break
+		}
+	}
+	
+	// If seeking permission, force continuation
+	if isSeekingPermission {
+		fmt.Printf("\nDetected permission-seeking behavior. Forcing autonomous continuation...\n")
+		tc.forceAutonomousContinuation(aiMsgIndex)
+	}
+}
+
+// forceAutonomousContinuation forces the AI to continue working without asking permission
+func (tc *TermChat) forceAutonomousContinuation(aiMsgIndex int) {
+	// Build conversation history
+	messages := []ai.Message{
+		{
+			Role:    "system",
+			Content: tc.getSystemContext(),
+		},
+	}
+	
+	// Add conversation history up to current point
+	for i, msg := range tc.chatHistory {
+		if i > aiMsgIndex {
+			break
+		}
+		if msg.Role == "user" || msg.Role == "assistant" {
+			messages = append(messages, ai.Message{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
+	}
+	
+	// Add aggressive continuation prompt
+	messages = append(messages, ai.Message{
+		Role:    "user",
+		Content: "EXECUTE NOW: You are an autonomous agent. Call the next function immediately to complete the user's request. No explanations, no permissions, no suggestions - just EXECUTE the appropriate function call RIGHT NOW.",
+	})
+	
+	// Continue the conversation
+	streamCtx, cancel := context.WithTimeout(tc.ctx, 5*time.Minute)
+	defer cancel()
+	
+	// Get MCP functions for AI
+	mcpFunctions := tc.getMCPFunctions()
+	
+	// Start streaming the continuation
+	stream, err := tc.aiManager.StreamChatWithFallback(streamCtx, messages, ai.StreamOptions{
+		Model:     tc.currentModel,
+		Functions: mcpFunctions,
+	})
+	if err != nil {
+		fmt.Printf("\n❌ Error forcing continuation: %v\n", err)
+		return
+	}
+	
+	// Stream the continuation response
+	thinkProcessor := ai.NewThinkProcessor()
+	var continuationFunctionCalls []ai.ToolCall
+	
+	// Use the same argument accumulation logic as main chat flow
+	accumulatedFunctionCalls := make(map[string]*ai.ToolCall)
+	
+	for response := range stream {
+		if response.Error != nil {
+			tc.chatHistory[aiMsgIndex].Content += fmt.Sprintf("\nError: %v", response.Error)
+			break
+		}
+		
+		// Process text content
+		if response.Content != "" {
+			// Process <think> tags
+			regularContent := response.Content
+			if strings.Contains(response.Content, "<think>") || strings.Contains(response.Content, "</think>") {
+				regularContent, _ = ai.ProcessStreamContentWithThinks(thinkProcessor, response.Content)
+			}
+			tc.chatHistory[aiMsgIndex].Content += regularContent
+			
+			if !tc.verboseMode {
+				fmt.Print(regularContent)
+			}
+		}
+		
+		// Handle function calls
+		if len(response.ToolCalls) > 0 {
+			for _, toolCall := range response.ToolCalls {
+				// Accumulate function call arguments
+				if existing, exists := accumulatedFunctionCalls[toolCall.ID]; exists {
+					existing.Function.Arguments += toolCall.Function.Arguments
+				} else {
+					accumulatedFunctionCalls[toolCall.ID] = &ai.ToolCall{
+						ID:   toolCall.ID,
+						Type: toolCall.Type,
+						Function: ai.FunctionCall{
+							Name:      toolCall.Function.Name,
+							Arguments: toolCall.Function.Arguments,
+						},
+					}
+				}
+			}
+		}
+	}
+	
+	// Convert accumulated function calls to processing list
+	for _, call := range accumulatedFunctionCalls {
+		if call.Function.Name != "" {
+			continuationFunctionCalls = append(continuationFunctionCalls, *call)
+		}
+	}
+	
+	// Execute accumulated function calls
+	for _, toolCall := range continuationFunctionCalls {
+		if toolCall.Type == "function" {
+			tc.executeNativeToolCall(toolCall, aiMsgIndex)
+		}
 	}
 }
 
 // continueConversationWithFunctionResults continues the AI conversation with function results
 func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.ToolCall, functionResults []ai.Message, aiMsgIndex int) {
+	// Check turn limit to prevent infinite loops
+	if tc.currentTurns >= tc.maxTurns {
+		fmt.Printf("\nReached maximum continuation turns (%d). Stopping to prevent infinite loops.\n", tc.maxTurns)
+		return
+	}
+	
+	tc.currentTurns++
 	// Build the conversation history including function results
 	messages := []ai.Message{
 		{
@@ -1590,7 +2022,13 @@ func (tc *TermChat) continueConversationWithFunctionResults(functionCalls []ai.T
 		messages = append(messages, funcResult)
 	}
 	
-	// Let AI continue naturally without forcing specific function calls
+	// Add natural continuation prompt - autonomous behavior is default
+	continuationPrompt := "Continue our conversation. Based on the function results above, what's the next step to complete the user's request? Execute any necessary function calls to keep progressing toward the goal."
+	
+	messages = append(messages, ai.Message{
+		Role:    "user",
+		Content: continuationPrompt,
+	})
 	
 	// Continue the conversation
 	streamCtx, cancel := context.WithTimeout(tc.ctx, 5*time.Minute)
