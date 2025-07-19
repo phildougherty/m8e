@@ -25,10 +25,10 @@ spec:
       serviceAccountName: matey-mcp-server
       containers:
       - name: matey-mcp-server
-        image: matey:latest
+        image: mcp.robotrad.io/matey:latest
         imagePullPolicy: Always
-        command: ["matey"]
-        args: ["mcp-server", "--port=8081", "--matey-binary=/usr/local/bin/matey"]
+        command: ["./matey"]
+        args: ["mcp-server", "--port=8081"]
         env:
         - name: KUBERNETES_NAMESPACE
           valueFrom:
@@ -44,6 +44,11 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+        volumeMounts:
+        - name: matey-config
+          mountPath: /app/matey.yaml
+          subPath: matey.yaml
+          readOnly: true
         livenessProbe:
           httpGet:
             path: /health
@@ -56,6 +61,10 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 5
+      volumes:
+      - name: matey-config
+        configMap:
+          name: matey-config
 ---
 apiVersion: v1
 kind: Service

@@ -36,7 +36,7 @@ func (p *PlaceholderProvider) SupportedModels() []string {
 
 // ValidateConfig returns the initialization error
 func (p *PlaceholderProvider) ValidateConfig() error {
-	return fmt.Errorf(p.error)
+	return fmt.Errorf("%s", p.error)
 }
 
 // IsAvailable always returns false

@@ -260,7 +260,63 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 		}
 	}
 
+	// Add core Matey system services - always check these regardless of config
+	systemServices := []struct {
+		name           string
+		deploymentName string
+		serviceType    string
+	}{
+		{"matey-mcp-server", "matey-mcp-server", "matey-core"},
+		{"matey-proxy", "matey-proxy", "matey-core"},
+		{"matey-controller-manager", "matey-controller-manager", "matey-core"},
+	}
+
+	for _, svc := range systemServices {
+		systemStatus := c.getSystemServiceStatus(svc.deploymentName)
+		status.Services[svc.name] = &ServiceStatus{
+			Name:   svc.name,
+			Status: systemStatus,
+			Type:   svc.serviceType,
+		}
+	}
+
 	return status, nil
+}
+
+// getSystemServiceStatus gets the status of a core system service deployment
+func (c *K8sComposer) getSystemServiceStatus(deploymentName string) string {
+	ctx := context.Background()
+	
+	deployment := &appsv1.Deployment{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      deploymentName,
+		Namespace: c.namespace,
+	}, deployment)
+	
+	if err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return "error"
+		}
+		return "not-found"
+	}
+	
+	// Check deployment status
+	if deployment.Status.ReadyReplicas == 0 && deployment.Status.Replicas > 0 {
+		if deployment.Status.UnavailableReplicas > 0 {
+			return "starting"
+		}
+		return "pending"
+	}
+	
+	if deployment.Status.ReadyReplicas > 0 && deployment.Status.ReadyReplicas == deployment.Status.Replicas {
+		return "running"
+	}
+	
+	if deployment.Status.Replicas == 0 {
+		return "stopped"
+	}
+	
+	return "unknown"
 }
 
 // getMCPServerStatus gets the status of an MCP server via MCPServer CRD with deployment fallback

@@ -711,10 +711,11 @@ func (h *ProxyHandler) makeSSEToolsListRequest(conn *discovery.MCPConnection, re
 
 // establishSSESession establishes an SSE session and returns the session endpoint
 func (h *ProxyHandler) establishSSESession(sseConn *discovery.MCPSSEConnection) (string, error) {
-	h.Logger.Debug("Establishing SSE session to: %s", sseConn.BaseURL)
+	sseURL := sseConn.BaseURL + "/sse"
+	h.Logger.Debug("Establishing SSE session to: %s", sseURL)
 	
 	// Try GET first (some SSE servers expect GET for initial handshake)
-	req, err := http.NewRequest("GET", sseConn.BaseURL, nil)
+	req, err := http.NewRequest("GET", sseURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create handshake request: %w", err)
 	}

@@ -58,26 +58,32 @@ func TestToolDiscoveryForAgenticBehavior(t *testing.T) {
 	defer dexcomServer.Close()
 
 	// Create connection manager
-	manager := &ConnectionManager{
-		connections: make(map[string]*Connection),
+	manager := &DynamicConnectionManager{
+		connections: make(map[string]*MCPConnection),
 		logger:      nil, // Use nil logger for testing
 	}
 
 	// Add connections
-	mateyConn := &Connection{
-		ServerName: "matey",
-		URL:        mateyServer.URL,
-		Protocol:   "http",
-		Status:     "healthy",
-		client:     &http.Client{Timeout: 5 * time.Second},
+	mateyConn := &MCPConnection{
+		Name:     "matey",
+		Endpoint: mateyServer.URL,
+		Protocol: "http",
+		Status:   "healthy",
+		HTTPConnection: &MCPHTTPConnection{
+			BaseURL: mateyServer.URL,
+			Client:  &http.Client{Timeout: 5 * time.Second},
+		},
 	}
 	
-	dexcomConn := &Connection{
-		ServerName: "dexcom", 
-		URL:        dexcomServer.URL,
-		Protocol:   "http",
-		Status:     "healthy",
-		client:     &http.Client{Timeout: 5 * time.Second},
+	dexcomConn := &MCPConnection{
+		Name:     "dexcom", 
+		Endpoint: dexcomServer.URL,
+		Protocol: "http",
+		Status:   "healthy",
+		HTTPConnection: &MCPHTTPConnection{
+			BaseURL: dexcomServer.URL,
+			Client:  &http.Client{Timeout: 5 * time.Second},
+		},
 	}
 
 	manager.connections["matey"] = mateyConn
@@ -96,7 +102,7 @@ func TestToolDiscoveryForAgenticBehavior(t *testing.T) {
 			require.NoError(t, err, "Should discover tools from %s", tool.serverName)
 
 			// Check if the tool exists
-			var foundTool *protocol.MCPTool
+			var foundTool *protocol.ToolDefinition
 			for _, discoveredTool := range tools {
 				if discoveredTool.Name == tool.toolName {
 					foundTool = &discoveredTool
@@ -127,25 +133,31 @@ func TestToolRoutingForAgenticFlow(t *testing.T) {
 	dexcomServer := setupMockDexcomServer(t)
 	defer dexcomServer.Close()
 
-	manager := &ConnectionManager{
-		connections: make(map[string]*Connection),
+	manager := &DynamicConnectionManager{
+		connections: make(map[string]*MCPConnection),
 	}
 
 	// Add connections
-	manager.connections["matey"] = &Connection{
-		ServerName: "matey",
-		URL:        mateyServer.URL,
-		Protocol:   "http",
-		Status:     "healthy",
-		client:     &http.Client{Timeout: 5 * time.Second},
+	manager.connections["matey"] = &MCPConnection{
+		Name:     "matey",
+		Endpoint: mateyServer.URL,
+		Protocol: "http",
+		Status:   "healthy",
+		HTTPConnection: &MCPHTTPConnection{
+			BaseURL: mateyServer.URL,
+			Client:  &http.Client{Timeout: 5 * time.Second},
+		},
 	}
 	
-	manager.connections["dexcom"] = &Connection{
-		ServerName: "dexcom",
-		URL:        dexcomServer.URL,
-		Protocol:   "http", 
-		Status:     "healthy",
-		client:     &http.Client{Timeout: 5 * time.Second},
+	manager.connections["dexcom"] = &MCPConnection{
+		Name:     "dexcom",
+		Endpoint: dexcomServer.URL,
+		Protocol: "http", 
+		Status:   "healthy",
+		HTTPConnection: &MCPHTTPConnection{
+			BaseURL: dexcomServer.URL,
+			Client:  &http.Client{Timeout: 5 * time.Second},
+		},
 	}
 
 	// Test typical agentic workflow tool sequence
@@ -166,7 +178,7 @@ func TestToolRoutingForAgenticFlow(t *testing.T) {
 		t.Run(step.step, func(t *testing.T) {
 			// Find which server has the tool
 			var foundServer string
-			var foundTool *protocol.MCPTool
+			var foundTool *protocol.ToolDefinition
 
 			for serverName, conn := range manager.connections {
 				tools, err := getServerTools(ctx, conn)
@@ -267,8 +279,13 @@ func TestConnectionHealthForAgenticBehavior(t *testing.T) {
 		{
 			name: "server with invalid MCP responses",
 			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/health" {
+					// Health endpoint fails
+					http.Error(w, "Not found", http.StatusNotFound)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
-				// Return invalid JSON
+				// Return invalid JSON for MCP requests
 				w.Write([]byte("{invalid json"))
 			},
 			expectedStatus: "unhealthy",
@@ -280,12 +297,15 @@ func TestConnectionHealthForAgenticBehavior(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(tt.serverResponse))
 			defer server.Close()
 
-			conn := &Connection{
-				ServerName: "test-server",
-				URL:        server.URL,
-				Protocol:   "http",
-				Status:     "unknown",
-				client:     &http.Client{Timeout: 5 * time.Second},
+			conn := &MCPConnection{
+				Name:     "test-server",
+				Endpoint: server.URL,
+				Protocol: "http",
+				Status:   "unknown",
+				HTTPConnection: &MCPHTTPConnection{
+					BaseURL: server.URL,
+					Client:  &http.Client{Timeout: 5 * time.Second},
+				},
 			}
 
 			ctx := context.Background()
@@ -313,19 +333,22 @@ func TestAgenticToolDiscoveryPerformance(t *testing.T) {
 		defer servers[i].Close()
 	}
 
-	manager := &ConnectionManager{
-		connections: make(map[string]*Connection),
+	manager := &DynamicConnectionManager{
+		connections: make(map[string]*MCPConnection),
 	}
 
 	// Add multiple connections
 	for i, server := range servers {
 		name := fmt.Sprintf("server-%d", i)
-		manager.connections[name] = &Connection{
-			ServerName: name,
-			URL:        server.URL,
-			Protocol:   "http",
-			Status:     "healthy",
-			client:     &http.Client{Timeout: 5 * time.Second},
+		manager.connections[name] = &MCPConnection{
+			Name:     name,
+			Endpoint: server.URL,
+			Protocol: "http",
+			Status:   "healthy",
+			HTTPConnection: &MCPHTTPConnection{
+				BaseURL: server.URL,
+				Client:  &http.Client{Timeout: 5 * time.Second},
+			},
 		}
 	}
 
@@ -333,7 +356,7 @@ func TestAgenticToolDiscoveryPerformance(t *testing.T) {
 	start := time.Now()
 
 	// Discover tools from all servers
-	allTools := make(map[string][]protocol.MCPTool)
+	allTools := make(map[string][]protocol.ToolDefinition)
 	for serverName, conn := range manager.connections {
 		tools, err := getServerTools(ctx, conn)
 		assert.NoError(t, err, "Should discover tools from %s", serverName)
@@ -590,7 +613,7 @@ func setupMockDexcomServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-func getServerTools(ctx context.Context, conn *Connection) ([]protocol.MCPTool, error) {
+func getServerTools(ctx context.Context, conn *MCPConnection) ([]protocol.ToolDefinition, error) {
 	// Send tools/list request
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -600,10 +623,10 @@ func getServerTools(ctx context.Context, conn *Connection) ([]protocol.MCPTool, 
 	}
 
 	reqBytes, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequestWithContext(ctx, "POST", conn.URL, bytes.NewReader(reqBytes))
+	req, _ := http.NewRequestWithContext(ctx, "POST", conn.Endpoint, bytes.NewReader(reqBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := conn.client.Do(req)
+	resp, err := conn.HTTPConnection.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -624,20 +647,20 @@ func getServerTools(ctx context.Context, conn *Connection) ([]protocol.MCPTool, 
 		return nil, fmt.Errorf("tools list not found")
 	}
 
-	var tools []protocol.MCPTool
+	var tools []protocol.ToolDefinition
 	for _, toolData := range toolsList {
 		tool := toolData.(map[string]interface{})
-		tools = append(tools, protocol.MCPTool{
+		tools = append(tools, protocol.ToolDefinition{
 			Name:        tool["name"].(string),
 			Description: tool["description"].(string),
-			InputSchema: tool["inputSchema"],
+			InputSchema: tool["inputSchema"].(map[string]interface{}),
 		})
 	}
 
 	return tools, nil
 }
 
-func executeToolCall(ctx context.Context, conn *Connection, toolName string, arguments map[string]interface{}) (map[string]interface{}, error) {
+func executeToolCall(ctx context.Context, conn *MCPConnection, toolName string, arguments map[string]interface{}) (map[string]interface{}, error) {
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "1",
@@ -649,10 +672,10 @@ func executeToolCall(ctx context.Context, conn *Connection, toolName string, arg
 	}
 
 	reqBytes, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequestWithContext(ctx, "POST", conn.URL, bytes.NewReader(reqBytes))
+	req, _ := http.NewRequestWithContext(ctx, "POST", conn.Endpoint, bytes.NewReader(reqBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := conn.client.Do(req)
+	resp, err := conn.HTTPConnection.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -671,10 +694,10 @@ func executeToolCall(ctx context.Context, conn *Connection, toolName string, arg
 	return result, nil
 }
 
-func checkConnectionHealth(ctx context.Context, conn *Connection) bool {
+func checkConnectionHealth(ctx context.Context, conn *MCPConnection) bool {
 	// Try health check endpoint first
-	req, _ := http.NewRequestWithContext(ctx, "GET", conn.URL+"/health", nil)
-	resp, err := conn.client.Do(req)
+	req, _ := http.NewRequestWithContext(ctx, "GET", conn.Endpoint+"/health", nil)
+	resp, err := conn.HTTPConnection.Client.Do(req)
 	if err == nil && resp.StatusCode == http.StatusOK {
 		resp.Body.Close()
 		conn.Status = "healthy"
@@ -700,10 +723,10 @@ func checkConnectionHealth(ctx context.Context, conn *Connection) bool {
 	}
 
 	reqBytes, _ := json.Marshal(reqBody)
-	req, _ = http.NewRequestWithContext(ctx, "POST", conn.URL, bytes.NewReader(reqBytes))
+	req, _ = http.NewRequestWithContext(ctx, "POST", conn.Endpoint, bytes.NewReader(reqBytes))
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err = conn.client.Do(req)
+	resp, err = conn.HTTPConnection.Client.Do(req)
 	if err != nil {
 		conn.Status = "unhealthy"
 		return false

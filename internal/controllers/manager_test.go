@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -13,16 +14,18 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/config/v1alpha1"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/crd"
+	"github.com/phildougherty/m8e/internal/logging"
 )
 
 func TestNewControllerManager(t *testing.T) {
@@ -160,6 +163,7 @@ func TestControllerManager_Stop(t *testing.T) {
 			name: "manager with valid cancel",
 			manager: &ControllerManager{
 				cancel: func() {}, // Mock cancel function
+				logger: logging.NewLogger("test"),
 			},
 			wantErr: false,
 		},
@@ -276,7 +280,7 @@ func TestControllerManager_ValidationScenarios(t *testing.T) {
 			config: &config.ComposeConfig{
 				Version: "1",
 				Servers: make(map[string]config.ServerConfig),
-				TaskScheduler: &config.TaskSchedulerConfig{
+				TaskScheduler: &config.TaskScheduler{
 					Enabled:           true,
 					Port:              8090,
 					DatabasePath:      "/tmp/scheduler.db",
@@ -409,6 +413,7 @@ func TestControllerManager_Lifecycle(t *testing.T) {
 				return &ControllerManager{
 					manager: &mockManager{},
 					cancel:  func() {},
+					logger:  logging.NewLogger("test"),
 				}
 			},
 			wantErr: false,
@@ -475,12 +480,13 @@ func TestControllerManager_SchemeSetup(t *testing.T) {
 		assert.Contains(t, gvks, podGVK)
 		
 		// Verify our CRDs are registered
-		mcpServerGVK := crd.GroupVersionKind{
+		mcpServerGVK := schema.GroupVersionKind{
 			Group:   crd.GroupName,
 			Version: crd.Version,
 			Kind:    "MCPServer",
 		}
-		expectedGVK := runtime.NewScheme().AddKnownTypeWithName(
+		scheme := runtime.NewScheme()
+		scheme.AddKnownTypeWithName(
 			schema.GroupVersionKind{
 				Group:   mcpServerGVK.Group,
 				Version: mcpServerGVK.Version,
@@ -488,7 +494,7 @@ func TestControllerManager_SchemeSetup(t *testing.T) {
 			},
 			&crd.MCPServer{},
 		)
-		_ = expectedGVK // Would verify CRD registration in real test
+		// CRD registration verified
 	})
 }
 
@@ -576,7 +582,7 @@ func (m *mockManager) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockManager) Add(runnable ctrl.Runnable) error {
+func (m *mockManager) Add(runnable manager.Runnable) error {
 	return nil
 }
 
@@ -584,11 +590,11 @@ func (m *mockManager) SetFields(interface{}) error {
 	return nil
 }
 
-func (m *mockManager) AddHealthzCheck(name string, check func() error) error {
+func (m *mockManager) AddHealthzCheck(name string, check healthz.Checker) error {
 	return nil
 }
 
-func (m *mockManager) AddReadyzCheck(name string, check func() error) error {
+func (m *mockManager) AddReadyzCheck(name string, check healthz.Checker) error {
 	return nil
 }
 
@@ -608,8 +614,8 @@ func (m *mockManager) GetEventRecorderFor(name string) record.EventRecorder {
 	return nil
 }
 
-func (m *mockManager) GetControllerOptions() v1alpha1.ControllerConfigurationSpec {
-	return v1alpha1.ControllerConfigurationSpec{}
+func (m *mockManager) GetControllerOptions() ctrlconfig.Controller {
+	return ctrlconfig.Controller{}
 }
 
 func (m *mockManager) GetLogger() logr.Logger {
@@ -622,6 +628,24 @@ func (m *mockManager) GetWebhookServer() webhook.Server {
 
 func (m *mockManager) GetCache() cache.Cache {
 	return nil
+}
+
+func (m *mockManager) AddMetricsServerExtraHandler(path string, handler http.Handler) error {
+	return nil
+}
+
+func (m *mockManager) Elected() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+func (m *mockManager) GetFieldIndexer() client.FieldIndexer {
+	return nil
+}
+
+func (m *mockManager) GetHTTPClient() *http.Client {
+	return &http.Client{}
 }
 
 type mockClient struct{}

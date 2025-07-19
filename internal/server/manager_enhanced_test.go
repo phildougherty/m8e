@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,11 +11,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/logging"
 	"github.com/phildougherty/m8e/internal/protocol"
-	"github.com/phildougherty/m8e/internal/runtime"
 )
 
 func TestNewManager_Enhanced(t *testing.T) {
@@ -65,7 +64,7 @@ func TestNewManager_Enhanced(t *testing.T) {
 			config: &config.ComposeConfig{
 				Version: "1",
 				Servers: make(map[string]config.ServerConfig),
-				TaskScheduler: &config.TaskSchedulerConfig{
+				TaskScheduler: &config.TaskScheduler{
 					Enabled:           true,
 					Port:              8090,
 					DatabasePath:      "/tmp/scheduler.db",
@@ -380,6 +379,7 @@ func TestManager_CheckServerHealth(t *testing.T) {
 			"test-server": {
 				Protocol: "http",
 				HttpPort: 8080,
+				Command:  "echo test",
 			},
 		},
 	}
@@ -628,10 +628,10 @@ func TestResourcesWatcher_ShouldProcessEvent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock fsnotify event
-			event := MockFsnotifyEvent{
+			// Create a fsnotify event
+			event := fsnotify.Event{
 				Name: tt.filename,
-				Op:   1, // Write operation
+				Op:   fsnotify.Write,
 			}
 			
 			result := watcher.shouldProcessEvent(event)
@@ -806,7 +806,7 @@ func TestManager_TaskSchedulerIntegration(t *testing.T) {
 	cfg := &config.ComposeConfig{
 		Version: "1",
 		Servers: make(map[string]config.ServerConfig),
-		TaskScheduler: &config.TaskSchedulerConfig{
+		TaskScheduler: &config.TaskScheduler{
 			Enabled:           true,
 			Port:              8090,
 			DatabasePath:      "/tmp/scheduler.db",
@@ -844,18 +844,6 @@ func TestManager_TaskSchedulerIntegration(t *testing.T) {
 
 // Mock types for testing
 
-type MockFsnotifyEvent struct {
-	Name string
-	Op   int
-}
-
-func (e MockFsnotifyEvent) Has(op int) bool {
-	return e.Op&op != 0
-}
-
-func (e MockFsnotifyEvent) String() string {
-	return fmt.Sprintf("MockEvent{Name: %s, Op: %d}", e.Name, e.Op)
-}
 
 func BenchmarkManager_GetServerInstance(b *testing.B) {
 	cfg := &config.ComposeConfig{

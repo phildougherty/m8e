@@ -8,21 +8,24 @@ import (
 	"time"
 
 	"github.com/phildougherty/m8e/internal/ai"
+	"github.com/phildougherty/m8e/internal/chat"
 )
+
 
 // ConversationTurn represents a single turn in the conversation
 type ConversationTurn struct {
-	chat          *TermChat
+	chat          *chat.TermChat
 	messages      []ai.Message
 	pendingTools  []ai.ToolCall
 	completed     bool
 	maxTurns      int
 	currentTurn   int
 	userRequest   string
+	silentMode    bool  // If true, don't print to terminal
 }
 
 // NewConversationTurn creates a new conversation turn
-func NewConversationTurn(chat *TermChat, userRequest string) *ConversationTurn {
+func NewConversationTurn(chat *chat.TermChat, userRequest string) *ConversationTurn {
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
@@ -30,6 +33,20 @@ func NewConversationTurn(chat *TermChat, userRequest string) *ConversationTurn {
 		currentTurn:  0,
 		completed:    false,
 		pendingTools: make([]ai.ToolCall, 0),
+		silentMode:   false,
+	}
+}
+
+// NewConversationTurnSilent creates a new conversation turn in silent mode
+func NewConversationTurnSilent(chat *chat.TermChat, userRequest string) *ConversationTurn {
+	return &ConversationTurn{
+		chat:         chat,
+		userRequest:  userRequest,
+		maxTurns:     10, // Prevent infinite loops
+		currentTurn:  0,
+		completed:    false,
+		pendingTools: make([]ai.ToolCall, 0),
+		silentMode:   true,
 	}
 }
 
@@ -48,19 +65,19 @@ func (t *ConversationTurn) buildMessageContext() {
 	t.messages = []ai.Message{
 		{
 			Role:    "system",
-			Content: t.chat.getSystemContext(),
+			Content: t.chat.GetSystemContext(),
 		},
 	}
 	
 	// Add recent chat history (last 10 messages to keep context manageable)
 	historyLimit := 10
-	startIdx := len(t.chat.chatHistory) - historyLimit
+	startIdx := len(t.chat.GetChatHistory()) - historyLimit
 	if startIdx < 0 {
 		startIdx = 0
 	}
 	
-	for i := startIdx; i < len(t.chat.chatHistory); i++ {
-		msg := t.chat.chatHistory[i]
+	for i := startIdx; i < len(t.chat.GetChatHistory()); i++ {
+		msg := t.chat.GetChatHistory()[i]
 		if msg.Role == "user" || msg.Role == "assistant" {
 			t.messages = append(t.messages, ai.Message{
 				Role:    msg.Role,
@@ -101,7 +118,9 @@ func (t *ConversationTurn) processConversationFlow(ctx context.Context) error {
 	}
 	
 	if t.currentTurn >= t.maxTurns {
-		fmt.Printf("\nReached maximum turns (%d) for this request. Task may need to be broken down into smaller parts.\n", t.maxTurns)
+		if !t.silentMode {
+			fmt.Printf("\nReached maximum turns (%d) for this request. Task may need to be broken down into smaller parts.\n", t.maxTurns)
+		}
 	}
 	
 	return nil
@@ -110,24 +129,32 @@ func (t *ConversationTurn) processConversationFlow(ctx context.Context) error {
 // executeConversationRound executes one round of AI conversation
 func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 	// Create AI message placeholder
-	t.chat.addMessage("assistant", "")
-	aiMsgIndex := len(t.chat.chatHistory) - 1
+	t.chat.AddMessage("assistant", "")
+	aiMsgIndex := len(t.chat.GetChatHistory()) - 1
 	
-	fmt.Printf("\n\033[1;32m✓ AI\033[0m \033[90m%s\033[0m", time.Now().Format("15:04:05"))
-	if t.currentTurn > 1 {
-		fmt.Printf(" \033[90m(turn %d)\033[0m", t.currentTurn)
+	// Only print to terminal if not in silent mode
+	if !t.silentMode {
+		fmt.Printf("\n\033[1;32m✓ AI\033[0m \033[90m%s\033[0m", time.Now().Format("15:04:05"))
+		if t.currentTurn > 1 {
+			fmt.Printf(" \033[90m(turn %d)\033[0m", t.currentTurn)
+		}
+		fmt.Println()
+	} else {
+		// In silent mode, start the AI response box in UI
+		if chat.GetUIProgram() != nil {
+			chat.GetUIProgram().Send(chat.AiStreamMsg{Content: ""}) // Empty content signals start of AI response
+		}
 	}
-	fmt.Println()
 	
 	// Get MCP functions
-	mcpFunctions := t.chat.getMCPFunctions()
+	mcpFunctions := t.chat.GetMCPFunctions()
 	
 	// Stream the AI response
 	streamCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	
-	stream, err := t.chat.aiManager.StreamChatWithFallback(streamCtx, t.messages, ai.StreamOptions{
-		Model:     t.chat.currentModel,
+	stream, err := t.chat.GetAIManager().StreamChatWithFallback(streamCtx, t.messages, ai.StreamOptions{
+		Model:     t.chat.GetCurrentModel(),
 		Functions: mcpFunctions,
 	})
 	if err != nil {
@@ -142,7 +169,7 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 	
 	for response := range stream {
 		if response.Error != nil {
-			t.chat.chatHistory[aiMsgIndex].Content += fmt.Sprintf("\nError: %v", response.Error)
+			t.chat.GetChatHistory()[aiMsgIndex].Content += fmt.Sprintf("\nError: %v", response.Error)
 			break
 		}
 		
@@ -153,19 +180,52 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 				regularContent, _ = ai.ProcessStreamContentWithThinks(thinkProcessor, response.Content)
 			}
 			
-			t.chat.chatHistory[aiMsgIndex].Content += regularContent
+			t.chat.GetChatHistory()[aiMsgIndex].Content += regularContent
 			
-			if !t.chat.verboseMode {
-				fmt.Print(regularContent)
+			if !t.chat.GetVerboseMode() {
+				if !t.silentMode {
+					fmt.Print(regularContent)
+				} else {
+					// In silent mode, send streaming content to UI if available
+					if chat.GetUIProgram() != nil {
+						chat.GetUIProgram().Send(chat.AiStreamMsg{Content: regularContent})
+					}
+				}
 			}
+		} else if len(response.ToolCalls) > 0 && t.silentMode {
+			// In silent mode, if we get tool calls but no content, add explanatory text
+			if t.chat.GetChatHistory()[aiMsgIndex].Content == "" {
+				t.chat.GetChatHistory()[aiMsgIndex].Content = "I'll help you with that."
+			}
+		}
+		
+		// Debug: Check if we're getting empty responses
+		if response.Content == "" && len(response.ToolCalls) == 0 && !response.Finished {
+			// This might indicate a streaming issue
+			continue
 		}
 		
 		// Collect tool calls
 		if len(response.ToolCalls) > 0 {
 			for _, toolCall := range response.ToolCalls {
+				
 				callId := toolCall.ID
 				if callId == "" {
-					callId = fmt.Sprintf("call_%d", len(accumulatedFunctionCalls))
+					// For chunks without ID, use the function name if available
+					if toolCall.Function.Name != "" {
+						callId = toolCall.Function.Name
+					} else {
+						// Find the most recent function call to accumulate to
+						for existingId, existingCall := range accumulatedFunctionCalls {
+							if existingCall.Function.Name != "" {
+								callId = existingId
+								break
+							}
+						}
+						if callId == "" {
+							callId = fmt.Sprintf("call_%d", len(accumulatedFunctionCalls))
+						}
+					}
 				}
 				
 				if existing, exists := accumulatedFunctionCalls[callId]; exists {
@@ -197,17 +257,22 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 	// Add the AI response to message context for next turn
 	currentAIMessage := ai.Message{
 		Role:      "assistant",
-		Content:   t.chat.chatHistory[aiMsgIndex].Content,
+		Content:   t.chat.GetChatHistory()[aiMsgIndex].Content,
 		ToolCalls: t.pendingTools,
 	}
 	t.messages = append(t.messages, currentAIMessage)
+	
+	// In silent mode, signal end of AI response to UI
+	if t.silentMode && chat.GetUIProgram() != nil {
+		chat.GetUIProgram().Send(chat.AiResponseMsg{Content: t.chat.GetChatHistory()[aiMsgIndex].Content})
+	}
 	
 	return nil
 }
 
 // executeToolsAndContinue executes pending tools and adds results to conversation
 func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
-	aiMsgIndex := len(t.chat.chatHistory) - 1
+	aiMsgIndex := len(t.chat.GetChatHistory()) - 1
 	var toolResults []ai.Message
 	
 	// Execute all pending tools
@@ -217,8 +282,8 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		}
 		
 		// Check approval mode for this specific tool
-		if t.chat.approvalMode.ShouldConfirm(toolCall.Function.Name) {
-			confirmed := t.chat.requestFunctionConfirmation(toolCall.Function.Name, toolCall.Function.Arguments)
+		if t.chat.GetApprovalMode().ShouldConfirm(toolCall.Function.Name) {
+			confirmed := t.chat.RequestFunctionConfirmation(toolCall.Function.Name, toolCall.Function.Arguments)
 			if !confirmed {
 				// User rejected - add rejection to conversation and continue
 				rejectionResult := ai.Message{
@@ -233,6 +298,16 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		
 		// Execute the tool
 		t.executeToolCall(toolCall, aiMsgIndex)
+		
+		// In silent mode, show function call execution in UI
+		if t.silentMode && chat.GetUIProgram() != nil {
+			// Show function call start
+			funcCallMsg := fmt.Sprintf("[CALL] %s", toolCall.Function.Name)
+			if toolCall.Function.Arguments != "" && toolCall.Function.Arguments != "{}" {
+				funcCallMsg += fmt.Sprintf(" with args: %s", toolCall.Function.Arguments)
+			}
+			chat.GetUIProgram().Send(chat.AiStreamMsg{Content: "\n" + funcCallMsg + "\n"})
+		}
 		
 		// Parse arguments and validate for specific functions
 		parsedArgs := t.parseArguments(toolCall.Function.Arguments)
@@ -271,7 +346,7 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		
 		// Get the tool result for conversation context
 		toolCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		result, err := t.chat.mcpClient.CallTool(toolCtx, t.findServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
+		result, err := t.chat.GetMCPClient().CallTool(toolCtx, t.findServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
 		cancel()
 		
 		var resultContent string
@@ -282,6 +357,20 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			resultContent = fmt.Sprintf("Result: %+v", result)
 		} else {
 			resultContent = "Function executed successfully"
+		}
+		
+		// In silent mode, show function call result in UI
+		if t.silentMode && chat.GetUIProgram() != nil {
+			var statusMsg string
+			if err != nil {
+				statusMsg = fmt.Sprintf("[ERROR] %s failed: %v", toolCall.Function.Name, err)
+			} else {
+				statusMsg = fmt.Sprintf("[SUCCESS] %s completed", toolCall.Function.Name)
+				if result != nil {
+					statusMsg += fmt.Sprintf(" - %+v", result)
+				}
+			}
+			chat.GetUIProgram().Send(chat.AiStreamMsg{Content: statusMsg + "\n"})
 		}
 		
 		// Add tool result to conversation
@@ -307,11 +396,11 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 // Helper methods
 func (t *ConversationTurn) executeToolCall(toolCall ai.ToolCall, aiMsgIndex int) {
 	// Delegate to existing tool execution logic
-	t.chat.executeNativeToolCall(toolCall, aiMsgIndex)
+	t.chat.ExecuteNativeToolCall(toolCall, aiMsgIndex)
 }
 
 func (t *ConversationTurn) findServerForTool(toolName string) string {
-	return t.chat.findServerForTool(toolName)
+	return t.chat.FindServerForTool(toolName)
 }
 
 func (t *ConversationTurn) parseArguments(arguments string) map[string]interface{} {
@@ -339,6 +428,11 @@ func (t *ConversationTurn) shouldContinue() bool {
 	}
 	
 	lastMessage := t.messages[len(t.messages)-1]
+	// If the last message is a tool result, we should continue to let the AI present the results
+	if lastMessage.Role == "tool" {
+		return true
+	}
+	
 	if lastMessage.Role != "assistant" {
 		return false
 	}
@@ -389,6 +483,7 @@ func (t *ConversationTurn) shouldContinue() bool {
 		return false
 	}
 	
-	// If response is substantial but doesn't have clear completion, continue cautiously
-	return len(content) > 50 && t.currentTurn < 3
+	// Don't continue unless there's a clear indication the AI wants to continue
+	// This prevents unnecessary empty responses
+	return false
 }

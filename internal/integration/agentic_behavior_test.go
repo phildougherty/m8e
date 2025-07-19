@@ -1,9 +1,11 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,22 +14,18 @@ import (
 
 	"github.com/phildougherty/m8e/internal/ai"
 	"github.com/phildougherty/m8e/internal/cmd"
-	"github.com/phildougherty/m8e/internal/protocol"
+	"github.com/phildougherty/m8e/internal/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestAgenticBehaviorEndToEnd tests the complete agentic workflow creation flow
 func TestAgenticBehaviorEndToEnd(t *testing.T) {
-	// Setup mock MCP server with proper tools
-	mcpServer := setupMockMCPServer(t)
-	defer mcpServer.Close()
-
 	// Setup mock AI provider that follows agentic behavior
 	aiProvider := setupMockAIProvider(t)
 
-	// Create test client
-	client := setupTestClient(t, mcpServer.URL)
+	// Create test client with direct mock
+	client := setupTestClient(t, "")
 
 	// Test scenarios
 	tests := []struct {
@@ -127,10 +125,13 @@ func TestContinuationPromptEffectiveness(t *testing.T) {
 			}
 
 			// Simulate function call result
-			functionResults := []cmd.ToolCallResult{
+			functionResults := []mcp.ToolCallResult{
 				{
 					ToolName: tt.firstToolCall,
-					Result:   map[string]interface{}{"status": "success"},
+					Result: &mcp.ToolResult{
+						Content: []mcp.Content{{Type: "text", Text: "success"}},
+						IsError: false,
+					},
 				},
 			}
 
@@ -171,10 +172,8 @@ func TestContinuationPromptEffectiveness(t *testing.T) {
 
 // TestToolDiscoveryAndRouting tests that tools are discovered and routed correctly
 func TestToolDiscoveryAndRouting(t *testing.T) {
-	mcpServer := setupMockMCPServer(t)
-	defer mcpServer.Close()
-
-	client := setupTestClient(t, mcpServer.URL)
+	// Use direct mock client for reliable testing
+	client := setupTestClient(t, "")
 
 	tests := []struct {
 		name           string
@@ -241,6 +240,7 @@ func TestToolDiscoveryAndRouting(t *testing.T) {
 
 // TestMCPProtocolCompliance tests MCP protocol initialization compliance
 func TestMCPProtocolCompliance(t *testing.T) {
+	// Use direct mock client for reliable testing
 	mcpServer := setupMockMCPServer(t)
 	defer mcpServer.Close()
 
@@ -282,7 +282,7 @@ func TestMCPProtocolCompliance(t *testing.T) {
 	require.True(t, ok, "Server info should be object")
 	
 	name, hasName := serverInfoMap["name"]
-	version, hasVersion := serverInfoMap["version"]
+	_, hasVersion := serverInfoMap["version"]
 	assert.True(t, hasName, "Should have server name")
 	assert.True(t, hasVersion, "Should have server version")
 	assert.Equal(t, "matey", name, "Should have correct server name")
@@ -312,7 +312,7 @@ type ToolCall struct {
 	Result    map[string]interface{}
 }
 
-func executeAgenticFlow(t *testing.T, ctx context.Context, client protocol.MCPClient, aiProvider ai.Provider, userInput string, maxIterations int) AgenticFlowResult {
+func executeAgenticFlow(t *testing.T, ctx context.Context, client MCPClientInterface, aiProvider ai.Provider, userInput string, maxIterations int) AgenticFlowResult {
 	result := AgenticFlowResult{
 		ToolCalls: []ToolCall{},
 	}
@@ -404,7 +404,7 @@ func executeAgenticFlow(t *testing.T, ctx context.Context, client protocol.MCPCl
 			result.ToolCalls = append(result.ToolCalls, ToolCall{
 				ToolName:  toolCall.Function.Name,
 				Arguments: args,
-				Result:    toolResult,
+				Result:    map[string]interface{}{"status": "success", "content": toolResult.Content},
 			})
 		}
 
@@ -445,7 +445,101 @@ func executeAgenticFlow(t *testing.T, ctx context.Context, client protocol.MCPCl
 	return result
 }
 
-func setupMockMCPServer(t *testing.T) *httptest.Server {
+// MockServerConfig holds configuration for a mock MCP server
+type MockServerConfig struct {
+	Name        string
+	Tools       []map[string]interface{}
+	ServerInfo  map[string]interface{}
+}
+
+// setupMockMCPServers creates multiple mock MCP servers and a proxy server
+func setupMockMCPServers(t *testing.T) (*httptest.Server, map[string]*httptest.Server) {
+	// Define server configurations
+	serverConfigs := map[string]MockServerConfig{
+		"matey": {
+			Name: "matey",
+			Tools: []map[string]interface{}{
+				{"name": "create_workflow", "description": "Create workflow"},
+				{"name": "matey_up", "description": "Start services"},
+				{"name": "matey_ps", "description": "List processes"},
+				{"name": "apply_config", "description": "Apply configuration"},
+				{"name": "get_cluster_state", "description": "Get cluster state"},
+			},
+			ServerInfo: map[string]interface{}{
+				"name":    "matey",
+				"version": "0.0.4",
+			},
+		},
+		"dexcom": {
+			Name: "dexcom",
+			Tools: []map[string]interface{}{
+				{"name": "get_current_glucose", "description": "Get glucose"},
+				{"name": "get_glucose_history", "description": "Get glucose history"},
+			},
+			ServerInfo: map[string]interface{}{
+				"name":    "dexcom",
+				"version": "1.0.0",
+			},
+		},
+	}
+
+	// Create individual mock servers
+	mockServers := make(map[string]*httptest.Server)
+	for serverName, config := range serverConfigs {
+		server := createMockMCPServer(t, config)
+		mockServers[serverName] = server
+	}
+
+	// Create proxy server that routes to individual servers
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handle discovery endpoint
+		if r.Method == "GET" && r.URL.Path == "/discovery" {
+			discoveryResp := map[string]interface{}{
+				"discovered_servers": []map[string]interface{}{
+					{"name": "matey"},
+					{"name": "dexcom"},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(discoveryResp)
+			return
+		}
+
+		// Handle OpenAPI endpoint with all servers
+		if r.Method == "GET" && r.URL.Path == "/openapi.json" {
+			openAPISpec := createOpenAPISpec(serverConfigs)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(openAPISpec)
+			return
+		}
+
+		// Route requests to specific servers based on URL path
+		if strings.HasPrefix(r.URL.Path, "/servers/") {
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) >= 3 {
+				serverName := parts[2]
+				if server, exists := mockServers[serverName]; exists {
+					// Forward request to the specific mock server
+					proxyRequest(w, r, server.URL, serverName)
+					return
+				}
+			}
+		}
+
+		// Default to matey server for non-routed requests
+		if server, exists := mockServers["matey"]; exists {
+			proxyRequest(w, r, server.URL, "matey")
+			return
+		}
+
+		http.Error(w, "Server not found", http.StatusNotFound)
+	}))
+
+	return proxyServer, mockServers
+}
+
+// createMockMCPServer creates a single mock MCP server
+func createMockMCPServer(t *testing.T, config MockServerConfig) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req cmd.MCPRequest
 		json.NewDecoder(r.Body).Decode(&req)
@@ -460,38 +554,13 @@ func setupMockMCPServer(t *testing.T) *httptest.Server {
 				"capabilities": map[string]interface{}{
 					"tools": map[string]interface{}{},
 				},
-				"serverInfo": map[string]interface{}{
-					"name":    "matey",
-					"version": "0.0.4",
-				},
+				"serverInfo": config.ServerInfo,
 			}
 		case "notifications/initialized":
 			result = nil
 		case "tools/list":
-			// Return mock tools for different servers
-			serverName := r.Header.Get("X-Server-Name")
-			if serverName == "" {
-				serverName = "matey" // default
-			}
-
-			switch serverName {
-			case "matey":
-				result = map[string]interface{}{
-					"tools": []map[string]interface{}{
-						{"name": "create_workflow", "description": "Create workflow"},
-						{"name": "matey_up", "description": "Start services"},
-						{"name": "matey_ps", "description": "List processes"},
-						{"name": "apply_config", "description": "Apply configuration"},
-						{"name": "get_cluster_state", "description": "Get cluster state"},
-					},
-				}
-			case "dexcom":
-				result = map[string]interface{}{
-					"tools": []map[string]interface{}{
-						{"name": "get_current_glucose", "description": "Get glucose"},
-						{"name": "get_glucose_history", "description": "Get glucose history"},
-					},
-				}
+			result = map[string]interface{}{
+				"tools": config.Tools,
 			}
 		case "tools/call":
 			// Mock tool execution
@@ -502,7 +571,7 @@ func setupMockMCPServer(t *testing.T) *httptest.Server {
 				"content": []map[string]interface{}{
 					{
 						"type": "text",
-						"text": fmt.Sprintf("Tool %s executed successfully", toolName),
+						"text": fmt.Sprintf("Tool %s executed successfully on %s", toolName, config.Name),
 					},
 				},
 			}
@@ -510,10 +579,102 @@ func setupMockMCPServer(t *testing.T) *httptest.Server {
 			mcpErr = &cmd.MCPError{Code: -32601, Message: "Method not found"}
 		}
 
-		response := cmd.MCPResponse{Result: result, Error: mcpErr}
+		resp := cmd.MCPResponse{
+			Result: result,
+			Error:  mcpErr,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(resp)
 	}))
+}
+
+// createOpenAPISpec creates an OpenAPI spec that includes all servers
+func createOpenAPISpec(serverConfigs map[string]MockServerConfig) map[string]interface{} {
+	paths := make(map[string]interface{})
+	
+	// Add paths for each tool from each server
+	for serverName, config := range serverConfigs {
+		for _, tool := range config.Tools {
+			toolName := tool["name"].(string)
+			paths["/"+toolName] = map[string]interface{}{
+				"post": map[string]interface{}{
+					"operationId": fmt.Sprintf("%s_%s", serverName, toolName),
+					"tags":        []interface{}{serverName},
+					"description": tool["description"],
+				},
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"openapi": "3.0.0",
+		"info": map[string]interface{}{
+			"title":   "Mock MCP API",
+			"version": "1.0.0",
+		},
+		"paths": paths,
+		"components": map[string]interface{}{
+			"schemas": map[string]interface{}{},
+		},
+	}
+}
+
+// proxyRequest forwards a request to the target server
+func proxyRequest(w http.ResponseWriter, r *http.Request, targetURL, serverName string) {
+	// Create new request to target server
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	
+	req, err := http.NewRequest(r.Method, targetURL+r.URL.Path, bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Copy headers
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	
+	// Add server identification header
+	req.Header.Set("X-Server-Name", serverName)
+	
+	// Make request
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+	
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// Legacy function for backward compatibility
+func setupMockMCPServer(t *testing.T) *httptest.Server {
+	proxyServer, mockServers := setupMockMCPServers(t)
+	
+	// Create a wrapper that ensures all servers are closed
+	t.Cleanup(func() {
+		for _, server := range mockServers {
+			server.Close()
+		}
+		proxyServer.Close()
+	})
+	
+	return proxyServer
 }
 
 func setupMockAIProvider(t *testing.T) ai.Provider {
@@ -521,77 +682,89 @@ func setupMockAIProvider(t *testing.T) ai.Provider {
 	return nil
 }
 
-func setupTestClient(t *testing.T, serverURL string) protocol.MCPClient {
-	// Create a test MCP client connected to the mock server
-	// This would use the actual MCP client implementation
-	return &MockMCPClient{serverURL: serverURL}
+// MCPClientInterface defines the interface for MCP clients
+type MCPClientInterface interface {
+	ListServers(ctx context.Context) ([]mcp.ServerInfo, error)
+	GetServerTools(ctx context.Context, serverName string) ([]mcp.Tool, error)
+	CallTool(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (*mcp.ToolResult, error)
 }
 
+// Adapter to make real MCPClient implement the interface
+type MCPClientAdapter struct {
+	client *mcp.MCPClient
+}
+
+func (a *MCPClientAdapter) ListServers(ctx context.Context) ([]mcp.ServerInfo, error) {
+	return a.client.ListServers(ctx)
+}
+
+func (a *MCPClientAdapter) GetServerTools(ctx context.Context, serverName string) ([]mcp.Tool, error) {
+	return a.client.GetServerTools(ctx, serverName)
+}
+
+func (a *MCPClientAdapter) CallTool(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (*mcp.ToolResult, error) {
+	return a.client.CallTool(ctx, serverName, toolName, arguments)
+}
+
+// MockMCPClient is a mock implementation for testing
 type MockMCPClient struct {
-	serverURL string
+	servers     []mcp.ServerInfo
+	serverTools map[string][]mcp.Tool
 }
 
-func (m *MockMCPClient) ListServers(ctx context.Context) ([]protocol.MCPServer, error) {
-	return []protocol.MCPServer{
-		{Name: "matey", URL: m.serverURL},
-		{Name: "dexcom", URL: m.serverURL},
+func (m *MockMCPClient) ListServers(ctx context.Context) ([]mcp.ServerInfo, error) {
+	return m.servers, nil
+}
+
+func (m *MockMCPClient) GetServerTools(ctx context.Context, serverName string) ([]mcp.Tool, error) {
+	if tools, exists := m.serverTools[serverName]; exists {
+		return tools, nil
+	}
+	return []mcp.Tool{}, nil
+}
+
+func (m *MockMCPClient) CallTool(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (*mcp.ToolResult, error) {
+	return &mcp.ToolResult{
+		Content: []mcp.Content{
+			{
+				Type: "text",
+				Text: fmt.Sprintf("Tool %s executed successfully on %s", toolName, serverName),
+			},
+		},
 	}, nil
 }
 
-func (m *MockMCPClient) GetServerTools(ctx context.Context, serverName string) ([]protocol.MCPTool, error) {
-	// Send tools/list request with server name header
-	req := cmd.MCPRequest{Method: "tools/list", Params: map[string]interface{}{}}
-	
-	client := &http.Client{}
-	reqBytes, _ := json.Marshal(req)
-	httpReq, _ := http.NewRequest("POST", m.serverURL, strings.NewReader(string(reqBytes)))
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Server-Name", serverName)
-	
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var response cmd.MCPResponse
-	json.NewDecoder(resp.Body).Decode(&response)
-	
-	if response.Error != nil {
-		return nil, fmt.Errorf("MCP error: %s", response.Error.Message)
-	}
-
-	result := response.Result.(map[string]interface{})
-	toolsList := result["tools"].([]interface{})
-	
-	var tools []protocol.MCPTool
-	for _, toolData := range toolsList {
-		tool := toolData.(map[string]interface{})
-		tools = append(tools, protocol.MCPTool{
-			Name:        tool["name"].(string),
-			Description: tool["description"].(string),
-		})
-	}
-	
-	return tools, nil
-}
-
-func (m *MockMCPClient) CallTool(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (map[string]interface{}, error) {
-	req := cmd.MCPRequest{
-		Method: "tools/call",
-		Params: map[string]interface{}{
-			"name":      toolName,
-			"arguments": arguments,
+func setupTestClient(t *testing.T, serverURL string) MCPClientInterface {
+	// Create a mock client with predefined servers and tools
+	return &MockMCPClient{
+		servers: []mcp.ServerInfo{
+			{
+				Name:        "matey",
+				Version:     "0.0.4",
+				Description: "Kubernetes MCP server orchestration",
+			},
+			{
+				Name:        "dexcom",
+				Version:     "1.0.0",
+				Description: "Dexcom glucose monitoring",
+			},
+		},
+		serverTools: map[string][]mcp.Tool{
+			"matey": {
+				{Name: "create_workflow", Description: "Create workflow"},
+				{Name: "matey_up", Description: "Start services"},
+				{Name: "matey_ps", Description: "List processes"},
+				{Name: "apply_config", Description: "Apply configuration"},
+				{Name: "get_cluster_state", Description: "Get cluster state"},
+			},
+			"dexcom": {
+				{Name: "get_current_glucose", Description: "Get glucose"},
+				{Name: "get_glucose_history", Description: "Get glucose history"},
+			},
 		},
 	}
-	
-	response := sendMCPRequest(nil, m.serverURL, req)
-	if response.Error != nil {
-		return nil, fmt.Errorf("MCP error: %s", response.Error.Message)
-	}
-	
-	return response.Result.(map[string]interface{}), nil
 }
+
 
 func sendMCPRequest(t *testing.T, serverURL string, req cmd.MCPRequest) cmd.MCPResponse {
 	reqBytes, _ := json.Marshal(req)

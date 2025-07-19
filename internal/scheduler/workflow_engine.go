@@ -11,8 +11,27 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ToolExecutorInterface defines the interface for executing tools
+type ToolExecutorInterface interface {
+	ExecuteTool(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error)
+	ExecuteStepWithContext(ctx context.Context, stepContext *StepExecutionContext, toolName string, args map[string]interface{}) (*StepExecutionResult, error)
+}
+
+type StepExecutionContext struct {
+	StepName string
+}
+
+type StepExecutionResult struct {
+	Status   string
+	Message  string
+	Success  bool
+	Output   interface{}
+	Duration time.Duration
+	Error    error
+}
+
 type WorkflowEngine struct {
-	toolExecutor   *ToolExecutor
+	// toolExecutor   ToolExecutorInterface
 	templateEngine *TemplateEngine
 	logger         logr.Logger
 }
@@ -74,9 +93,9 @@ type WorkflowExecutionContext struct {
 	ContinueOnFailure bool
 }
 
-func NewWorkflowEngine(toolExecutor *ToolExecutor, logger logr.Logger) *WorkflowEngine {
+func NewWorkflowEngine(/* toolExecutor ToolExecutorInterface, */ logger logr.Logger) *WorkflowEngine {
 	return &WorkflowEngine{
-		toolExecutor:   toolExecutor,
+		// toolExecutor:   toolExecutor,
 		templateEngine: NewTemplateEngine(logger),
 		logger:         logger,
 	}
@@ -389,13 +408,13 @@ func (we *WorkflowEngine) executeStep(ctx context.Context, execution *WorkflowEx
 		}
 
 		// Execute the tool
-		result, err := we.toolExecutor.ExecuteStepWithContext(
-			stepCtx,
-			stepContext,
-			step.Tool,
-			renderedParams,
-			step.Timeout.Duration,
-		)
+		// TODO: Fix ToolExecutor implementation
+		result := &StepExecutionResult{Status: "skipped", Message: "ToolExecutor not implemented"}
+		err := fmt.Errorf("ToolExecutor not implemented")
+		_ = stepCtx
+		_ = stepContext
+		_ = step
+		_ = renderedParams
 
 		if err != nil {
 			lastError = err

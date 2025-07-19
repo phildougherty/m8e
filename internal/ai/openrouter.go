@@ -85,12 +85,29 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 	if len(options.Functions) > 0 {
 		tools := make([]map[string]interface{}, len(options.Functions))
 		for i, function := range options.Functions {
+			// Ensure parameters is a valid schema for OpenAI API
+			params := function.Parameters
+			if params == nil {
+				params = map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{},
+				}
+			} else {
+				// Ensure it has the required fields
+				if params["type"] == nil {
+					params["type"] = "object"
+				}
+				if params["properties"] == nil {
+					params["properties"] = map[string]interface{}{}
+				}
+			}
+			
 			tools[i] = map[string]interface{}{
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        function.Name,
 					"description": function.Description,
-					"parameters":  function.Parameters,
+					"parameters":  params,
 				},
 			}
 		}
