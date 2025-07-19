@@ -1,8 +1,14 @@
 package chat
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/phildougherty/m8e/internal/ai"
 )
@@ -61,78 +67,33 @@ func (tc *TermChat) addCodeBlockHeaders(content string) string {
 
 // chatWithAISilent processes AI response WITH streaming for UI (silent version for UI)
 func (tc *TermChat) chatWithAISilent(message string) {
-	// This method handles AI communication for the UI
-	// It should stream responses back to the UI without terminal output
+	// Use the actual turn-based conversation system
+	// This is what the backup version was doing - we need to delegate to the turn system
+	// which handles function calls, streaming, and UI confirmations properly
 	
-	// Get the optimized system context
-	systemContext := tc.GetOptimizedSystemPrompt()
+	// Note: We'll implement a simplified interface that calls the turn system
+	// The turn system in cmd/turn.go handles all the complex function calling logic
+	tc.executeConversationFlowSilent(message)
+}
+
+// executeConversationFlowSilent implements the conversation flow without terminal output
+func (tc *TermChat) executeConversationFlowSilent(userInput string) {
+	// Create a new conversation turn in silent mode
+	turn := NewConversationTurnSilent(tc, userInput)
 	
-	// Prepare messages for AI
-	messages := []ai.Message{
-		{Role: "system", Content: systemContext},
+	// Execute the turn with automatic continuation
+	ctx, cancel := context.WithTimeout(tc.ctx, 10*time.Minute)
+	defer cancel()
+	
+	if err := turn.Execute(ctx); err != nil {
+		tc.addMessage("system", fmt.Sprintf("Conversation flow error: %v", err))
 	}
-	
-	// Add chat history
-	for _, msg := range tc.chatHistory {
-		messages = append(messages, ai.Message{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
-	}
-	
-	// Get current provider
-	provider, err := tc.aiManager.GetCurrentProvider()
-	if err != nil {
-		// Send error message to UI
-		if uiProgram != nil {
-			uiProgram.Send(aiResponseMsg{content: "Error: Unable to get AI provider: " + err.Error()})
-		}
-		return
-	}
-	
-	// Start streaming response
-	if uiProgram != nil {
-		uiProgram.Send(aiStreamMsg{content: ""}) // Signal start of response
-	}
-	
-	// Make AI request with streaming
-	streamCh, err := provider.StreamChat(tc.ctx, messages, ai.StreamOptions{
-		Temperature: 0.7,
-		MaxTokens:   4000,
-		Model:       tc.currentModel,
-	})
-	
-	if err != nil {
-		// Send error to UI
-		if uiProgram != nil {
-			uiProgram.Send(aiResponseMsg{content: "Error: " + err.Error()})
-		}
-		return
-	}
-	
-	// Collect streaming response and send to UI
-	var fullResponse strings.Builder
-	for response := range streamCh {
-		if response.Error != nil {
-			if uiProgram != nil {
-				uiProgram.Send(aiResponseMsg{content: "Stream error: " + response.Error.Error()})
-			}
-			return
-		}
-		fullResponse.WriteString(response.Content)
-		// Send streaming content to UI
-		if uiProgram != nil {
-			uiProgram.Send(aiStreamMsg{content: response.Content})
-		}
-	}
-	
-	// Add AI response to history
-	tc.addMessage("assistant", fullResponse.String())
-	
-	// Send final response to UI
-	if uiProgram != nil {
-		uiProgram.Send(aiResponseMsg{content: fullResponse.String()})
-	}
+}
+
+// executeUIConversationTurn is kept for compatibility but delegates to turn-based system
+func (tc *TermChat) executeUIConversationTurn(userRequest string) {
+	// Delegate to the turn-based system to avoid duplication
+	tc.executeConversationFlowSilent(userRequest)
 }
 
 // switchProviderSilent switches AI provider without terminal output
@@ -170,13 +131,38 @@ func (tc *TermChat) switchModelSilent(name string) error {
 
 // getMCPFunctions returns available MCP functions
 func (tc *TermChat) getMCPFunctions() []ai.Function {
-	if tc.mcpClient == nil {
-		return []ai.Function{}
-	}
+	// Get real MCP tools from discovery system
+	functions := tc.getDiscoveredMCPFunctions()
 	
-	// This is a placeholder - the actual implementation would query the MCP client
-	// for available tools and convert them to ai.Function format
-	functions := []ai.Function{
+	// Add native functions - these are implemented directly in the chat system
+	nativeFunctions := []ai.Function{
+		{
+			Name:        "execute_bash",
+			Description: "Execute bash commands safely with security validation and approval controls",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "The bash command to execute",
+					},
+					"working_directory": map[string]interface{}{
+						"type":        "string",
+						"description": "Working directory to run the command in (optional)",
+					},
+					"timeout": map[string]interface{}{
+						"type":        "integer",
+						"description": "Timeout in seconds (optional, default: 120)",
+						"default":     120,
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Human-readable description of what the command does",
+					},
+				},
+				"required": []string{"command"},
+			},
+		},
 		{
 			Name:        "deploy_service",
 			Description: "Deploy a service to Kubernetes cluster",
@@ -219,7 +205,7 @@ func (tc *TermChat) getMCPFunctions() []ai.Function {
 		},
 		{
 			Name:        "get_service_status",
-			Description: "Get the status of services in the cluster",
+			Description: "Get the status of Kubernetes services/pods/deployments in the cluster (NOT for MCP servers - use list_mcp_servers for that)",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -271,5 +257,651 @@ func (tc *TermChat) getMCPFunctions() []ai.Function {
 		},
 	}
 	
+	// Add native functions to the discovered functions
+	functions = append(functions, nativeFunctions...)
+	
 	return functions
+}
+
+// getDiscoveredMCPFunctions gets real MCP functions from discovery system
+func (tc *TermChat) getDiscoveredMCPFunctions() []ai.Function {
+	// Use the same discovery system from system_prompt.go
+	serverData := tc.getComprehensiveMCPData()
+	
+	var functions []ai.Function
+	for _, server := range serverData {
+		// Only include connected servers
+		if server.ConnectionStatus != "connected" {
+			continue
+		}
+		
+		for _, tool := range server.Tools {
+			// Type assert the input schema
+			var parameters map[string]interface{}
+			if tool.InputSchema != nil {
+				if schemaMap, ok := tool.InputSchema.(map[string]interface{}); ok {
+					parameters = schemaMap
+				} else {
+					parameters = map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{},
+					}
+				}
+			} else {
+				parameters = map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{},
+				}
+			}
+			
+			function := ai.Function{
+				Name:        tool.Name,
+				Description: fmt.Sprintf("[%s] %s", server.Name, tool.Description),
+				Parameters:  parameters,
+			}
+			functions = append(functions, function)
+		}
+	}
+	
+	return functions
+}
+
+// discoverMCPServerFunctions discovers available functions from MCP servers
+func (tc *TermChat) discoverMCPServerFunctions() []ai.Function {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	servers, err := tc.mcpClient.ListServers(ctx)
+	if err != nil {
+		// Silent failure - don't spam logs with errors
+		return []ai.Function{}
+	}
+	
+	var mcpFunctions []ai.Function
+	for _, server := range servers {
+		for _, tool := range server.Tools {
+			// Convert MCP tool to AI function format
+			var parameters map[string]interface{}
+			if schema, ok := tool.InputSchema.(map[string]interface{}); ok {
+				parameters = schema
+			} else {
+				// Default parameters if schema is not available
+				parameters = map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{},
+				}
+			}
+			
+			function := ai.Function{
+				Name:        fmt.Sprintf("%s_%s", server.Name, tool.Name),
+				Description: fmt.Sprintf("[%s] %s", server.Name, tool.Description),
+				Parameters:  parameters,
+			}
+			mcpFunctions = append(mcpFunctions, function)
+		}
+	}
+	
+	return mcpFunctions
+}
+
+// executeUIConversationRound executes one round of AI conversation for UI with concurrent function execution
+func (tc *TermChat) executeUIConversationRound(messages []ai.Message) ([]ai.ToolCall, error) {
+	// Create AI message placeholder
+	tc.AddMessage("assistant", "")
+	aiMsgIndex := len(tc.chatHistory) - 1
+	
+	// Start AI response in UI
+	if uiProgram != nil {
+		uiProgram.Send(AiStreamMsg{Content: ""}) // Empty content signals start of AI response
+	}
+	
+	// Get MCP functions
+	mcpFunctions := tc.GetMCPFunctions()
+	
+	// Stream the AI response
+	stream, err := tc.aiManager.StreamChatWithFallback(tc.ctx, messages, ai.StreamOptions{
+		Model:     tc.currentModel,
+		Functions: mcpFunctions,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("AI streaming failed: %v", err)
+	}
+	
+	// Process streaming response with concurrent function execution
+	accumulatedFunctionCalls := make(map[string]*ai.ToolCall)
+	thinkProcessor := ai.NewThinkProcessor()
+	
+	// Channel for concurrent function execution results
+	functionResultChan := make(chan string, 10)
+	var activeFunctionCalls int64
+	
+	// Start goroutine to handle function results
+	go func() {
+		for result := range functionResultChan {
+			// Stream function result immediately to UI
+			if uiProgram != nil {
+				uiProgram.Send(AiStreamMsg{Content: result})
+			}
+			// Add result to chat history
+			tc.chatHistory[aiMsgIndex].Content += result
+		}
+	}()
+	
+	for response := range stream {
+		if response.Error != nil {
+			tc.chatHistory[aiMsgIndex].Content += fmt.Sprintf("\nError: %v", response.Error)
+			break
+		}
+		
+		// Process content
+		if response.Content != "" {
+			regularContent := response.Content
+			if strings.Contains(response.Content, "<think>") || strings.Contains(response.Content, "</think>") {
+				regularContent, _ = ai.ProcessStreamContentWithThinks(thinkProcessor, response.Content)
+			}
+			
+			tc.chatHistory[aiMsgIndex].Content += regularContent
+			
+			// Send streaming content to UI
+			if uiProgram != nil {
+				uiProgram.Send(AiStreamMsg{Content: regularContent})
+			}
+		} else if len(response.ToolCalls) > 0 {
+			// If we get tool calls but no content, add explanatory text
+			if tc.chatHistory[aiMsgIndex].Content == "" {
+				tc.chatHistory[aiMsgIndex].Content = "I'll help you with that."
+				if uiProgram != nil {
+					uiProgram.Send(AiStreamMsg{Content: "I'll help you with that."})
+				}
+			}
+		}
+		
+		// Handle tool calls with immediate concurrent execution
+		if len(response.ToolCalls) > 0 {
+			for _, toolCall := range response.ToolCalls {
+				if toolCall.Type == "function" {
+					// Use function name as key to ensure consistent accumulation
+					callId := toolCall.Function.Name
+					if callId == "" {
+						// For empty function names, use the first non-empty function name we've seen
+						for _, existing := range accumulatedFunctionCalls {
+							if existing.Function.Name != "" {
+								callId = existing.Function.Name
+								break
+							}
+						}
+						if callId == "" {
+							callId = "unknown"
+						}
+					}
+					
+					if existing, exists := accumulatedFunctionCalls[callId]; exists {
+						// Accumulate arguments for existing function call
+						existing.Function.Arguments += toolCall.Function.Arguments
+						// Update function name if it was empty before
+						if existing.Function.Name == "" && toolCall.Function.Name != "" {
+							existing.Function.Name = toolCall.Function.Name
+						}
+					} else {
+						// New function call
+						newCall := &ai.ToolCall{
+							ID:   toolCall.ID,
+							Type: toolCall.Type,
+							Function: ai.FunctionCall{
+								Name:      toolCall.Function.Name,
+								Arguments: toolCall.Function.Arguments,
+							},
+						}
+						accumulatedFunctionCalls[callId] = newCall
+						
+						// Execute function call immediately if we have complete data
+						if toolCall.Function.Name != "" && toolCall.Function.Arguments != "" {
+							atomic.AddInt64(&activeFunctionCalls, 1)
+							go tc.executeUIToolCallConcurrent(*newCall, aiMsgIndex, functionResultChan, &activeFunctionCalls)
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Close the function result channel and wait for any remaining function calls
+	go func() {
+		// Wait for all function calls to complete with timeout
+		timeout := time.After(30 * time.Second)
+		for atomic.LoadInt64(&activeFunctionCalls) > 0 {
+			select {
+			case <-timeout:
+				// Function call timeout
+				if uiProgram != nil {
+					uiProgram.Send(AiStreamMsg{Content: "\n⏰ Function call timeout"})
+				}
+				tc.chatHistory[aiMsgIndex].Content += "\n⏰ Function call timeout"
+				atomic.StoreInt64(&activeFunctionCalls, 0)
+			case <-time.After(100 * time.Millisecond):
+				// Check again
+			}
+		}
+		close(functionResultChan)
+	}()
+	
+	// Signal end of AI response to UI
+	if uiProgram != nil {
+		uiProgram.Send(AiResponseMsg{Content: tc.chatHistory[aiMsgIndex].Content})
+	}
+	
+	// Return empty since we're handling function calls concurrently
+	return []ai.ToolCall{}, nil
+}
+
+// executeUITools executes pending tools and returns results
+func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, error) {
+	var toolResults []ai.Message
+	
+	// Execute all pending tools
+	for _, toolCall := range pendingTools {
+		if toolCall.Type != "function" {
+			continue
+		}
+		
+		// Check approval mode for this specific tool
+		if tc.approvalMode.ShouldConfirm(toolCall.Function.Name) {
+			confirmed := tc.RequestFunctionConfirmation(toolCall.Function.Name, toolCall.Function.Arguments)
+			if !confirmed {
+				// User rejected - add rejection to conversation and continue
+				rejectionResult := ai.Message{
+					Role:       "tool",
+					Content:    fmt.Sprintf("Function call %s was rejected by user", toolCall.Function.Name),
+					ToolCallId: toolCall.ID,
+				}
+				toolResults = append(toolResults, rejectionResult)
+				continue
+			}
+		}
+		
+		// Show function call execution in UI - Claude Code style
+		if uiProgram != nil {
+			// Show function name with formatted arguments and color
+			funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m", toolCall.Function.Name)
+			if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
+			}
+			uiProgram.Send(AiStreamMsg{Content: "\n" + funcCallMsg})
+		}
+		
+		// Parse arguments
+		parsedArgs := tc.parseArguments(toolCall.Function.Arguments)
+		
+		// Try native function execution first, then fall back to MCP
+		var result interface{}
+		var err error
+		
+		// Check if this is a native function
+		nativeFunctions := []string{"execute_bash", "bash", "run_command", "deploy_service", "scale_service", "restart_service", "get_logs", "get_metrics", "check_health"}
+		isNative := false
+		for _, nativeFunc := range nativeFunctions {
+			if toolCall.Function.Name == nativeFunc {
+				isNative = true
+				break
+			}
+		}
+		
+		if isNative {
+			// Execute native function
+			result, err = tc.ExecuteNativeToolCall(toolCall, len(tc.chatHistory)-1)
+		} else {
+			// Execute MCP tool
+			result, err = tc.mcpClient.CallTool(tc.ctx, tc.FindServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
+		}
+		
+		var resultContent string
+		if err != nil {
+			resultContent = fmt.Sprintf("Error: %v", err)
+		} else if result != nil {
+			// Handle result - convert to string
+			resultContent = fmt.Sprintf("Result: %+v", result)
+		} else {
+			resultContent = "Function executed successfully"
+		}
+		
+		// Show function call result in UI
+		if uiProgram != nil {
+			// Claude Code style - just show clean status line with color
+			var statusMsg string
+			if err != nil {
+				statusMsg = fmt.Sprintf("\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
+			} else {
+				statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+			}
+			uiProgram.Send(AiStreamMsg{Content: statusMsg + "\n"})
+		}
+		
+		// Add tool result to conversation
+		toolResult := ai.Message{
+			Role:       "tool",
+			Content:    resultContent,
+			ToolCallId: toolCall.ID,
+		}
+		toolResults = append(toolResults, toolResult)
+	}
+	
+	return toolResults, nil
+}
+
+// Helper method to parse arguments
+func (tc *TermChat) parseArguments(arguments string) map[string]interface{} {
+	if arguments == "" || arguments == "{}" {
+		return map[string]interface{}{}
+	}
+	
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return map[string]interface{}{}
+	}
+	
+	return args
+}
+
+// formatFunctionArgs formats function arguments in a human-readable way with color
+func (tc *TermChat) formatFunctionArgs(arguments string) string {
+	if arguments == "" || arguments == "{}" {
+		return ""
+	}
+	
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		// If not valid JSON, just return truncated string
+		cleaned := strings.ReplaceAll(arguments, "\n", " ")
+		if len(cleaned) > 60 {
+			cleaned = cleaned[:57] + "..."
+		}
+		return cleaned
+	}
+	
+	// Format key arguments nicely with color
+	var parts []string
+	for key, value := range args {
+		switch v := value.(type) {
+		case string:
+			if len(v) > 40 {
+				v = v[:37] + "..."
+			}
+			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[33m\"%s\"\x1b[0m", key, v))
+		case float64, int:
+			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[35m%v\x1b[0m", key, v))
+		default:
+			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[37m%v\x1b[0m", key, v))
+		}
+	}
+	
+	result := strings.Join(parts, " ")
+	if len(result) > 70 {
+		result = result[:67] + "..."
+	}
+	return result
+}
+
+// formatToolResult formats tool execution results in Claude Code style
+func (tc *TermChat) formatToolResult(toolName, serverName string, result interface{}, duration time.Duration) string {
+	// Calculate token count estimate (rough approximation)
+	resultStr := fmt.Sprintf("%+v", result)
+	tokenCount := len(strings.Fields(resultStr)) // Simple word count as token estimate
+	
+	// Claude Code style: just show the status line, no verbose output
+	statusLine := fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
+		toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
+	
+	// Return just the status line - no verbose content for intermediate function calls
+	return fmt.Sprintf("\n%s", statusLine)
+}
+
+// executeUIToolCallConcurrent executes a tool call concurrently for streaming UI
+func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex int, resultChan chan<- string, activeFunctionCalls *int64) {
+	defer func() {
+		atomic.AddInt64(activeFunctionCalls, -1) // Decrement counter when done
+		if r := recover(); r != nil {
+			// Send error to result channel
+			select {
+			case resultChan <- fmt.Sprintf("\n❌ Function call crashed: %v", r):
+			default:
+			}
+		}
+	}()
+	
+	if tc.mcpClient == nil && !tc.isNativeFunction(toolCall.Function.Name) {
+		select {
+		case resultChan <- "\n❌ MCP client not available":
+		default:
+		}
+		return
+	}
+	
+	// Check approval mode for this specific tool - use non-blocking confirmation
+	if tc.approvalMode.ShouldConfirm(toolCall.Function.Name) {
+		confirmed := tc.requestFunctionConfirmationNonBlocking(toolCall.Function.Name, toolCall.Function.Arguments)
+		if !confirmed {
+			// User rejected - send rejection message
+			select {
+			case resultChan <- fmt.Sprintf("\n❌ Function call %s was rejected by user", toolCall.Function.Name):
+			default:
+			}
+			return
+		}
+	}
+	
+	// Record start time for duration tracking
+	startTime := time.Now()
+	
+	// Parse arguments
+	parsedArgs := tc.parseArguments(toolCall.Function.Arguments)
+	
+	// Try native function execution first, then fall back to MCP
+	var result interface{}
+	var err error
+	var serverName string
+	
+	if tc.isNativeFunction(toolCall.Function.Name) {
+		// Show minimal function call progress like Claude Code
+		funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(native)\x1b[0m", toolCall.Function.Name)
+		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+			funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
+		}
+		select {
+		case resultChan <- fmt.Sprintf("\n%s", funcCallMsg):
+		default:
+		}
+		
+		// Execute native function
+		result, err = tc.ExecuteNativeToolCall(toolCall, aiMsgIndex)
+		serverName = "native"
+	} else {
+		// Execute MCP tool using discovery system
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		
+		serverName = tc.FindServerForTool(toolCall.Function.Name)
+		if serverName == "" {
+			duration := time.Since(startTime)
+			select {
+			case resultChan <- fmt.Sprintf("\n\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(no server found) | %v\x1b[0m", toolCall.Function.Name, duration.Truncate(time.Millisecond)):
+			default:
+			}
+			return
+		}
+		
+		// Show minimal function call progress like Claude Code
+		funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s)\x1b[0m", toolCall.Function.Name, serverName)
+		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+			funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
+		}
+		select {
+		case resultChan <- fmt.Sprintf("\n%s", funcCallMsg):
+		default:
+		}
+		
+		// Use the discovery endpoint structure for tool calls
+		result, err = tc.callDiscoveredTool(ctx, serverName, toolCall.Function.Name, parsedArgs)
+	}
+	
+	duration := time.Since(startTime)
+	
+	// Format result like Claude Code - only show the actual output
+	var resultContent string
+	if err != nil {
+		resultContent = fmt.Sprintf("\n\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v |\x1b[0m \x1b[31m%s\x1b[0m", 
+			toolCall.Function.Name, serverName, duration.Truncate(time.Millisecond), err.Error())
+	} else {
+		// Parse and format the actual tool result
+		resultContent = tc.formatToolResult(toolCall.Function.Name, serverName, result, duration)
+	}
+	
+	// Send result to UI
+	select {
+	case resultChan <- resultContent:
+	default:
+	}
+}
+
+// isNativeFunction checks if a function is handled natively
+func (tc *TermChat) isNativeFunction(functionName string) bool {
+	nativeFunctions := []string{
+		"execute_bash", "bash", "run_command", 
+		"deploy_service", "scale_service", "restart_service", 
+		"get_logs", "get_metrics", "check_health",
+		"get_service_status", "create_backup",
+	}
+	
+	for _, nativeFunc := range nativeFunctions {
+		if functionName == nativeFunc {
+			return true
+		}
+	}
+	return false
+}
+
+
+// callDiscoveredTool calls a tool on a discovered MCP server
+func (tc *TermChat) callDiscoveredTool(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) (interface{}, error) {
+	// Use the mcp.robotrad.io endpoint structure
+	endpointURL := fmt.Sprintf("https://mcp.robotrad.io/servers/%s/tools/call", serverName)
+	
+	// Create MCP JSON-RPC request  
+	mcpRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      toolName,
+			"arguments": arguments,
+		},
+	}
+	
+	reqBytes, err := json.Marshal(mcpRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	
+	req, err := http.NewRequestWithContext(ctx, "POST", endpointURL, strings.NewReader(string(reqBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Content-Type", "application/json")
+	
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call tool: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP error %d: %s", resp.StatusCode, string(respBytes))
+	}
+	
+	var mcpResponse struct {
+		Jsonrpc string      `json:"jsonrpc"`
+		ID      int         `json:"id"`
+		Result  interface{} `json:"result"`
+		Error   interface{} `json:"error,omitempty"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&mcpResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	
+	if mcpResponse.Error != nil {
+		return nil, fmt.Errorf("MCP error: %v", mcpResponse.Error)
+	}
+	
+	return mcpResponse.Result, nil
+}
+
+// requestFunctionConfirmationNonBlocking requests confirmation without blocking the UI thread
+func (tc *TermChat) requestFunctionConfirmationNonBlocking(functionName, arguments string) bool {
+	switch tc.approvalMode {
+	case YOLO:
+		return true
+	case AUTO_EDIT:
+		// Auto-approve safe operations (read-only functions)
+		safeFunctions := []string{
+			"get_logs", "get_metrics", "check_health", "get_service_status",
+			"list_workflows", "get_workflow", "get_current_glucose", "get_glucose_history",
+			"matey_ps", "matey_logs", "matey_inspect", "get_cluster_state",
+			"list_toolboxes", "get_toolbox", "memory_status", "task_scheduler_status",
+			"workflow_logs", "workflow_templates", "validate_config", "read_file",
+			"list_directory", "get_file_info", "list_allowed_directories",
+		}
+		for _, safe := range safeFunctions {
+			if functionName == safe || strings.HasSuffix(functionName, "_"+safe) {
+				return true
+			}
+		}
+		// For non-safe functions in AUTO_EDIT mode, use the UI callback
+		if tc.uiConfirmationCallback != nil {
+			return tc.uiConfirmationCallback(functionName, arguments)
+		}
+		return false
+	default:
+		// Default to manual approval - use the UI callback
+		if tc.uiConfirmationCallback != nil {
+			return tc.uiConfirmationCallback(functionName, arguments)
+		}
+		return true // Fallback to approve if no callback available
+	}
+}
+
+// requestFunctionConfirmationAsync requests confirmation asynchronously for concurrent execution
+func (tc *TermChat) requestFunctionConfirmationAsync(functionName, arguments string, callback func(bool)) {
+	// Handle approval modes that don't need confirmation
+	switch tc.approvalMode {
+	case YOLO:
+		callback(true)
+		return
+	case AUTO_EDIT:
+		// Auto-approve safe operations
+		safeFunctions := []string{
+			"get_logs", "get_metrics", "check_health", "get_service_status",
+			"list_mcp_servers", "list_workflows", "get_current_glucose",
+			"matey_list_mcp_servers",
+		}
+		for _, safe := range safeFunctions {
+			if functionName == safe || strings.HasSuffix(functionName, "_"+safe) {
+				callback(true)
+				return
+			}
+		}
+		// Fall through to manual confirmation for non-safe functions
+	}
+	
+	// For manual confirmation, use the UI callback system
+	if tc.uiConfirmationCallback != nil {
+		// The UI callback should handle the confirmation asynchronously
+		result := tc.uiConfirmationCallback(functionName, arguments)
+		callback(result)
+	} else {
+		// Fallback: auto-approve if no UI system available
+		callback(true)
+	}
 }

@@ -25,7 +25,7 @@ func NewMCPClient(proxyURL string) *MCPClient {
 	return &MCPClient{
 		proxyURL: proxyURL,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second, // Increased timeout for tool discovery
+			Timeout: 5 * time.Second, // Short timeout to prevent hanging on disconnected servers
 		},
 		apiKey:     os.Getenv("MCP_API_KEY"),
 		retryCount: 2, // Reduced retry count

@@ -39,6 +39,30 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "up":
+		// Scroll up through viewport history
+		return m.handleScrollUp()
+
+	case "down":
+		// Scroll down through viewport history  
+		return m.handleScrollDown()
+
+	case "pgup", "shift+up":
+		// Page up - scroll up by larger amount
+		return m.handlePageUp()
+
+	case "pgdown", "shift+down":
+		// Page down - scroll down by larger amount
+		return m.handlePageDown()
+
+	case "home":
+		// Go to top of viewport
+		return m.handleScrollToTop()
+
+	case "end":
+		// Go to bottom of viewport
+		return m.handleScrollToBottom()
+
 	case "ctrl+l": // Clear screen
 		m.viewport = []string{}
 		return m, nil
@@ -81,7 +105,7 @@ func (m *ChatUI) handleEscapeKey() (tea.Model, tea.Cmd) {
 	m.inputFocused = true
 	
 	m.viewport = append(m.viewport, "")
-	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("⚙️ System", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 	m.viewport = append(m.viewport, m.createInfoMessage("Input cleared - Ready for new input"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
@@ -113,6 +137,7 @@ func (m *ChatUI) handleConfirmationCancel() (tea.Model, tea.Cmd) {
 // handleLoadingCancel handles canceling AI processing
 func (m *ChatUI) handleLoadingCancel() (tea.Model, tea.Cmd) {
 	m.loading = false
+	m.currentSpinnerQuote = "" // Clear quote for next loading session
 	
 	// Cancel the AI context if possible
 	if m.termChat.cancel != nil {
@@ -124,14 +149,14 @@ func (m *ChatUI) handleLoadingCancel() (tea.Model, tea.Cmd) {
 	// Close any open AI response box cleanly
 	if len(m.viewport) > 0 {
 		lastLine := m.viewport[len(m.viewport)-1]
-		if !strings.HasSuffix(lastLine, "┘") && (strings.Contains(lastLine, "🤖 AI") || strings.HasPrefix(lastLine, "│")) {
+		if !strings.HasSuffix(lastLine, "┘") && (strings.Contains(lastLine, "AI") || strings.HasPrefix(lastLine, "│")) {
 			m.viewport = append(m.viewport, m.createErrorMessage("Response cancelled (ESC pressed)"))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		}
 	}
 	
 	m.viewport = append(m.viewport, "")
-	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("⚙️ System", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 	m.viewport = append(m.viewport, m.createErrorMessage("AI processing cancelled (ESC pressed)"))
 	m.viewport = append(m.viewport, m.createInfoMessage("Ready for new input"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
@@ -173,7 +198,7 @@ func (m *ChatUI) handleModeToggle(targetMode ApprovalMode) (tea.Model, tea.Cmd) 
 	if m.termChat.approvalMode == targetMode {
 		m.termChat.approvalMode = DEFAULT
 		m.viewport = append(m.viewport, "")
-		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("⚙️ System", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 		m.viewport = append(m.viewport, m.createSuccessMessage("Switched to MANUAL mode"))
 		m.viewport = append(m.viewport, m.createInfoMessage("Will ask for confirmation before executing actions"))
 		m.viewport = append(m.viewport, m.createBoxFooter())
@@ -181,15 +206,15 @@ func (m *ChatUI) handleModeToggle(targetMode ApprovalMode) (tea.Model, tea.Cmd) 
 	} else {
 		m.termChat.approvalMode = targetMode
 		m.viewport = append(m.viewport, "")
-		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("⚙️ System", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 		
 		var modeMsg, descMsg string
 		switch targetMode {
 		case YOLO:
-			modeMsg = "Switched to YOLO mode 🔥"
+			modeMsg = "Switched to YOLO mode "
 			descMsg = "Will auto-approve all function calls"
 		case AUTO_EDIT:
-			modeMsg = "Switched to AUTO-EDIT mode ⚡"
+			modeMsg = "Switched to AUTO-EDIT mode "
 			descMsg = "Will auto-approve safe operations"
 		}
 		
@@ -205,13 +230,13 @@ func (m *ChatUI) handleModeToggle(targetMode ApprovalMode) (tea.Model, tea.Cmd) 
 func (m *ChatUI) handleVerboseToggle() (tea.Model, tea.Cmd) {
 	m.termChat.verboseMode = !m.termChat.verboseMode
 	m.viewport = append(m.viewport, "")
-	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("⚙️ System", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 	
 	if m.termChat.verboseMode {
-		m.viewport = append(m.viewport, m.createSuccessMessage("Switched to VERBOSE output mode 📋"))
+		m.viewport = append(m.viewport, m.createSuccessMessage("Switched to VERBOSE output mode"))
 		m.viewport = append(m.viewport, m.createInfoMessage("Will show detailed function results"))
 	} else {
-		m.viewport = append(m.viewport, m.createSuccessMessage("Switched to COMPACT output mode 📦"))
+		m.viewport = append(m.viewport, m.createSuccessMessage("Switched to COMPACT output mode"))
 		m.viewport = append(m.viewport, m.createInfoMessage("Will show brief function summaries"))
 	}
 	m.viewport = append(m.viewport, m.createBoxFooter())
@@ -246,18 +271,18 @@ func (m *ChatUI) handleConfirmationChoice(choice string) tea.Cmd {
 	case "Y":
 		approved = true
 		m.termChat.approvalMode = YOLO
-		feedbackMsg = "Function approved and upgraded to YOLO mode 🔥"
+		feedbackMsg = "Function approved and upgraded to YOLO mode "
 	case "n", "no":
 		approved = false
 		feedbackMsg = "Function cancelled ❌"
 	case "a", "always":
 		approved = true
 		m.termChat.approvalMode = AUTO_EDIT
-		feedbackMsg = "Function approved and upgraded to AUTO mode ⚡"
+		feedbackMsg = "Function approved and upgraded to AUTO mode "
 	case "yolo", "YOLO":
 		approved = true
 		m.termChat.approvalMode = YOLO
-		feedbackMsg = "Function approved and upgraded to YOLO mode 🔥"
+		feedbackMsg = "Function approved and upgraded to YOLO mode "
 	default:
 		approved = false
 		feedbackMsg = "Invalid choice - Function cancelled ❌"
@@ -286,4 +311,56 @@ func (m *ChatUI) handleConfirmationChoice(choice string) tea.Cmd {
 			return nil
 		},
 	)
+}
+
+// Scroll handling methods
+
+// handleScrollUp scrolls up by one line
+func (m *ChatUI) handleScrollUp() (tea.Model, tea.Cmd) {
+	if m.viewportOffset < len(m.viewport)-1 {
+		m.viewportOffset++
+	}
+	return m, nil
+}
+
+// handleScrollDown scrolls down by one line
+func (m *ChatUI) handleScrollDown() (tea.Model, tea.Cmd) {
+	if m.viewportOffset > 0 {
+		m.viewportOffset--
+	}
+	return m, nil
+}
+
+// handlePageUp scrolls up by page (10 lines)
+func (m *ChatUI) handlePageUp() (tea.Model, tea.Cmd) {
+	pageSize := 10
+	m.viewportOffset += pageSize
+	if m.viewportOffset > len(m.viewport)-1 {
+		m.viewportOffset = len(m.viewport) - 1
+	}
+	return m, nil
+}
+
+// handlePageDown scrolls down by page (10 lines)
+func (m *ChatUI) handlePageDown() (tea.Model, tea.Cmd) {
+	pageSize := 10
+	m.viewportOffset -= pageSize
+	if m.viewportOffset < 0 {
+		m.viewportOffset = 0
+	}
+	return m, nil
+}
+
+// handleScrollToTop scrolls to the very top
+func (m *ChatUI) handleScrollToTop() (tea.Model, tea.Cmd) {
+	if len(m.viewport) > 0 {
+		m.viewportOffset = len(m.viewport) - 1
+	}
+	return m, nil
+}
+
+// handleScrollToBottom scrolls to the very bottom (live view)
+func (m *ChatUI) handleScrollToBottom() (tea.Model, tea.Cmd) {
+	m.viewportOffset = 0
+	return m, nil
 }

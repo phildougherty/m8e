@@ -2,11 +2,52 @@ package chat
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+// getRandomHackerQuote returns a random hacker/geek movie quote
+func getRandomHackerQuote() string {
+	quotes := []string{
+		"AI is hacking the Gibson...",
+		"All your base are belong to us",
+		"Hack the planet!",
+		"I'm in.",
+		"Access granted.",
+		"Initiating neural pathways...",
+		"Compiling intelligence...",
+		"Breaking the fourth wall...",
+		"Enhancing cognitive matrices...",
+		"Optimizing decision trees...",
+		"Loading machine consciousness...",
+		"Bootstrapping AI protocols...",
+		"Infiltrating the mainframe...",
+		"Decrypting human behavior...",
+		"Running sentiment analysis...",
+		"Processing natural language...",
+		"Executing deep learning...",
+		"Training neural networks...",
+		"Parsing semantic data...",
+		"Analyzing user intent...",
+		"Synthesizing responses...",
+		"Calculating probabilities...",
+		"Indexing knowledge graphs...",
+		"Vectorizing embeddings...",
+		"There is no spoon...",
+		"Follow the white rabbit...",
+		"Welcome to the machine.",
+		"Resistance is futile.",
+		"sudo make me a sandwich",
+		"404: Reality not found",
+		"The cake is a lie.",
+	}
+	
+	rand.Seed(time.Now().UnixNano())
+	return quotes[rand.Intn(len(quotes))]
+}
 
 // View renders the chat UI
 func (m *ChatUI) View() string {
@@ -44,19 +85,38 @@ func (m *ChatUI) createLoadingView() string {
 		Align(lipgloss.Center).
 		Margin(1)
 	
-	return style.Render("🚀 Loading Matey AI Chat...")
+	return style.Render("Loading Matey AI Chat...")
 }
 
-// renderViewport renders the chat history viewport
+// renderViewport renders the chat history viewport with scrolling support
 func (m *ChatUI) renderViewport(viewportHeight int) []string {
 	viewport := make([]string, viewportHeight)
-	startIdx := len(m.viewport) - viewportHeight
+	
+	// Calculate the actual start index based on scroll offset
+	totalLines := len(m.viewport)
+	if totalLines == 0 {
+		return viewport
+	}
+	
+	// Apply scroll offset - offset of 0 means show latest (bottom)
+	// Higher offset means scroll up (show older content)
+	startIdx := totalLines - viewportHeight - m.viewportOffset
 	if startIdx < 0 {
 		startIdx = 0
 	}
+	
+	// Ensure we don't scroll past the end
+	endIdx := startIdx + viewportHeight
+	if endIdx > totalLines {
+		endIdx = totalLines
+		startIdx = totalLines - viewportHeight
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
 
 	for i := 0; i < viewportHeight; i++ {
-		if startIdx+i < len(m.viewport) {
+		if startIdx+i < totalLines {
 			viewport[i] = m.viewport[startIdx+i]
 		} else {
 			viewport[i] = ""
@@ -70,10 +130,14 @@ func (m *ChatUI) renderViewport(viewportHeight int) []string {
 		spinnerStyle := lipgloss.NewStyle().Foreground(Yellow).Bold(true)
 		processingStyle := lipgloss.NewStyle().Foreground(LightGreen)
 		
-		processingText := "AI is orchestrating your infrastructure..."
+		// Use stored quote or generate a new one if empty
+		if m.currentSpinnerQuote == "" {
+			m.currentSpinnerQuote = getRandomHackerQuote()
+		}
+		
 		viewport[viewportHeight-1] = fmt.Sprintf("  %s %s", 
 			spinnerStyle.Render(spinner), 
-			processingStyle.Render(processingText))
+			processingStyle.Render(m.currentSpinnerQuote))
 	}
 
 	return viewport
@@ -94,11 +158,11 @@ func (m *ChatUI) renderInputArea() string {
 	var promptText string
 	switch m.termChat.approvalMode {
 	case YOLO:
-		promptText = "🔥❯ "
+		promptText = "❯ "
 	case AUTO_EDIT:
-		promptText = "⚡❯ "
+		promptText = "❯ "
 	default:
-		promptText = "🔒❯ "
+		promptText = "❯ "
 	}
 
 	inputPrompt := promptStyle.Render(promptText)
@@ -121,7 +185,7 @@ func (m *ChatUI) renderInputArea() string {
 	return inputStyle.Render(inputPrompt + inputText)
 }
 
-// renderStatusLine renders the status bar
+// renderStatusLine renders the status bar with scroll information
 func (m *ChatUI) renderStatusLine() string {
 	statusStyle := lipgloss.NewStyle().
 		Foreground(GoldYellow).
@@ -129,7 +193,21 @@ func (m *ChatUI) renderStatusLine() string {
 		Padding(0, 1).
 		Width(m.width)
 
-	return statusStyle.Render(m.statusLine)
+	// Build status with scroll info
+	statusText := m.statusLine
+	
+	// Add scroll indicator if user has scrolled up
+	if m.viewportOffset > 0 {
+		totalLines := len(m.viewport)
+		currentPos := totalLines - m.viewportOffset
+		scrollInfo := fmt.Sprintf(" | Scrolled: %d/%d lines (↑↓ scroll, End=bottom)", currentPos, totalLines)
+		statusText += scrollInfo
+	} else if len(m.viewport) > 0 {
+		// Show navigation hint at bottom
+		statusText += " | ↑↓=scroll PgUp/PgDn=page Home/End=top/bottom"
+	}
+
+	return statusStyle.Render(statusText)
 }
 
 // createBoxHeader creates a dynamic width box header with enhanced color
@@ -142,34 +220,41 @@ func (m *ChatUI) createBoxHeader(title, timestamp string) string {
 	// Enhanced color styles for different message types
 	var headerStyle lipgloss.Style
 	switch title {
-	case "You", "👤 You":
+	case "You":
 		headerStyle = lipgloss.NewStyle().Foreground(Brown).Bold(true)
-	case "AI", "🤖 AI Assistant":
+	case "AI", "AI Assistant":
 		headerStyle = lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
-	case "System", "⚙️ System":
+	case "System":
 		headerStyle = lipgloss.NewStyle().Foreground(ArmyGreen).Bold(true)
-	case "Command", "💻 Command":
+	case "Command":
 		headerStyle = lipgloss.NewStyle().Foreground(GoldYellow).Bold(true)
-	case "Function Call Confirmation", "🔐 Function Call Confirmation":
+	case "Function Call Confirmation":
 		headerStyle = lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-	case "Error", "❌ Error":
+	case "Error":
 		headerStyle = lipgloss.NewStyle().Foreground(Red).Bold(true)
-	case "Help", "Providers", "Models", "📚 Help":
+	case "Help", "Providers", "Models", "Help & Commands":
 		headerStyle = lipgloss.NewStyle().Foreground(Tan).Bold(true)
 	default:
 		headerStyle = lipgloss.NewStyle().Foreground(Brown).Bold(true)
 	}
 	
-	header := "┌─ " + title
+	// Build header content
+	content := title
 	if timestamp != "" {
-		header += " " + timestamp
+		content += " " + timestamp
 	}
-	header += " "
-	padding := width - len(header) - 1
-	if padding > 0 {
-		header += strings.Repeat("─", padding)
+	
+	// Calculate available space for dashes to match footer width
+	// Footer: "└" + strings.Repeat("─", width-2) + "┘" = width total
+	// Header: "┌─ " + content + " " + dashes + "┐" = width total
+	// So: 3 + len(content) + 1 + dashes + 1 = width
+	// Therefore: dashes = width - 5 - len(content)
+	dashSpace := width - 5 - len(content)
+	if dashSpace < 0 {
+		dashSpace = 0
 	}
-	header += "┐"
+	
+	header := "┌─ " + content + " " + strings.Repeat("─", dashSpace) + "┐"
 	
 	return headerStyle.Render(header)
 }
@@ -239,15 +324,15 @@ func (m *ChatUI) createModeStatusIndicator() string {
 	switch mode {
 	case YOLO:
 		modeStyle = lipgloss.NewStyle().Foreground(Red).Bold(true)
-		icon = "🔥"
+		icon = "[YOLO]"
 		text = "YOLO"
 	case AUTO_EDIT:
 		modeStyle = lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-		icon = "⚡"
+		icon = "[AUTO]"
 		text = "AUTO"
 	default:
 		modeStyle = lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
-		icon = "🔒"
+		icon = "[MANUAL]"
 		text = "MANUAL"
 	}
 	
@@ -259,7 +344,7 @@ func (m *ChatUI) createProviderStatusIndicator() string {
 	providerStyle := lipgloss.NewStyle().Foreground(GoldYellow).Bold(true)
 	modelStyle := lipgloss.NewStyle().Foreground(Tan)
 	
-	return fmt.Sprintf("🤖 %s (%s)", 
+	return fmt.Sprintf("%s (%s)", 
 		providerStyle.Render(m.termChat.currentProvider),
 		modelStyle.Render(m.termChat.currentModel))
 }

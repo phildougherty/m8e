@@ -1,4 +1,4 @@
-package cmd
+package chat
 
 import (
 	"context"
@@ -8,13 +8,12 @@ import (
 	"time"
 
 	"github.com/phildougherty/m8e/internal/ai"
-	"github.com/phildougherty/m8e/internal/chat"
 )
 
 
 // ConversationTurn represents a single turn in the conversation
 type ConversationTurn struct {
-	chat          *chat.TermChat
+	chat          *TermChat
 	messages      []ai.Message
 	pendingTools  []ai.ToolCall
 	completed     bool
@@ -25,7 +24,7 @@ type ConversationTurn struct {
 }
 
 // NewConversationTurn creates a new conversation turn
-func NewConversationTurn(chat *chat.TermChat, userRequest string) *ConversationTurn {
+func NewConversationTurn(chat *TermChat, userRequest string) *ConversationTurn {
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
@@ -38,7 +37,7 @@ func NewConversationTurn(chat *chat.TermChat, userRequest string) *ConversationT
 }
 
 // NewConversationTurnSilent creates a new conversation turn in silent mode
-func NewConversationTurnSilent(chat *chat.TermChat, userRequest string) *ConversationTurn {
+func NewConversationTurnSilent(chat *TermChat, userRequest string) *ConversationTurn {
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
@@ -141,8 +140,8 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 		fmt.Println()
 	} else {
 		// In silent mode, start the AI response box in UI
-		if chat.GetUIProgram() != nil {
-			chat.GetUIProgram().Send(chat.AiStreamMsg{Content: ""}) // Empty content signals start of AI response
+		if GetUIProgram() != nil {
+			GetUIProgram().Send(aiStreamMsg{content: ""}) // Empty content signals start of AI response
 		}
 	}
 	
@@ -182,20 +181,25 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 			
 			t.chat.GetChatHistory()[aiMsgIndex].Content += regularContent
 			
-			if !t.chat.GetVerboseMode() {
-				if !t.silentMode {
+			// Handle output based on mode
+			if !t.silentMode {
+				// Terminal mode - only print if not verbose mode
+				if !t.chat.GetVerboseMode() {
 					fmt.Print(regularContent)
-				} else {
-					// In silent mode, send streaming content to UI if available
-					if chat.GetUIProgram() != nil {
-						chat.GetUIProgram().Send(chat.AiStreamMsg{Content: regularContent})
-					}
+				}
+			} else {
+				// Silent mode (UI) - send raw content for streaming (markdown will be rendered at the end)
+				if GetUIProgram() != nil {
+					GetUIProgram().Send(aiStreamMsg{content: regularContent})
 				}
 			}
 		} else if len(response.ToolCalls) > 0 && t.silentMode {
 			// In silent mode, if we get tool calls but no content, add explanatory text
 			if t.chat.GetChatHistory()[aiMsgIndex].Content == "" {
 				t.chat.GetChatHistory()[aiMsgIndex].Content = "I'll help you with that."
+				if GetUIProgram() != nil {
+					GetUIProgram().Send(aiStreamMsg{content: "I'll help you with that."})
+				}
 			}
 		}
 		
@@ -263,8 +267,8 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 	t.messages = append(t.messages, currentAIMessage)
 	
 	// In silent mode, signal end of AI response to UI
-	if t.silentMode && chat.GetUIProgram() != nil {
-		chat.GetUIProgram().Send(chat.AiResponseMsg{Content: t.chat.GetChatHistory()[aiMsgIndex].Content})
+	if t.silentMode && GetUIProgram() != nil {
+		GetUIProgram().Send(aiResponseMsg{content: t.chat.GetChatHistory()[aiMsgIndex].Content})
 	}
 	
 	return nil
@@ -296,17 +300,14 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			}
 		}
 		
-		// Execute the tool
-		t.executeToolCall(toolCall, aiMsgIndex)
-		
 		// In silent mode, show function call execution in UI
-		if t.silentMode && chat.GetUIProgram() != nil {
-			// Show function call start
-			funcCallMsg := fmt.Sprintf("[CALL] %s", toolCall.Function.Name)
-			if toolCall.Function.Arguments != "" && toolCall.Function.Arguments != "{}" {
-				funcCallMsg += fmt.Sprintf(" with args: %s", toolCall.Function.Arguments)
+		if t.silentMode && GetUIProgram() != nil {
+			// Show function call start - Claude Code style with color
+			funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m", toolCall.Function.Name)
+			if formattedArgs := t.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
 			}
-			chat.GetUIProgram().Send(chat.AiStreamMsg{Content: "\n" + funcCallMsg + "\n"})
+			GetUIProgram().Send(aiStreamMsg{content: "\n" + funcCallMsg})
 		}
 		
 		// Parse arguments and validate for specific functions
@@ -344,10 +345,29 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			}
 		}
 		
-		// Get the tool result for conversation context
-		toolCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		result, err := t.chat.GetMCPClient().CallTool(toolCtx, t.findServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
-		cancel()
+		// Try native function execution first, then fall back to MCP
+		var result interface{}
+		var err error
+		
+		// Check if this is a native function
+		nativeFunctions := []string{"execute_bash", "bash", "run_command", "deploy_service", "scale_service", "restart_service", "get_logs", "get_metrics", "check_health"}
+		isNative := false
+		for _, nativeFunc := range nativeFunctions {
+			if toolCall.Function.Name == nativeFunc {
+				isNative = true
+				break
+			}
+		}
+		
+		if isNative {
+			// Execute native function
+			result, err = t.executeToolCall(toolCall, aiMsgIndex)
+		} else {
+			// Execute MCP tool
+			toolCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			result, err = t.chat.GetMCPClient().CallTool(toolCtx, t.findServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
+			cancel()
+		}
 		
 		var resultContent string
 		if err != nil {
@@ -360,17 +380,15 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		}
 		
 		// In silent mode, show function call result in UI
-		if t.silentMode && chat.GetUIProgram() != nil {
+		if t.silentMode && GetUIProgram() != nil {
+			// Claude Code style - clean status line only with color
 			var statusMsg string
 			if err != nil {
-				statusMsg = fmt.Sprintf("[ERROR] %s failed: %v", toolCall.Function.Name, err)
+				statusMsg = fmt.Sprintf("\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
-				statusMsg = fmt.Sprintf("[SUCCESS] %s completed", toolCall.Function.Name)
-				if result != nil {
-					statusMsg += fmt.Sprintf(" - %+v", result)
-				}
+				statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
 			}
-			chat.GetUIProgram().Send(chat.AiStreamMsg{Content: statusMsg + "\n"})
+			GetUIProgram().Send(aiStreamMsg{content: statusMsg + "\n"})
 		}
 		
 		// Add tool result to conversation
@@ -394,9 +412,9 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 }
 
 // Helper methods
-func (t *ConversationTurn) executeToolCall(toolCall ai.ToolCall, aiMsgIndex int) {
+func (t *ConversationTurn) executeToolCall(toolCall ai.ToolCall, aiMsgIndex int) (interface{}, error) {
 	// Delegate to existing tool execution logic
-	t.chat.ExecuteNativeToolCall(toolCall, aiMsgIndex)
+	return t.chat.ExecuteNativeToolCall(toolCall, aiMsgIndex)
 }
 
 func (t *ConversationTurn) findServerForTool(toolName string) string {
@@ -414,6 +432,45 @@ func (t *ConversationTurn) parseArguments(arguments string) map[string]interface
 	}
 	
 	return args
+}
+
+// formatFunctionArgs formats function arguments in a human-readable way with color
+func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
+	if arguments == "" || arguments == "{}" {
+		return ""
+	}
+	
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		// If not valid JSON, just return truncated string
+		cleaned := strings.ReplaceAll(arguments, "\n", " ")
+		if len(cleaned) > 60 {
+			cleaned = cleaned[:57] + "..."
+		}
+		return cleaned
+	}
+	
+	// Format key arguments nicely with color
+	var parts []string
+	for key, value := range args {
+		switch v := value.(type) {
+		case string:
+			if len(v) > 40 {
+				v = v[:37] + "..."
+			}
+			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[33m\"%s\"\x1b[0m", key, v))
+		case float64, int:
+			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[35m%v\x1b[0m", key, v))
+		default:
+			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[37m%v\x1b[0m", key, v))
+		}
+	}
+	
+	result := strings.Join(parts, " ")
+	if len(result) > 70 {
+		result = result[:67] + "..."
+	}
+	return result
 }
 
 // shouldContinue determines if the conversation should continue automatically

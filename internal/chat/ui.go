@@ -38,18 +38,18 @@ func (ui *ChatUI) initializeViewport() {
 	// Add enhanced header with army green styling
 	headerStyle := lipgloss.NewStyle().Foreground(ArmyGreen).Bold(true)
 	viewport = append(viewport, headerStyle.Render("╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮"))
-	viewport = append(viewport, headerStyle.Render("│                                               🛠️  Matey AI Chat - Advanced MCP Orchestration Assistant  🛠️                                                │"))
+	viewport = append(viewport, headerStyle.Render("│                                                     Matey AI Chat - Advanced MCP Orchestration Assistant                                                     │"))
 	viewport = append(viewport, headerStyle.Render("╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"))
 	
 	// Add enhanced provider info with colorful indicators
 	providerStyle := lipgloss.NewStyle().Foreground(GoldYellow).Bold(true)
 	metaStyle := lipgloss.NewStyle().Foreground(LightGreen)
 	
-	viewport = append(viewport, fmt.Sprintf("%s %s %s %s %s %s %s", 
-		providerStyle.Render("🔗 Provider:"), metaStyle.Render(ui.termChat.currentProvider),
-		providerStyle.Render("🤖 Model:"), metaStyle.Render(ui.termChat.currentModel),
-		providerStyle.Render("⏰ Time:"), metaStyle.Render(time.Now().Format("15:04:05")),
-		providerStyle.Render("🎯 Mode:"), metaStyle.Render(ui.termChat.approvalMode.GetModeIndicatorNoEmoji())))
+	viewport = append(viewport, fmt.Sprintf("%s %s %s %s %s %s %s %s", 
+		providerStyle.Render("Provider:"), metaStyle.Render(ui.termChat.currentProvider),
+		providerStyle.Render("Model:"), metaStyle.Render(ui.termChat.currentModel),
+		providerStyle.Render("Time:"), metaStyle.Render(time.Now().Format("15:04:05")),
+		providerStyle.Render("Mode:"), metaStyle.Render(ui.termChat.approvalMode.GetModeIndicatorNoEmoji())))
 	viewport = append(viewport, "")
 	
 	// Enhanced welcome section with better formatting
@@ -57,24 +57,24 @@ func (ui *ChatUI) initializeViewport() {
 	bulletStyle := lipgloss.NewStyle().Foreground(GoldYellow)
 	highlightStyle := lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
 	
-	viewport = append(viewport, welcomeStyle.Render("🚀 Welcome to Matey AI Chat"))
+	viewport = append(viewport, welcomeStyle.Render("Welcome to Matey AI Chat"))
 	viewport = append(viewport, "")
 	viewport = append(viewport, "Your expert assistant for Kubernetes-native MCP server orchestration.")
 	viewport = append(viewport, "")
-	viewport = append(viewport, welcomeStyle.Render("💡 What I can help you with:"))
+	viewport = append(viewport, welcomeStyle.Render("What I can help you with:"))
 	viewport = append(viewport, bulletStyle.Render("• Deploy and scale microservices in your Kubernetes cluster"))
 	viewport = append(viewport, bulletStyle.Render("• Set up automated backup and monitoring workflows")) 
 	viewport = append(viewport, bulletStyle.Render("• Create comprehensive CI/CD pipelines with GitOps integration"))
 	viewport = append(viewport, bulletStyle.Render("• Build observability dashboards and alerting systems"))
 	viewport = append(viewport, bulletStyle.Render("• Manage MCP server orchestration with full protocol support"))
 	viewport = append(viewport, "")
-	viewport = append(viewport, welcomeStyle.Render("⚡ Quick Commands:"))
+	viewport = append(viewport, welcomeStyle.Render("Quick Commands:"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("/auto")+" - Smart automation mode (auto-approve safe operations)"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("/yolo")+" - Maximum autonomy mode (auto-approve everything)"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("/status")+" - System status and health checks"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("/help")+" - Complete command reference"))
 	viewport = append(viewport, "")
-	viewport = append(viewport, welcomeStyle.Render("🎮 Keyboard Shortcuts:"))
+	viewport = append(viewport, welcomeStyle.Render("Keyboard Shortcuts:"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("Ctrl+Y")+" - Toggle YOLO/Manual mode"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("Tab")+" - Toggle Auto-edit/Manual mode"))
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("Ctrl+R")+" - Toggle verbose/compact output"))
@@ -82,7 +82,7 @@ func (ui *ChatUI) initializeViewport() {
 	viewport = append(viewport, "")
 	viewport = append(viewport, fmt.Sprintf("Current Mode: %s", ui.createModeIndicator()))
 	viewport = append(viewport, "")
-	viewport = append(viewport, highlightStyle.Render("🎯 Ready to orchestrate your infrastructure! Just tell me what you want to build."))
+	viewport = append(viewport, highlightStyle.Render("Ready to orchestrate your infrastructure! Just tell me what you want to build."))
 	viewport = append(viewport, "")
 	viewport = append(viewport, ui.createSectionDivider())
 	viewport = append(viewport, "")
@@ -92,29 +92,39 @@ func (ui *ChatUI) initializeViewport() {
 		timestamp := msg.Timestamp.Format("15:04:05")
 		switch msg.Role {
 		case "user":
-			viewport = append(viewport, ui.createEnhancedBoxHeader("👤 You", timestamp))
+			viewport = append(viewport, ui.createEnhancedBoxHeader("You", timestamp))
 			lines := strings.Split(msg.Content, "\n")
 			for _, line := range lines {
 				viewport = append(viewport, "│ "+line)
 			}
 			viewport = append(viewport, ui.createBoxFooter())
 		case "assistant":
-			viewport = append(viewport, ui.createEnhancedBoxHeader("🤖 AI Assistant", timestamp))
+			// Claude Code style: simple, clean output
+			rendered := ui.termChat.renderMarkdown(msg.Content)
+			lines := strings.Split(rendered, "\n")
+			
+			// Skip function call XML tags - they're handled by our new system
+			for _, line := range lines {
+				if strings.HasPrefix(line, "<function_calls>") || strings.HasPrefix(line, "</function_calls>") {
+					continue
+				}
+				// Clean output without boxes - just the content
+				if strings.TrimSpace(line) != "" {
+					viewport = append(viewport, line)
+				}
+			}
+		case "system":
+			viewport = append(viewport, ui.createEnhancedBoxHeader("System", timestamp))
+			// Render system messages with markdown too
 			rendered := ui.termChat.renderMarkdown(msg.Content)
 			lines := strings.Split(rendered, "\n")
 			for _, line := range lines {
-				if strings.HasPrefix(line, "<function_calls>") {
-					viewport = append(viewport, ui.createFunctionCallHeader())
-				} else if strings.HasPrefix(line, "</function_calls>") {
-					viewport = append(viewport, ui.createFunctionCallFooter())
-				} else {
+				if line != "" {
 					viewport = append(viewport, "│ "+line)
+				} else {
+					viewport = append(viewport, "│ ")
 				}
 			}
-			viewport = append(viewport, ui.createBoxFooter())
-		case "system":
-			viewport = append(viewport, ui.createEnhancedBoxHeader("⚙️ System", timestamp))
-			viewport = append(viewport, "│ "+msg.Content)
 			viewport = append(viewport, ui.createBoxFooter())
 		}
 		viewport = append(viewport, "")
@@ -132,13 +142,13 @@ func (ui *ChatUI) createModeIndicator() string {
 	switch mode {
 	case YOLO:
 		modeStyle = lipgloss.NewStyle().Foreground(Red).Bold(true)
-		icon = "🔥"
+		icon = "[YOLO]"
 	case AUTO_EDIT:
 		modeStyle = lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-		icon = "⚡"
+		icon = "[AUTO]"
 	default:
 		modeStyle = lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
-		icon = "🔒"
+		icon = "[MANUAL]"
 	}
 	
 	return fmt.Sprintf("%s %s - %s", icon, modeStyle.Render(mode.GetModeIndicatorNoEmoji()), mode.Description())
@@ -171,16 +181,23 @@ func (ui *ChatUI) createEnhancedBoxHeader(title, timestamp string) string {
 		headerStyle = lipgloss.NewStyle().Foreground(Brown).Bold(true)
 	}
 	
-	header := "┌─ " + title
+	// Build header content
+	content := title
 	if timestamp != "" {
-		header += " " + timestamp
+		content += " " + timestamp
 	}
-	header += " "
-	padding := width - len(header) - 1
-	if padding > 0 {
-		header += strings.Repeat("─", padding)
+	
+	// Calculate available space for dashes to match footer width
+	// Footer: "└" + strings.Repeat("─", width-2) + "┘" = width total
+	// Header: "┌─ " + content + " " + dashes + "┐" = width total
+	// So: 3 + len(content) + 1 + dashes + 1 = width
+	// Therefore: dashes = width - 5 - len(content)
+	dashSpace := width - 5 - len(content)
+	if dashSpace < 0 {
+		dashSpace = 0
 	}
-	header += "┐"
+	
+	header := "┌─ " + content + " " + strings.Repeat("─", dashSpace) + "┐"
 	
 	return headerStyle.Render(header)
 }
@@ -262,8 +279,8 @@ func (m *ChatUI) updateStatus() tea.Cmd {
 			totalTokens += len(msg.Content) / 4
 		}
 		
-		// Create enhanced status with icons and colors
-		statusText := fmt.Sprintf("🕒 %s | 🔗 %s | 🤖 %s | 📊 %d tokens | 🎯 %s",
+		// Create enhanced status with colors
+		statusText := fmt.Sprintf("%s | %s | %s | %d tokens | %s",
 			time.Now().Format("15:04:05"), 
 			m.termChat.currentProvider, 
 			m.termChat.currentModel,

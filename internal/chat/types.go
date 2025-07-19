@@ -115,6 +115,7 @@ type ChatUI struct {
 	input                 string
 	cursor                int
 	viewport              []string
+	viewportOffset        int    // Scroll offset for viewport
 	statusLine            string
 	width                 int
 	height                int
@@ -122,6 +123,7 @@ type ChatUI struct {
 	ready                 bool
 	loading               bool
 	spinnerFrame          int
+	currentSpinnerQuote   string // Store current quote for this loading session
 	confirmationMode      bool
 	pendingFunctionCall   *FunctionConfirmation
 }

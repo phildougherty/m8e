@@ -3,8 +3,6 @@ package chat
 import (
 	"fmt"
 	"strings"
-
-	"github.com/phildougherty/m8e/internal/ai"
 )
 
 // processInput handles user input
@@ -36,6 +34,11 @@ func (tc *TermChat) executeConversationFlow(userInput string) {
 
 // printMessage prints a single message with proper markdown rendering
 func (tc *TermChat) printMessage(msg TermChatMessage) {
+	// Skip terminal output if UI program is active to prevent duplication
+	if GetUIProgram() != nil {
+		return
+	}
+	
 	timestamp := msg.Timestamp.Format("15:04:05")
 	
 	switch msg.Role {
@@ -52,60 +55,11 @@ func (tc *TermChat) printMessage(msg TermChatMessage) {
 
 // chatWithAI sends a message to AI and handles the response
 func (tc *TermChat) chatWithAI(message string) {
-	// Build messages with system context and full conversation history
-	messages := []ai.Message{
-		{
-			Role:    "system",
-			Content: tc.GetOptimizedSystemPrompt(),
-		},
-	}
-	
-	// Add conversation history (excluding system messages like /help responses)
-	for _, msg := range tc.chatHistory {
-		if msg.Role == "user" || msg.Role == "assistant" {
-			messages = append(messages, ai.Message{
-				Role:    msg.Role,
-				Content: msg.Content,
-			})
-		}
-	}
-
-	// Get current provider
-	provider, err := tc.aiManager.GetCurrentProvider()
-	if err != nil {
-		tc.addMessage("system", "Error: Unable to get AI provider: "+err.Error())
-		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
-		return
-	}
-
-	// Make AI request using streaming
-	streamCh, err := provider.StreamChat(tc.ctx, messages, ai.StreamOptions{
-		Temperature: 0.7,
-		MaxTokens:   4000,
-		Model:       tc.currentModel,
-	})
-	
-	if err != nil {
-		tc.addMessage("system", "Error: "+err.Error())
-		tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
-		return
-	}
-
-	// Collect streaming response
-	var fullResponse strings.Builder
-	for response := range streamCh {
-		if response.Error != nil {
-			tc.addMessage("system", "Stream error: "+response.Error.Error())
-			tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
-			return
-		}
-		fullResponse.WriteString(response.Content)
-	}
-
-	// Add AI response to history and print it
-	tc.addMessage("assistant", fullResponse.String())
-	tc.printMessage(tc.chatHistory[len(tc.chatHistory)-1])
+	// Use the turn-based conversation system
+	tc.executeConversationFlowSilent(message)
 }
+
+
 
 // handleCommand processes slash commands
 func (tc *TermChat) handleCommand(command string) bool {
