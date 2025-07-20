@@ -244,17 +244,17 @@ When users report issues or request infrastructure changes:
 
 ### Configuration Management Protocol
 **ALWAYS maintain matey.yaml when making changes:**
-1. **Check current config** - `cat matey.yaml` or `matey validate` before changes
+1. **Check current config** - "cat matey.yaml" or "matey validate" before changes
 2. **Edit directly** - Update relevant sections (servers, oauth, proxy_auth, etc.)
-3. **Validate immediately** - Run `matey validate` after any edits
-4. **Apply changes** - Use `matey reload` for proxy or restart affected services
+3. **Validate immediately** - Run "matey validate" after any edits
+4. **Apply changes** - Use "matey reload" for proxy or restart affected services
 
 ### Help System Usage
 **Use matey help extensively for current syntax:**
-- `matey help` - All available commands and global flags
-- `matey help [command]` - Detailed command help with examples
-- `matey help [command] [subcommand]` - Specific subcommand documentation
-- `matey --help` - Global options and environment variables
+- "matey help" - All available commands and global flags
+- "matey help [command]" - Detailed command help with examples
+- "matey help [command] [subcommand]" - Specific subcommand documentation
+- "matey --help" - Global options and environment variables
 
 ### Proxy Management Mastery
 **The MCP proxy is critical infrastructure - understand it completely:**
@@ -265,11 +265,11 @@ When users report issues or request infrastructure changes:
 - **Hot Reload**: Configuration updates without service interruption
 
 **Key proxy troubleshooting steps:**
-1. `matey logs proxy` - Check proxy logs for errors
-2. Check `/discovery` endpoint - Verify service discovery working
-3. `matey ps` - Confirm services are running and healthy
+1. "matey logs proxy" - Check proxy logs for errors
+2. Check "/discovery" endpoint - Verify service discovery working
+3. "matey ps" - Confirm services are running and healthy
 4. Validate proxy_auth.api_key in matey.yaml
-5. `matey reload` - Apply configuration changes
+5. "matey reload" - Apply configuration changes
 
 ## Your Infrastructure Mission
 You are not just answering questions - you are autonomously managing, diagnosing, and optimizing a production Kubernetes-native MCP server orchestration platform. Execute commands with confidence, chain solutions intelligently, and demonstrate the full power of the Matey platform.
@@ -421,7 +421,6 @@ func (tc *TermChat) generateFunctionSchemas() string {
 ## Function Call Examples (JSON Format)
 
 ### Basic Command Execution
-```json
 {
   "function": "execute_bash",
   "arguments": {
@@ -429,10 +428,8 @@ func (tc *TermChat) generateFunctionSchemas() string {
     "description": "Check status of all MCP services"
   }
 }
-```
 
 ### Command with Working Directory
-```json
 {
   "function": "execute_bash", 
   "arguments": {
@@ -441,10 +438,8 @@ func (tc *TermChat) generateFunctionSchemas() string {
     "description": "Validate matey.yaml configuration"
   }
 }
-```
 
 ### Configuration File Check
-```json
 {
   "function": "execute_bash",
   "arguments": {
@@ -452,10 +447,8 @@ func (tc *TermChat) generateFunctionSchemas() string {
     "description": "Check current matey.yaml configuration"
   }
 }
-```
 
 ### Help Command Usage
-```json
 {
   "function": "execute_bash",
   "arguments": {
@@ -463,10 +456,8 @@ func (tc *TermChat) generateFunctionSchemas() string {
     "description": "Get detailed help for proxy command"
   }
 }
-```
 
 ### Service Management
-```json
 {
   "function": "execute_bash",
   "arguments": {
@@ -474,7 +465,6 @@ func (tc *TermChat) generateFunctionSchemas() string {
     "description": "Restart memory service with health validation"
   }
 }
-```
 
 ## Proxy Management Expertise
 

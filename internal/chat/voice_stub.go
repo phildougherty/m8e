@@ -26,7 +26,8 @@ type VoiceConfig struct {
 
 // VoiceManager handles voice interaction (stub version)
 type VoiceManager struct {
-	config *VoiceConfig
+	config      *VoiceConfig
+	isRecording bool
 }
 
 // NewVoiceConfig creates voice configuration from environment variables (stub)
