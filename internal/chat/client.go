@@ -111,10 +111,8 @@ func NewTermChat() *TermChat {
 	// Set up voice callbacks if voice manager is available
 	if voiceManager != nil {
 		voiceManager.SetCallbacks(
-			func() { // onWakeWord
-				if uiProgram != nil {
-					uiProgram.Send(voiceWakeWordMsg{})
-				}
+			func() { // onWakeWord (now used for manual recording start)
+				// No UI message needed - already shown when Ctrl+T is pressed
 			},
 			func(transcript string) { // onTranscript
 				if uiProgram != nil {

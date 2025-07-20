@@ -187,7 +187,6 @@ type voiceTranscriptMsg struct {
 	transcript string
 }
 
-type voiceWakeWordMsg struct{}
 
 type voiceTTSReadyMsg struct {
 	audioData []byte

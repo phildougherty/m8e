@@ -106,8 +106,11 @@ func (vm *VoiceManager) Start() error {
 		return nil
 	}
 
-	// Initialize PortAudio but don't start continuous listening
-	// Voice recording will be triggered manually via Ctrl+T
+	// Initialize PortAudio for manual recording
+	if err := portaudio.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize PortAudio: %w", err)
+	}
+
 	return nil
 }
 
@@ -142,7 +145,7 @@ func (vm *VoiceManager) TriggerManualRecording() error {
 	return nil
 }
 
-// handleManualRecording handles manual recording without wake word detection
+// handleManualRecording handles manual recording with user feedback
 func (vm *VoiceManager) handleManualRecording() {
 	vm.mutex.Lock()
 	if vm.isRecording {
@@ -162,36 +165,55 @@ func (vm *VoiceManager) handleManualRecording() {
 		vm.onWakeWord()
 	}
 
-	// Record audio for speech-to-text
+	// Record audio with shorter duration (3 seconds)
 	audioData, err := vm.recordAudio()
 	if err != nil {
 		log.Printf("Error recording audio: %v", err)
+		// Send error to UI
+		if vm.onTranscript != nil {
+			vm.onTranscript("ERROR: " + err.Error())
+		}
 		return
 	}
 
 	if len(audioData) == 0 {
+		if vm.onTranscript != nil {
+			vm.onTranscript("ERROR: No audio recorded")
+		}
 		return
+	}
+
+	// Send processing message to UI
+	if vm.onTranscript != nil {
+		vm.onTranscript("PROCESSING: Transcribing audio...")
 	}
 
 	// Transcribe audio
 	transcript, err := vm.transcribeAudio(audioData)
 	if err != nil {
 		log.Printf("Error transcribing audio: %v", err)
+		if vm.onTranscript != nil {
+			vm.onTranscript("ERROR: " + err.Error())
+		}
 		return
 	}
 
 	if transcript != "" && vm.onTranscript != nil {
 		vm.onTranscript(transcript)
+	} else if vm.onTranscript != nil {
+		vm.onTranscript("ERROR: No speech detected")
 	}
 }
 
 
-// recordAudio records audio with actual PortAudio capture
+// recordAudio records audio for 3 seconds with PortAudio
 func (vm *VoiceManager) recordAudio() ([]float32, error) {
-	duration := time.Duration(vm.config.MaxRecordingSeconds) * time.Second
+	// Use shorter recording duration (3 seconds)
+	duration := 3 * time.Second
 	frameCount := int(float64(vm.config.SampleRate) * duration.Seconds())
 	
-	audioData := make([]float32, frameCount)
+	audioData := make([]float32, 0, frameCount)
+	var mutex sync.Mutex
 	
 	// Get default input device
 	inputDevice, err := portaudio.DefaultInputDevice()
@@ -211,10 +233,10 @@ func (vm *VoiceManager) recordAudio() ([]float32, error) {
 	}
 	
 	stream, err := portaudio.OpenStream(inputParams, func(in []float32) {
-		// Simple recording - copy input to buffer
-		if len(audioData) > 0 && len(in) > 0 {
-			copy(audioData[len(audioData)-len(in):], in)
-		}
+		mutex.Lock()
+		defer mutex.Unlock()
+		// Append input to buffer
+		audioData = append(audioData, in...)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open recording stream: %w", err)
@@ -226,13 +248,18 @@ func (vm *VoiceManager) recordAudio() ([]float32, error) {
 		return nil, fmt.Errorf("failed to start recording: %w", err)
 	}
 	
-	// Record for specified duration
+	// Record for 3 seconds
 	time.Sleep(duration)
 	
 	// Stop recording
 	stream.Stop()
 	
-	return audioData, nil
+	mutex.Lock()
+	result := make([]float32, len(audioData))
+	copy(result, audioData)
+	mutex.Unlock()
+	
+	return result, nil
 }
 
 // transcribeAudio transcribes audio using Whisper

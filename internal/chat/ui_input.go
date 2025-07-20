@@ -17,7 +17,8 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled && keyStr == "ctrl+t" {
 		m.viewport = append(m.viewport, "")
 		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Recording", time.Now().Format("15:04:05")))
-		m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Recording... (speak now)"))
+		m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Recording for 3 seconds..."))
+		m.viewport = append(m.viewport, m.createInfoMessage("🗣️  Speak now!"))
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		
 		// Trigger manual recording (bypass wake word)
@@ -416,8 +417,7 @@ func (m *ChatUI) handleVoiceToggle() (tea.Model, tea.Cmd) {
 		m.viewport = append(m.viewport, "")
 		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 		m.viewport = append(m.viewport, m.createSuccessMessage("Voice mode ENABLED 🎤"))
-		m.viewport = append(m.viewport, m.createInfoMessage("Wake word: '"+m.termChat.voiceManager.config.WakeWord+"'"))
-		m.viewport = append(m.viewport, m.createInfoMessage("Use Ctrl+Space for Push-to-Talk, Ctrl+M for manual trigger"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Press Ctrl+T to start voice recording"))
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		m.viewport = append(m.viewport, "")
 	} else {

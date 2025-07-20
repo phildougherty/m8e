@@ -50,8 +50,6 @@ func (m *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case userInputMsg:
 		return m.handleUserInputMessage(msg)
 
-	case voiceWakeWordMsg:
-		return m.handleVoiceWakeWordMessage(msg)
 
 	case voiceTranscriptMsg:
 		return m.handleVoiceTranscriptMessage(msg)
@@ -350,13 +348,6 @@ func (m *ChatUI) appendToViewport(content string) {
 }
 
 // handleVoiceWakeWordMessage handles wake word detection
-func (m *ChatUI) handleVoiceWakeWordMessage(msg voiceWakeWordMsg) (tea.Model, tea.Cmd) {
-	m.viewport = append(m.viewport, "")
-	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
-	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Wake word detected! Listening..."))
-	m.viewport = append(m.viewport, m.createBoxFooter())
-	return m, nil
-}
 
 // handleVoiceTranscriptMessage handles voice transcription results
 func (m *ChatUI) handleVoiceTranscriptMessage(msg voiceTranscriptMsg) (tea.Model, tea.Cmd) {
@@ -367,6 +358,30 @@ func (m *ChatUI) handleVoiceTranscriptMessage(msg voiceTranscriptMsg) (tea.Model
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		return m, nil
 	}
+
+	// Handle different message types
+	if strings.HasPrefix(msg.transcript, "ERROR: ") {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Error", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createErrorMessage(strings.TrimPrefix(msg.transcript, "ERROR: ")))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		return m, nil
+	}
+
+	if strings.HasPrefix(msg.transcript, "PROCESSING: ") {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Processing", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createInfoMessage("🔄 "+strings.TrimPrefix(msg.transcript, "PROCESSING: ")))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		return m, nil
+	}
+
+	// Show successful transcription
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Complete", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Transcribed: "+msg.transcript))
+	m.viewport = append(m.viewport, m.createInfoMessage("✅ Recording finished - processing as input"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
 
 	// Process the voice transcript as user input
 	return m, m.processInputCommand(msg.transcript)
