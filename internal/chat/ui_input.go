@@ -15,13 +15,21 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	
 	// Voice key detection (Ctrl+T only)
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled && keyStr == "ctrl+t" {
-		m.viewport = append(m.viewport, "")
-		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Recording", time.Now().Format("15:04:05")))
-		m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Recording for 3 seconds..."))
-		m.viewport = append(m.viewport, m.createInfoMessage("🗣️  Speak now!"))
-		m.viewport = append(m.viewport, m.createBoxFooter())
+		// Check if already recording
+		if m.termChat.voiceManager.isRecording {
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Recording", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createInfoMessage("🛑 Stopping recording early..."))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+		} else {
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Recording", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Recording... (auto-stops when you stop talking)"))
+			m.viewport = append(m.viewport, m.createInfoMessage("🗣️  Speak now! Press Ctrl+T again to stop early"))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+		}
 		
-		// Trigger manual recording (bypass wake word)
+		// Trigger manual recording (or stop if already recording)
 		if err := m.termChat.voiceManager.TriggerManualRecording(); err != nil {
 			m.viewport = append(m.viewport, "")
 			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Error", time.Now().Format("15:04:05")))

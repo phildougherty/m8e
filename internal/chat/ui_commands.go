@@ -141,7 +141,9 @@ func (m *ChatUI) handleStatusCommand(timestamp string) tea.Msg {
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 		m.viewport = append(m.viewport, "│")
 		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Recording:"))
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start voice recording")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start/stop voice recording")
+		m.viewport = append(m.viewport, "│   • Auto-stops when you finish speaking")
+		m.viewport = append(m.viewport, "│   • Press Ctrl+T again to stop early")
 	}
 	
 	m.viewport = append(m.viewport, m.createBoxFooter())
@@ -177,7 +179,9 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 		m.viewport = append(m.viewport, "│")
 		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Recording:"))
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start voice recording")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start/stop voice recording")
+		m.viewport = append(m.viewport, "│   • Auto-stops when you finish speaking")
+		m.viewport = append(m.viewport, "│   • Press Ctrl+T again to stop early")
 	}
 	
 	m.viewport = append(m.viewport, "│")

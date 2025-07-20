@@ -44,6 +44,7 @@ type VoiceManager struct {
 	audioStream   *portaudio.Stream
 	isListening   bool
 	isRecording   bool
+	stopRecording bool
 	onWakeWord    func()
 	onTranscript  func(string)
 	onTTSReady    func([]byte)
@@ -140,9 +141,25 @@ func (vm *VoiceManager) TriggerManualRecording() error {
 		return fmt.Errorf("voice manager not enabled")
 	}
 
-	// Skip wake word detection and go straight to recording
+	vm.mutex.Lock()
+	defer vm.mutex.Unlock()
+
+	if vm.isRecording {
+		// If already recording, stop it early
+		vm.stopRecording = true
+		return nil
+	}
+
+	// Start new recording
 	go vm.handleManualRecording()
 	return nil
+}
+
+// StopRecording stops the current recording session early
+func (vm *VoiceManager) StopRecording() {
+	vm.mutex.Lock()
+	defer vm.mutex.Unlock()
+	vm.stopRecording = true
 }
 
 // handleManualRecording handles manual recording with user feedback
@@ -206,13 +223,13 @@ func (vm *VoiceManager) handleManualRecording() {
 }
 
 
-// recordAudio records audio for 3 seconds with PortAudio
+// recordAudio records audio with Voice Activity Detection and early stopping
 func (vm *VoiceManager) recordAudio() ([]float32, error) {
-	// Use shorter recording duration (3 seconds)
-	duration := 3 * time.Second
-	frameCount := int(float64(vm.config.SampleRate) * duration.Seconds())
+	maxDuration := 10 * time.Second // Maximum recording time
+	silenceThreshold := float32(vm.config.EnergyThreshold) * 0.1 // Lower threshold for silence detection
+	silenceDuration := time.Duration(1.5 * float64(time.Second)) // Stop after 1.5 seconds of silence
 	
-	audioData := make([]float32, 0, frameCount)
+	audioData := make([]float32, 0)
 	var mutex sync.Mutex
 	
 	// Get default input device
@@ -232,11 +249,24 @@ func (vm *VoiceManager) recordAudio() ([]float32, error) {
 		FramesPerBuffer: vm.config.FrameLength,
 	}
 	
+	// Voice Activity Detection variables
+	lastSpeechTime := time.Now()
+	speechDetected := false
+	
 	stream, err := portaudio.OpenStream(inputParams, func(in []float32) {
 		mutex.Lock()
 		defer mutex.Unlock()
+		
 		// Append input to buffer
 		audioData = append(audioData, in...)
+		
+		// Calculate energy for VAD
+		energy := vm.calculateEnergy(in)
+		
+		if energy > silenceThreshold {
+			lastSpeechTime = time.Now()
+			speechDetected = true
+		}
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open recording stream: %w", err)
@@ -248,8 +278,36 @@ func (vm *VoiceManager) recordAudio() ([]float32, error) {
 		return nil, fmt.Errorf("failed to start recording: %w", err)
 	}
 	
-	// Record for 3 seconds
-	time.Sleep(duration)
+	// Reset stop flag
+	vm.mutex.Lock()
+	vm.stopRecording = false
+	vm.mutex.Unlock()
+	
+	startTime := time.Now()
+	
+	// Record with VAD and early stopping
+	for {
+		time.Sleep(100 * time.Millisecond) // Check every 100ms
+		
+		// Check if user manually stopped recording
+		vm.mutex.RLock()
+		shouldStop := vm.stopRecording
+		vm.mutex.RUnlock()
+		
+		if shouldStop {
+			break
+		}
+		
+		// Check maximum duration
+		if time.Since(startTime) > maxDuration {
+			break
+		}
+		
+		// Check for silence after speech was detected
+		if speechDetected && time.Since(lastSpeechTime) > silenceDuration {
+			break
+		}
+	}
 	
 	// Stop recording
 	stream.Stop()
@@ -260,6 +318,19 @@ func (vm *VoiceManager) recordAudio() ([]float32, error) {
 	mutex.Unlock()
 	
 	return result, nil
+}
+
+// calculateEnergy calculates RMS energy of audio frame for VAD
+func (vm *VoiceManager) calculateEnergy(samples []float32) float32 {
+	if len(samples) == 0 {
+		return 0
+	}
+	
+	var sum float32
+	for _, sample := range samples {
+		sum += sample * sample
+	}
+	return sum / float32(len(samples))
 }
 
 // transcribeAudio transcribes audio using Whisper
@@ -360,31 +431,56 @@ func writeInt16(file *os.File, value int16) {
 func (vm *VoiceManager) callWhisper(audioFile string) (string, error) {
 	// Try different whisper implementations in order of preference
 	whisperCommands := [][]string{
-		// OpenAI whisper (most common)
-		{"whisper", audioFile, "--model", vm.config.WhisperModel, "--output_format", "txt", "--output_dir", "/tmp"},
-		// Alternative whisper command formats
-		{"whisper", audioFile, "--model", vm.config.WhisperModel},
+		// OpenAI whisper (most common) - output to file and read it
+		{"whisper", audioFile, "--model", vm.config.WhisperModel, "--output_format", "txt", "--output_dir", "/tmp", "--verbose", "False"},
+		// Alternative whisper command formats  
+		{"whisper", audioFile, "--model", vm.config.WhisperModel, "--verbose", "False"},
 		// Python module invocation
-		{"python3", "-m", "whisper", audioFile, "--model", vm.config.WhisperModel},
+		{"python3", "-m", "whisper", audioFile, "--model", vm.config.WhisperModel, "--verbose", "False"},
 		// Whisper.cpp if available
 		{"whisper-cpp", audioFile},
 	}
 
 	var lastError error
 	for i, cmdArgs := range whisperCommands {
-		log.Printf("Trying whisper command %d: %v", i+1, cmdArgs)
 		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-		output, err := cmd.Output()
 		
+		// Redirect both stdout and stderr to null to hide all output
+		devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err == nil {
+			cmd.Stdout = devNull
+			cmd.Stderr = devNull
+			defer devNull.Close()
+		}
+		
+		// For the first command that outputs to file, run it and read the file
+		if i == 0 {
+			err := cmd.Run()
+			if err == nil {
+				// Read the output file
+				baseName := strings.TrimSuffix(filepath.Base(audioFile), filepath.Ext(audioFile))
+				outputFile := filepath.Join("/tmp", baseName+".txt")
+				if content, readErr := os.ReadFile(outputFile); readErr == nil {
+					os.Remove(outputFile) // Clean up
+					result := strings.TrimSpace(string(content))
+					if result != "" {
+						return result, nil
+					}
+				}
+			}
+			lastError = err
+			continue
+		}
+		
+		// For other commands, capture output normally but silently
+		output, err := cmd.Output()
 		if err == nil && len(output) > 0 {
 			result := strings.TrimSpace(string(output))
 			if result != "" {
-				log.Printf("Whisper transcription successful with command %d", i+1)
 				return result, nil
 			}
 		}
 		lastError = err
-		log.Printf("Whisper command %d failed: %v", i+1, err)
 	}
 
 	// If all whisper commands failed, provide helpful error message
