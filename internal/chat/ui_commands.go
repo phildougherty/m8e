@@ -49,6 +49,8 @@ func (m *ChatUI) handleSlashCommand(command string) tea.Cmd {
 			return m.handleModelCommand(parts, timestamp)
 		case "/models":
 			return m.handleModelsCommand(timestamp)
+		case "/voice-check":
+			return m.handleVoiceCheckCommand(timestamp)
 		default:
 			return m.handleUnknownCommand(baseCommand, timestamp)
 		}
@@ -150,6 +152,7 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/status")+"   - Show system status and health")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/clear")+"    - Clear chat history")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/help")+"     - Show this help message")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/voice-check")+" - Check voice system status")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/exit")+"     - Exit chat")
 	m.viewport = append(m.viewport, "│")
 	
@@ -274,6 +277,27 @@ func (m *ChatUI) handleModelsCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│ "+m.createEmphasizedText("Current model: ")+m.createHighlightText(m.termChat.currentModel))
 	m.viewport = append(m.viewport, "│")
 	m.viewport = append(m.viewport, m.createInfoMessage("Use /model <name> to switch models"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return nil
+}
+
+// handleVoiceCheckCommand shows voice system diagnostics
+func (m *ChatUI) handleVoiceCheckCommand(timestamp string) tea.Msg {
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice System Check", timestamp))
+	
+	// Get voice system check report
+	report := CheckVoiceSystem()
+	lines := strings.Split(report, "\n")
+	
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			m.viewport = append(m.viewport, "│ "+line)
+		} else {
+			m.viewport = append(m.viewport, "│")
+		}
+	}
+	
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
 	return nil

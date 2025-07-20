@@ -347,21 +347,37 @@ func (vm *VoiceManager) saveAudioToWAV(audioData []float32) (string, error) {
 
 // callWhisper calls Whisper for transcription
 func (vm *VoiceManager) callWhisper(audioFile string) (string, error) {
-	// Try whisper command line tool first
-	cmd := exec.Command("whisper", audioFile, "--model", vm.config.WhisperModel, "--output_format", "txt")
-	output, err := cmd.Output()
-	if err == nil {
-		return strings.TrimSpace(string(output)), nil
+	// Try different whisper implementations in order of preference
+	whisperCommands := [][]string{
+		// OpenAI whisper (most common)
+		{"whisper", audioFile, "--model", vm.config.WhisperModel, "--output_format", "txt", "--output_dir", "/tmp"},
+		// Alternative whisper command formats
+		{"whisper", audioFile, "--model", vm.config.WhisperModel},
+		// Python module invocation
+		{"python3", "-m", "whisper", audioFile, "--model", vm.config.WhisperModel},
+		// Whisper.cpp if available
+		{"whisper-cpp", audioFile},
 	}
 
-	// Fallback to faster-whisper if available
-	cmd = exec.Command("faster-whisper", audioFile, "--model", vm.config.WhisperModel)
-	output, err = cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("whisper transcription failed: %w", err)
+	var lastError error
+	for i, cmdArgs := range whisperCommands {
+		log.Printf("Trying whisper command %d: %v", i+1, cmdArgs)
+		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+		output, err := cmd.Output()
+		
+		if err == nil && len(output) > 0 {
+			result := strings.TrimSpace(string(output))
+			if result != "" {
+				log.Printf("Whisper transcription successful with command %d", i+1)
+				return result, nil
+			}
+		}
+		lastError = err
+		log.Printf("Whisper command %d failed: %v", i+1, err)
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	// If all whisper commands failed, provide helpful error message
+	return "", fmt.Errorf("whisper transcription failed - install whisper with: pipx install openai-whisper\nLast error: %w", lastError)
 }
 
 // TextToSpeech converts text to speech using configured TTS endpoint
