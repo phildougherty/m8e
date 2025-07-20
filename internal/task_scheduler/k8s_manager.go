@@ -313,7 +313,8 @@ func (m *K8sManager) createTaskSchedulerResource() *crd.MCPTaskScheduler {
 			},
 		},
 		Spec: crd.MCPTaskSchedulerSpec{
-			Image:        "mcpcompose/task-scheduler:latest",
+			// Leave Image empty to use controller default (matey:latest with scheduler-server)
+			// Leave Command/Args empty to use controller default (./matey scheduler-server)
 			Port:         port,
 			Host:         host,
 			LogLevel:     logLevel,

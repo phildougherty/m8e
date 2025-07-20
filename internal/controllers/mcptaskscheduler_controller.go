@@ -119,11 +119,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileCreating(ctx context.Context, task
 	logger := log.FromContext(ctx)
 	logger.Info("Creating MCPTaskScheduler resources", "name", taskScheduler.Name)
 
-	// Create ConfigMap for task scheduler configuration
-	if err := r.reconcileConfigMap(ctx, taskScheduler); err != nil {
-		logger.Error(err, "Failed to reconcile ConfigMap")
-		return ctrl.Result{}, err
-	}
+	// ConfigMap not needed for built-in scheduler-server (uses env vars)
 
 	// Create Service for task scheduler
 	if err := r.reconcileService(ctx, taskScheduler); err != nil {
@@ -299,7 +295,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileConfigMap(ctx context.Context, tas
 			},
 		},
 		Data: map[string]string{
-			"config.yaml": r.generateTaskSchedulerConfig(taskScheduler),
+			"matey.yaml": r.generateTaskSchedulerConfig(taskScheduler),
 		},
 	}
 
@@ -318,7 +314,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileConfigMap(ctx context.Context, tas
 	}
 
 	// Update if needed
-	if found.Data["config.yaml"] != configMap.Data["config.yaml"] {
+	if found.Data["matey.yaml"] != configMap.Data["matey.yaml"] {
 		found.Data = configMap.Data
 		return r.Update(ctx, found)
 	}
@@ -446,9 +442,15 @@ func (r *MCPTaskSchedulerReconciler) reconcileDeployment(ctx context.Context, ta
 func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskScheduler) corev1.PodSpec {
 	image := taskScheduler.Spec.Image
 	if image == "" {
-		image = "mcpcompose/task-scheduler:latest"
+		// Use registry image by default for better reliability
+		if r.Config != nil {
+			image = r.Config.GetRegistryImage("matey:latest")
+		} else {
+			image = "mcp.robotrad.io/matey:latest"
+		}
 	}
-	if r.Config != nil {
+	// Apply registry prefix for non-registry images
+	if r.Config != nil && !strings.Contains(image, "/") && !strings.HasPrefix(image, "matey:") {
 		image = r.Config.GetRegistryImage(image)
 	}
 
@@ -495,6 +497,8 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		Name:            "task-scheduler",
 		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"./matey"},
+		Args:            []string{"scheduler-server"},
 		Env:             env,
 		Ports: []corev1.ContainerPort{
 			{
@@ -507,14 +511,13 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 			{
 				Name:      "config",
 				MountPath: "/app/config",
-				ReadOnly:  true,
 			},
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/health",
-					Port: intOrString(taskScheduler.Spec.Port + 1000),
+					Port: intOrString(taskScheduler.Spec.Port),
 				},
 			},
 			InitialDelaySeconds: 30,
@@ -523,8 +526,8 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/ready",
-					Port: intOrString(taskScheduler.Spec.Port + 1000),
+					Path: "/health",
+					Port: intOrString(taskScheduler.Spec.Port),
 				},
 			},
 			InitialDelaySeconds: 5,
@@ -540,29 +543,40 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		}
 	}
 
-	// Apply command and args if specified
+	// Apply command and args - use defaults for built-in scheduler if not specified
 	if len(taskScheduler.Spec.Command) > 0 {
 		container.Command = taskScheduler.Spec.Command
+	} else {
+		// Default command for built-in scheduler-server
+		container.Command = []string{"./matey"}
 	}
+	
 	if len(taskScheduler.Spec.Args) > 0 {
 		container.Args = taskScheduler.Spec.Args
+	} else {
+		// Default args for built-in scheduler-server with config file
+		container.Args = []string{
+			"scheduler-server",
+			"--port", fmt.Sprintf("%d", taskScheduler.Spec.Port),
+			"--host", taskScheduler.Spec.Host,
+			"--file", "/app/config/matey.yaml",
+		}
 	}
 
 	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{container},
+		Containers:    []corev1.Container{container},
+		RestartPolicy: corev1.RestartPolicyAlways,
 		Volumes: []corev1.Volume{
 			{
 				Name: "config",
 				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: taskScheduler.Name + "-config",
-						},
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/home/phil/dev/m8e",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
 					},
 				},
 			},
 		},
-		RestartPolicy: corev1.RestartPolicyAlways,
 	}
 
 	// Apply security context
