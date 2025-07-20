@@ -11,7 +11,20 @@ import (
 
 // handleKeyPress processes keyboard input
 func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	keyStr := msg.String()
+	
+	// Debug logging for voice keys (only when voice is enabled)
+	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+		if keyStr == "ctrl+space" || keyStr == "ctrl+m" || keyStr == "ctrl+t" || keyStr == "f1" {
+			// Show debug message for voice key presses
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Debug", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createInfoMessage("🔍 Voice key pressed: "+keyStr))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+		}
+	}
+	
+	switch keyStr {
 	case "ctrl+c":
 		return m, tea.Quit
 	
@@ -87,6 +100,18 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+m": // Manual voice trigger (alternative to wake word)
+		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+			return m.handleManualVoiceTrigger()
+		}
+		return m, nil
+
+	case "ctrl+t": // Alternative voice trigger (easier key combo)
+		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+			return m.handleManualVoiceTrigger()
+		}
+		return m, nil
+
+	case "f1": // Function key for voice trigger (should work reliably)
 		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 			return m.handleManualVoiceTrigger()
 		}
