@@ -467,9 +467,14 @@ func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) 
 
 // checkHTTPHealth performs an HTTP health check by testing MCP protocol response
 func (dcm *DynamicConnectionManager) checkHTTPHealth(conn *MCPConnection) bool {
+	dcm.logger.Info("DEBUG: Starting HTTP health check for %s", conn.Name)
+	
 	if conn.HTTPConnection == nil {
+		dcm.logger.Info("DEBUG: No HTTP connection available for %s", conn.Name)
 		return false
 	}
+
+	dcm.logger.Info("DEBUG: HTTP connection available for %s - BaseURL: %s", conn.Name, conn.HTTPConnection.BaseURL)
 
 	// Test actual MCP protocol response with an initialize request
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -490,30 +495,33 @@ func (dcm *DynamicConnectionManager) checkHTTPHealth(conn *MCPConnection) bool {
 		},
 	}
 
+	dcm.logger.Info("DEBUG: Sending HTTP health request for %s with request: %+v", conn.Name, request)
 	response, err := dcm.sendHTTPHealthRequest(ctx, conn, request)
 	if err != nil {
-		dcm.logger.Debug("HTTP health check failed for %s: %v", conn.Name, err)
+		dcm.logger.Info("DEBUG: HTTP health request failed for %s: %v", conn.Name, err)
 		return false
 	}
 
 	// Check if response contains expected MCP structure
+	dcm.logger.Info("DEBUG: Checking HTTP response for %s: %+v", conn.Name, response)
+	
 	if response == nil {
-		dcm.logger.Debug("HTTP health check failed for %s: nil response", conn.Name)
+		dcm.logger.Info("DEBUG: HTTP health check failed for %s: nil response", conn.Name)
 		return false
 	}
 
 	// Check for valid MCP response structure
 	if _, hasResult := response["result"]; hasResult {
-		dcm.logger.Debug("HTTP health check passed for %s", conn.Name)
+		dcm.logger.Info("DEBUG: HTTP health check passed for %s - found result field", conn.Name)
 		return true
 	}
 
 	if _, hasError := response["error"]; hasError {
-		dcm.logger.Debug("HTTP health check passed for %s (server responded with error, but MCP protocol works)", conn.Name)
+		dcm.logger.Info("DEBUG: HTTP health check passed for %s - found error field (server responded with error, but MCP protocol works)", conn.Name)
 		return true // Server responded with MCP error, but protocol works
 	}
 
-	dcm.logger.Debug("HTTP health check failed for %s: invalid MCP response structure", conn.Name)
+	dcm.logger.Info("DEBUG: HTTP health check failed for %s: invalid MCP response structure - response: %+v", conn.Name, response)
 	return false
 }
 
@@ -578,7 +586,7 @@ func (dcm *DynamicConnectionManager) checkSSEHealth(conn *MCPConnection) bool {
 	}
 
 	// Test actual MCP protocol response with an initialize request
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// Create a minimal initialize request (no session establishment needed)
@@ -629,57 +637,82 @@ func (dcm *DynamicConnectionManager) sendSSEHealthRequest(ctx context.Context, c
 		return nil, fmt.Errorf("no SSE connection available")
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	
 	// Step 1: Connect to SSE endpoint to get session endpoint
 	sseURL := conn.SSEConnection.BaseURL + "/sse"
+	dcm.logger.Info("DEBUG: Attempting SSE health check for %s at URL: %s", conn.Name, sseURL)
+	
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", sseURL, nil)
 	if err != nil {
+		dcm.logger.Info("DEBUG: Failed to create SSE request for %s: %v", conn.Name, err)
 		return nil, fmt.Errorf("failed to create SSE request: %w", err)
 	}
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 
+	dcm.logger.Info("DEBUG: Sending SSE request for %s...", conn.Name)
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		dcm.logger.Info("DEBUG: SSE request failed for %s: %v", conn.Name, err)
 		return nil, fmt.Errorf("SSE request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	dcm.logger.Info("DEBUG: SSE response for %s - Status: %d, Headers: %v", conn.Name, resp.StatusCode, resp.Header)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		dcm.logger.Info("DEBUG: SSE request for %s failed with status %d", conn.Name, resp.StatusCode)
 		return nil, fmt.Errorf("SSE request failed with status %d", resp.StatusCode)
 	}
 
 	// Step 2: Read the endpoint discovery from SSE stream
+	dcm.logger.Info("DEBUG: Reading SSE stream for %s...", conn.Name)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 	
 	sessionEndpoint := ""
+	lineCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
-		dcm.logger.Debug("SSE health check read line: %s", line)
+		lineCount++
+		dcm.logger.Info("DEBUG: SSE line %d for %s: '%s'", lineCount, conn.Name, line)
 		
 		if strings.HasPrefix(line, "event: endpoint") {
+			dcm.logger.Info("DEBUG: Found event: endpoint for %s", conn.Name)
 			// Next line should have the endpoint data
 			if scanner.Scan() {
 				dataLine := scanner.Text()
+				lineCount++
+				dcm.logger.Info("DEBUG: SSE line %d for %s: '%s'", lineCount, conn.Name, dataLine)
 				if strings.HasPrefix(dataLine, "data: ") {
 					sessionPath := strings.TrimPrefix(dataLine, "data: ")
 					// BaseURL is now the server base URL, so use it directly
 					serverBaseURL := strings.TrimSuffix(conn.SSEConnection.BaseURL, "/")
 					sessionEndpoint = serverBaseURL + sessionPath
-					dcm.logger.Debug("SSE health check found session endpoint: %s", sessionEndpoint)
+					dcm.logger.Info("DEBUG: SSE health check found session endpoint for %s: %s", conn.Name, sessionEndpoint)
 					break
+				} else {
+					dcm.logger.Info("DEBUG: Data line for %s does not start with 'data: '", conn.Name)
 				}
+			} else {
+				dcm.logger.Info("DEBUG: Failed to read data line after event: endpoint for %s", conn.Name)
 			}
 		}
 	}
 
+	if scanner.Err() != nil {
+		dcm.logger.Info("DEBUG: Scanner error for %s: %v", conn.Name, scanner.Err())
+		return nil, fmt.Errorf("error reading SSE stream: %w", scanner.Err())
+	}
+
+	dcm.logger.Info("DEBUG: Finished reading SSE stream for %s, total lines: %d, session endpoint: '%s'", conn.Name, lineCount, sessionEndpoint)
+
 	if sessionEndpoint == "" {
+		dcm.logger.Info("DEBUG: No session endpoint found for %s after reading %d lines", conn.Name, lineCount)
 		return nil, fmt.Errorf("no session endpoint found in SSE stream")
 	}
 
-	// Step 3: Try to send a simple ping to the session endpoint
+	// Step 3: Try to send a simple ping to the base messages endpoint (no session required)
 	requestData, err := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "health-ping",
@@ -689,8 +722,10 @@ func (dcm *DynamicConnectionManager) sendSSEHealthRequest(ctx context.Context, c
 		return nil, fmt.Errorf("failed to marshal ping request: %w", err)
 	}
 
-	dcm.logger.Info("TRACE: Sending ping to session endpoint: %s", sessionEndpoint)
-	pingReq, err := http.NewRequestWithContext(ctx, "POST", sessionEndpoint, bytes.NewBuffer(requestData))
+	// Use base messages endpoint without session ID for ping
+	messagesEndpoint := strings.TrimSuffix(conn.SSEConnection.BaseURL, "/") + "/messages"
+	dcm.logger.Info("TRACE: Sending ping to messages endpoint: %s", messagesEndpoint)
+	pingReq, err := http.NewRequestWithContext(ctx, "POST", messagesEndpoint, bytes.NewBuffer(requestData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ping request: %w", err)
 	}
