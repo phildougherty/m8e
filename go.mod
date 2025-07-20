@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-logr/logr v1.4.2
+	github.com/gordonklaus/portaudio v0.0.0-20230709114228-aafa478834f5
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/joho/godotenv v1.5.1

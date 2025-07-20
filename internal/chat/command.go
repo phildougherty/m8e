@@ -33,6 +33,8 @@ Keyboard shortcuts:
 • Ctrl+Y: Toggle YOLO/MANUAL mode
 • Tab: Toggle AUTO-EDIT/MANUAL mode
 • Ctrl+R: Toggle verbose/compact output
+• Ctrl+V: Toggle voice mode
+• Spacebar: Push-to-talk (when voice enabled)
 
 Slash commands:
 • /auto - Enable smart automation mode

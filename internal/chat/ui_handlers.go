@@ -49,6 +49,15 @@ func (m *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case userInputMsg:
 		return m.handleUserInputMessage(msg)
+
+	case voiceWakeWordMsg:
+		return m.handleVoiceWakeWordMessage(msg)
+
+	case voiceTranscriptMsg:
+		return m.handleVoiceTranscriptMessage(msg)
+
+	case voiceTTSReadyMsg:
+		return m.handleVoiceTTSReadyMessage(msg)
 	}
 
 	return m, nil
@@ -120,6 +129,16 @@ func (m *ChatUI) handleAIResponseMessage(msg aiResponseMsg) (tea.Model, tea.Cmd)
 		
 		// Reset the start index
 		m.aiResponseStartIdx = -1
+		
+		// Convert AI response to speech if voice is enabled
+		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+			go func() {
+				if err := m.termChat.voiceManager.TextToSpeech(msg.content); err != nil {
+					// Don't block UI for TTS errors, just log them
+					// Could send error message to UI if desired
+				}
+			}()
+		}
 	}
 	
 	// Note: Spacing now handled only when there's actual next content
@@ -328,4 +347,35 @@ func (m *ChatUI) appendToViewport(content string) {
 		// User was scrolled up, so they probably want to stay where they are
 		// No adjustment needed - they'll see the new content when they scroll down
 	}
+}
+
+// handleVoiceWakeWordMessage handles wake word detection
+func (m *ChatUI) handleVoiceWakeWordMessage(msg voiceWakeWordMsg) (tea.Model, tea.Cmd) {
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Wake word detected! Listening..."))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	return m, nil
+}
+
+// handleVoiceTranscriptMessage handles voice transcription results
+func (m *ChatUI) handleVoiceTranscriptMessage(msg voiceTranscriptMsg) (tea.Model, tea.Cmd) {
+	if msg.transcript == "" {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createErrorMessage("No speech detected"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		return m, nil
+	}
+
+	// Process the voice transcript as user input
+	return m, m.processInputCommand(msg.transcript)
+}
+
+// handleVoiceTTSReadyMessage handles TTS audio ready for playback
+func (m *ChatUI) handleVoiceTTSReadyMessage(msg voiceTTSReadyMsg) (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager != nil {
+		go m.termChat.voiceManager.PlayAudio(msg.audioData)
+	}
+	return m, nil
 }

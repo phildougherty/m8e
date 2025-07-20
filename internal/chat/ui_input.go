@@ -76,6 +76,19 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+r": // Toggle verbose/compact output
 		return m.handleVerboseToggle()
 
+	case "ctrl+v": // Toggle voice mode
+		return m.handleVoiceToggle()
+
+	case "space": // PTT (Push-to-Talk) mode
+		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+			return m.handlePushToTalk()
+		}
+		// If voice not enabled, treat as regular space character
+		char := msg.String()
+		m.input = m.input[:m.cursor] + char + m.input[m.cursor:]
+		m.cursor++
+		return m, nil
+
 	default:
 		// Regular character input
 		if len(msg.String()) == 1 {
@@ -362,5 +375,69 @@ func (m *ChatUI) handleScrollToTop() (tea.Model, tea.Cmd) {
 // handleScrollToBottom scrolls to the very bottom (live view)
 func (m *ChatUI) handleScrollToBottom() (tea.Model, tea.Cmd) {
 	m.viewportOffset = 0
+	return m, nil
+}
+
+// handleVoiceToggle handles toggling voice mode on/off
+func (m *ChatUI) handleVoiceToggle() (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager == nil {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createErrorMessage("Voice system not initialized"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Set VOICE_ENABLED=true to enable voice features"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return m, nil
+	}
+
+	if !m.termChat.voiceManager.config.Enabled {
+		// Enable voice mode
+		m.termChat.voiceManager.config.Enabled = true
+		if err := m.termChat.voiceManager.Start(); err != nil {
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createErrorMessage("Failed to start voice system: "+err.Error()))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+			m.viewport = append(m.viewport, "")
+			return m, nil
+		}
+		
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createSuccessMessage("Voice mode ENABLED 🎤"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Wake word: '"+m.termChat.voiceManager.config.WakeWord+"'"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Use Spacebar for Push-to-Talk"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+	} else {
+		// Disable voice mode
+		m.termChat.voiceManager.Stop()
+		m.termChat.voiceManager.config.Enabled = false
+		
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createInfoMessage("Voice mode DISABLED"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+	}
+	
+	return m, nil
+}
+
+// handlePushToTalk handles push-to-talk recording
+func (m *ChatUI) handlePushToTalk() (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager == nil || !m.termChat.voiceManager.config.Enabled {
+		return m, nil
+	}
+	
+	// Start recording for PTT
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Recording... (release Spacebar to stop)"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	
+	// TODO: Implement PTT recording logic
+	// This would need to be handled with key release events
+	
 	return m, nil
 }

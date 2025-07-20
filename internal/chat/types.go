@@ -100,6 +100,7 @@ type TermChat struct {
 	maxTurns               int          // Maximum continuation turns to prevent infinite loops
 	currentTurns           int          // Current turn count for this conversation
 	uiConfirmationCallback func(functionName, arguments string) bool // Callback for UI-based confirmations
+	voiceManager           *VoiceManager // Voice interaction manager
 }
 
 // TermChatMessage represents a chat message
@@ -181,6 +182,16 @@ type functionConfirmationMsg struct {
 }
 
 type startSpinnerMsg struct{}
+
+type voiceTranscriptMsg struct {
+	transcript string
+}
+
+type voiceWakeWordMsg struct{}
+
+type voiceTTSReadyMsg struct {
+	audioData []byte
+}
 
 // Color theme constants for consistent styling
 var (

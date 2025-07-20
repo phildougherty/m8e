@@ -86,7 +86,15 @@ func NewTermChat() *TermChat {
 	}
 	fmt.Printf("\033[1;32m%s\033[0m\n", mcpStatus)
 	
-	return &TermChat{
+	// Initialize voice manager
+	voiceConfig := NewVoiceConfig()
+	voiceManager, err := NewVoiceManager(voiceConfig)
+	if err != nil {
+		fmt.Printf("\033[1;33mWarning: Voice system initialization failed: %v\033[0m\n", err)
+		voiceManager = nil
+	}
+
+	tc := &TermChat{
 		ctx:              ctx,
 		cancel:           cancel,
 		chatHistory:      make([]TermChatMessage, 0),
@@ -97,7 +105,31 @@ func NewTermChat() *TermChat {
 		approvalMode:    DEFAULT, // Start in manual mode for safety
 		maxTurns:        10, // Reasonable limit to prevent infinite loops
 		currentTurns:    0,  // Reset turn counter
+		voiceManager:    voiceManager,
 	}
+
+	// Set up voice callbacks if voice manager is available
+	if voiceManager != nil {
+		voiceManager.SetCallbacks(
+			func() { // onWakeWord
+				if uiProgram != nil {
+					uiProgram.Send(voiceWakeWordMsg{})
+				}
+			},
+			func(transcript string) { // onTranscript
+				if uiProgram != nil {
+					uiProgram.Send(voiceTranscriptMsg{transcript: transcript})
+				}
+			},
+			func(audioData []byte) { // onTTSReady
+				if uiProgram != nil {
+					uiProgram.Send(voiceTTSReadyMsg{audioData: audioData})
+				}
+			},
+		)
+	}
+
+	return tc
 }
 
 // Run starts the terminal chat interface
