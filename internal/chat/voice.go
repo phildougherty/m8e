@@ -493,10 +493,16 @@ func (vm *VoiceManager) TextToSpeech(text string) error {
 		return nil
 	}
 
+	// Filter and clean text for TTS
+	cleanText := vm.filterTextForTTS(text)
+	if cleanText == "" {
+		return nil // Nothing to speak
+	}
+
 	payload := map[string]interface{}{
 		"model": vm.config.TTSModel,
 		"voice": vm.config.TTSVoice,
-		"input": text,
+		"input": cleanText,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -520,6 +526,203 @@ func (vm *VoiceManager) TextToSpeech(text string) error {
 	}
 
 	return nil
+}
+
+// filterTextForTTS cleans text for better TTS by removing markdown and expanding acronyms
+func (vm *VoiceManager) filterTextForTTS(text string) string {
+	// Remove markdown formatting
+	text = vm.removeMarkdown(text)
+	
+	// Expand common acronyms and abbreviations
+	text = vm.expandAcronyms(text)
+	
+	// Clean up extra whitespace
+	text = strings.TrimSpace(text)
+	
+	return text
+}
+
+// removeMarkdown strips markdown formatting from text
+func (vm *VoiceManager) removeMarkdown(text string) string {
+	// Remove code blocks (```...```)
+	text = strings.ReplaceAll(text, "```", "")
+	
+	// Remove inline code (`...`)
+	for strings.Contains(text, "`") {
+		start := strings.Index(text, "`")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(text[start+1:], "`")
+		if end == -1 {
+			break
+		}
+		end += start + 1
+		// Replace with just the content (without backticks)
+		text = text[:start] + text[start+1:end] + text[end+1:]
+	}
+	
+	// Remove bold/italic markers (**text**, *text*)
+	text = strings.ReplaceAll(text, "**", "")
+	text = strings.ReplaceAll(text, "*", "")
+	
+	// Remove headers (# ## ###)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			// Remove # markers but keep the text
+			lines[i] = strings.TrimSpace(strings.TrimLeft(line, "#"))
+		}
+	}
+	text = strings.Join(lines, "\n")
+	
+	// Remove links [text](url) -> text
+	for strings.Contains(text, "](") {
+		start := strings.LastIndex(text[:strings.Index(text, "](")+1], "[")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(text[start:], ")")
+		if end == -1 {
+			break
+		}
+		end += start
+		
+		linkText := text[start+1:strings.Index(text[start:], "]")+start]
+		text = text[:start] + linkText + text[end+1:]
+	}
+	
+	// Remove remaining brackets and parentheses that might be leftover
+	text = strings.ReplaceAll(text, "[", "")
+	text = strings.ReplaceAll(text, "]", "")
+	
+	return text
+}
+
+// expandAcronyms expands common internet acronyms and abbreviations for better TTS
+func (vm *VoiceManager) expandAcronyms(text string) string {
+	// Common acronyms and their expansions
+	acronyms := map[string]string{
+		"etc":   "etcetera",
+		"etc.":  "etcetera",
+		"tldr":  "too long didn't read",
+		"tl;dr": "too long didn't read",
+		"wtf":   "what the heck", 
+		"omg":   "oh my god",
+		"lol":   "laughing out loud",
+		"lmao":  "laughing my butt off",
+		"rofl":  "rolling on floor laughing",
+		"brb":   "be right back",
+		"btw":   "by the way",
+		"fyi":   "for your information",
+		"imho":  "in my humble opinion",
+		"imo":   "in my opinion",
+		"afaik": "as far as I know",
+		"iirc":  "if I recall correctly",
+		"ianal": "I am not a lawyer",
+		"ftfy":  "fixed that for you",
+		"smh":   "shaking my head",
+		"tbh":   "to be honest",
+		"ngl":   "not gonna lie",
+		"idk":   "I don't know",
+		"irl":   "in real life",
+		"diy":   "do it yourself",
+		"faq":   "frequently asked questions",
+		"asap":  "as soon as possible",
+		"aka":   "also known as",
+		"i.e.":  "that is",
+		"e.g.":  "for example",
+		"vs":    "versus",
+		"vs.":   "versus",
+		"w/":    "with",
+		"w/o":   "without",
+		"b/c":   "because",
+		"thru":  "through",
+		"ur":    "your",
+		"u":     "you",
+		"pls":   "please",
+		"plz":   "please",
+		"thx":   "thanks",
+		"ty":    "thank you",
+		"np":    "no problem",
+		"nvm":   "never mind",
+		"rn":    "right now",
+		"atm":   "at the moment",
+		"2day":  "today",
+		"2morrow": "tomorrow",
+		"b4":    "before",
+		"gr8":   "great",
+		"n8":    "night",
+		"m8":    "mate",
+		"k8s":   "kubernetes",
+		"ai":    "artificial intelligence",
+		"ml":    "machine learning",
+		"api":   "application programming interface",
+		"ui":    "user interface",
+		"ux":    "user experience",
+		"db":    "database",
+		"cli":   "command line interface",
+		"gui":   "graphical user interface",
+		"os":    "operating system",
+		"vm":    "virtual machine",
+		"vps":   "virtual private server",
+		"ssh":   "secure shell",
+		"http":  "hypertext transfer protocol",
+		"https": "hypertext transfer protocol secure",
+		"url":   "uniform resource locator",
+		"uri":   "uniform resource identifier",
+		"json":  "javascript object notation",
+		"yaml":  "yet another markup language",
+		"xml":   "extensible markup language",
+		"html":  "hypertext markup language",
+		"css":   "cascading style sheets",
+		"js":    "javascript",
+		"ts":    "typescript",
+		"sql":   "structured query language",
+		"crud":  "create read update delete",
+		"rest":  "representational state transfer",
+		"jwt":   "json web token",
+		"oauth": "open authorization",
+		"2fa":   "two factor authentication",
+		"mfa":   "multi factor authentication",
+		"vpn":   "virtual private network",
+		"dns":   "domain name system",
+		"cdn":   "content delivery network",
+		"aws":   "amazon web services",
+		"gcp":   "google cloud platform",
+		"ci":    "continuous integration",
+		"cd":    "continuous deployment",
+		"devops": "development operations",
+		"sre":   "site reliability engineering",
+		"tdd":   "test driven development",
+		"bdd":   "behavior driven development",
+		"mvp":   "minimum viable product",
+		"poc":   "proof of concept",
+		"wip":   "work in progress",
+		"pr":    "pull request",
+		"mr":    "merge request",
+		"repo":  "repository",
+		"gh":    "github",
+		"gl":    "gitlab",
+	}
+	
+	// Split into words and check each one
+	words := strings.Fields(text)
+	for i, word := range words {
+		// Check if word (lowercase) is in our acronym map
+		lowerWord := strings.ToLower(strings.Trim(word, ".,!?;:"))
+		if expansion, exists := acronyms[lowerWord]; exists {
+			// Preserve punctuation
+			punctuation := ""
+			if len(word) > len(lowerWord) {
+				punctuation = word[len(lowerWord):]
+			}
+			words[i] = expansion + punctuation
+		}
+	}
+	
+	return strings.Join(words, " ")
 }
 
 // PlayAudio plays audio data
