@@ -358,27 +358,27 @@ func (tc *TermChat) getComprehensiveMCPData() []ComprehensiveServerInfo {
 
 // fetchDiscoveryData performs the actual discovery data fetch
 func (tc *TermChat) fetchDiscoveryData() []ComprehensiveServerInfo {
-	// First try to fetch from mcp.robotrad.io/discovery endpoint
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// First try to fetch from mcp.robotrad.io/discovery endpoint (local nginx routing)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	
 	discoveryURL := "https://mcp.robotrad.io/discovery"
 	req, err := http.NewRequestWithContext(ctx, "GET", discoveryURL, nil)
 	if err != nil {
-		// Fallback to local MCP client if external discovery fails
+		// Fallback to local MCP client if discovery request creation fails
 		return tc.getLocalMCPData(ctx)
 	}
 	
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		// Fallback to local MCP client if external discovery fails
+		// Fallback to local MCP client if discovery fails
 		return tc.getLocalMCPData(ctx)
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
-		// Fallback to local MCP client if external discovery fails
+		// Fallback to local MCP client if discovery fails
 		return tc.getLocalMCPData(ctx)
 	}
 	
@@ -403,8 +403,11 @@ func (tc *TermChat) fetchDiscoveryData() []ComprehensiveServerInfo {
 			}
 		}
 		
-		// Get tools for this server
-		tools := tc.getServerTools(ctx, server.Name, server.URL)
+		// Only get tools for connected servers to avoid delays
+		var tools []mcp.Tool
+		if connectionStatus == "connected" {
+			tools = tc.getServerTools(ctx, server.Name, server.URL)
+		}
 		
 		serverInfo := ComprehensiveServerInfo{
 			Name:             server.Name,
@@ -455,7 +458,7 @@ func (tc *TermChat) getLocalMCPData(ctx context.Context) []ComprehensiveServerIn
 
 // getServerTools fetches tools for a specific server using the discovery endpoint structure
 func (tc *TermChat) getServerTools(ctx context.Context, serverName, serverURL string) []mcp.Tool {
-	// Try to fetch tools using the mcp.robotrad.io endpoint structure first
+	// Try to fetch tools using the mcp.robotrad.io endpoint structure first (local nginx routing)
 	tools := tc.fetchToolsFromDiscoveryEndpoint(ctx, serverName)
 	if len(tools) > 0 {
 		return tools
@@ -499,7 +502,7 @@ func (tc *TermChat) fetchToolsFromDiscoveryEndpoint(ctx context.Context, serverN
 	
 	req.Header.Set("Content-Type", "application/json")
 	
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return []mcp.Tool{}

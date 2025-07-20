@@ -179,10 +179,17 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request, handler *server.P
 
 	// Collect all tools from all discovered services
 	servers := handler.GetDiscoveredServers()
+	connections := handler.GetConnectionStatus()
 	var allTools []openapi.Tool
 	
 	for _, server := range servers {
 		if server.Name == "" {
+			continue
+		}
+		
+		// Only include servers that are connected/healthy
+		if connStatus, exists := connections[server.Name]; !exists || !connStatus.Connected {
+			handler.Logger.Debug("Skipping server %s for OpenAPI spec - not connected", server.Name)
 			continue
 		}
 		
@@ -192,20 +199,7 @@ func handleOpenAPISpec(w http.ResponseWriter, r *http.Request, handler *server.P
 		serverTools, err := handler.DiscoverServerTools(server.Name)
 		if err != nil {
 			handler.Logger.Warning("Failed to discover tools for %s: %v", server.Name, err)
-			// Add a generic tool for this server
-			allTools = append(allTools, openapi.Tool{
-				Name:        fmt.Sprintf("%s_default", server.Name),
-				Description: fmt.Sprintf("Default tool for %s server", server.Name),
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"action": map[string]interface{}{
-							"type":        "string",
-							"description": "Action to perform on the server",
-						},
-					},
-				},
-			})
+			// Skip servers that fail tool discovery instead of creating placeholder tools
 			continue
 		}
 		
@@ -546,6 +540,9 @@ func handleMCPServersEndpoint(w http.ResponseWriter, r *http.Request, handler *s
 				"description": fmt.Sprintf("MCP Server: %s", server.Name),
 			}
 			mcpServers = append(mcpServers, mcpServer)
+		} else {
+			// Log skipped servers for debugging
+			handler.Logger.Debug("Skipping server %s for MCP servers list - not connected", server.Name)
 		}
 	}
 

@@ -194,13 +194,8 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 				}
 			}
 		} else if len(response.ToolCalls) > 0 && t.silentMode {
-			// In silent mode, if we get tool calls but no content, add explanatory text
-			if t.chat.GetChatHistory()[aiMsgIndex].Content == "" {
-				t.chat.GetChatHistory()[aiMsgIndex].Content = "I'll help you with that."
-				if GetUIProgram() != nil {
-					GetUIProgram().Send(aiStreamMsg{content: "I'll help you with that."})
-				}
-			}
+			// In silent mode, tool calls without content don't need generic filler text
+			// The function calls themselves will be visible to the user
 		}
 		
 		// Debug: Check if we're getting empty responses
@@ -307,7 +302,7 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			if formattedArgs := t.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
 				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
 			}
-			GetUIProgram().Send(aiStreamMsg{content: "\n" + funcCallMsg})
+			GetUIProgram().Send(aiStreamMsg{content: funcCallMsg})
 		}
 		
 		// Parse arguments and validate for specific functions
@@ -388,7 +383,7 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			} else {
 				statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
 			}
-			GetUIProgram().Send(aiStreamMsg{content: statusMsg + "\n"})
+			GetUIProgram().Send(aiStreamMsg{content: statusMsg})
 		}
 		
 		// Add tool result to conversation
@@ -444,8 +439,8 @@ func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		// If not valid JSON, just return truncated string
 		cleaned := strings.ReplaceAll(arguments, "\n", " ")
-		if len(cleaned) > 60 {
-			cleaned = cleaned[:57] + "..."
+		if len(cleaned) > 120 {
+			cleaned = cleaned[:117] + "..."
 		}
 		return cleaned
 	}
@@ -455,8 +450,8 @@ func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
 	for key, value := range args {
 		switch v := value.(type) {
 		case string:
-			if len(v) > 40 {
-				v = v[:37] + "..."
+			if len(v) > 80 {
+				v = v[:77] + "..."
 			}
 			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[33m\"%s\"\x1b[0m", key, v))
 		case float64, int:
@@ -467,8 +462,8 @@ func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
 	}
 	
 	result := strings.Join(parts, " ")
-	if len(result) > 70 {
-		result = result[:67] + "..."
+	if len(result) > 140 {
+		result = result[:137] + "..."
 	}
 	return result
 }

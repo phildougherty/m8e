@@ -127,7 +127,7 @@ func (ui *ChatUI) initializeViewport() {
 			}
 			viewport = append(viewport, ui.createBoxFooter())
 		}
-		viewport = append(viewport, "")
+		// Removed automatic empty line after each historical message
 	}
 	
 	ui.viewport = viewport

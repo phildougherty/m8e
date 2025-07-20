@@ -497,6 +497,12 @@ func (h *ProxyHandler) DiscoverServerTools(serverName string) ([]Tool, error) {
 	h.Logger.Info("Connection status for %s: protocol=%s, status=%s", 
 		serverName, conn.Protocol, conn.Status)
 
+	// Check if the connection is healthy before attempting tool discovery
+	if conn.Status != "connected" {
+		h.Logger.Warning("Server %s is not connected (status: %s) - skipping tool discovery", serverName, conn.Status)
+		return nil, fmt.Errorf("server %s is not connected (status: %s)", serverName, conn.Status)
+	}
+
 	// Make MCP tools/list call to discover actual tools
 	tools, err := h.makeToolsListRequest(serverName, conn)
 	if err != nil {
@@ -556,6 +562,11 @@ func (h *ProxyHandler) FindServerForTool(toolName string) (string, bool) {
 
 // makeToolsListRequest makes an MCP tools/list request to discover tools
 func (h *ProxyHandler) makeToolsListRequest(serverName string, conn *discovery.MCPConnection) ([]Tool, error) {
+	// Double-check connection status before making the request
+	if conn.Status != "connected" {
+		return nil, fmt.Errorf("server %s is not connected (status: %s)", serverName, conn.Status)
+	}
+
 	// Create MCP tools/list request with string ID
 	request := map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -975,17 +986,7 @@ func (h *ProxyHandler) createPlaceholderTools(serverName string, conn *discovery
 		}
 	}
 
-	// If no tools found, add a default one
-	if len(tools) == 0 {
-		tools = append(tools, Tool{
-			Name:        fmt.Sprintf("%s_default", serverName),
-			Description: fmt.Sprintf("Default endpoint for %s server", serverName),
-			Parameters: map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
-		})
-	}
+	// Don't create default tools - return empty slice if no tools found
 
 	return tools
 }

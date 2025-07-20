@@ -122,8 +122,7 @@ func (m *ChatUI) handleAIResponseMessage(msg aiResponseMsg) (tea.Model, tea.Cmd)
 		m.aiResponseStartIdx = -1
 	}
 	
-	// Add spacing to separate from next message
-	m.appendToViewport("")
+	// Note: Spacing now handled only when there's actual next content
 	
 	// Keep viewport to reasonable size
 	if len(m.viewport) > 1000 {
@@ -161,7 +160,7 @@ func (m *ChatUI) handleUserInputMessage(msg userInputMsg) (tea.Model, tea.Cmd) {
 		m.viewport = append(m.viewport, "│ "+line)
 	}
 	m.viewport = append(m.viewport, m.createBoxFooter())
-	m.viewport = append(m.viewport, "")
+	// Removed automatic empty line after user input
 	
 	// Start loading spinner
 	m.loading = true

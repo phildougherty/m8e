@@ -25,10 +25,10 @@ func NewMCPClient(proxyURL string) *MCPClient {
 	return &MCPClient{
 		proxyURL: proxyURL,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Second, // Short timeout to prevent hanging on disconnected servers
+			Timeout: 30 * time.Second, // Increased timeout for complex operations like search_files and directory_tree
 		},
 		apiKey:     os.Getenv("MCP_API_KEY"),
-		retryCount: 2, // Reduced retry count
+		retryCount: 4, // Increased retry count for better reliability
 	}
 }
 
@@ -608,7 +608,9 @@ func (c *MCPClient) makeRequest(ctx context.Context, endpoint string, req MCPReq
 		if err != nil {
 			lastErr = err
 			if attempt < c.retryCount-1 {
-				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Reduced sleep time
+				// Exponential backoff: 1s, 2s, 4s, 8s...
+				backoffDelay := time.Duration(1<<uint(attempt)) * time.Second
+				time.Sleep(backoffDelay)
 				continue
 			}
 			return nil, fmt.Errorf("failed to make request after %d attempts: %w", c.retryCount, err)
@@ -619,7 +621,9 @@ func (c *MCPClient) makeRequest(ctx context.Context, endpoint string, req MCPReq
 			respBytes, _ := io.ReadAll(httpResp.Body)
 			lastErr = fmt.Errorf("HTTP error %d: %s", httpResp.StatusCode, string(respBytes))
 			if attempt < c.retryCount-1 && httpResp.StatusCode >= 500 {
-				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Reduced sleep time
+				// Exponential backoff: 1s, 2s, 4s, 8s...
+				backoffDelay := time.Duration(1<<uint(attempt)) * time.Second
+				time.Sleep(backoffDelay)
 				continue
 			}
 			return nil, lastErr
@@ -667,7 +671,9 @@ func (c *MCPClient) makeMCPRequest(ctx context.Context, endpoint string, req map
 		if err != nil {
 			lastErr = err
 			if attempt < c.retryCount-1 {
-				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+				// Exponential backoff: 1s, 2s, 4s, 8s...
+				backoffDelay := time.Duration(1<<uint(attempt)) * time.Second
+				time.Sleep(backoffDelay)
 				continue
 			}
 			return nil, fmt.Errorf("failed to make request after %d attempts: %w", c.retryCount, err)
@@ -678,7 +684,9 @@ func (c *MCPClient) makeMCPRequest(ctx context.Context, endpoint string, req map
 			respBytes, _ := io.ReadAll(httpResp.Body)
 			lastErr = fmt.Errorf("HTTP error %d: %s", httpResp.StatusCode, string(respBytes))
 			if attempt < c.retryCount-1 && httpResp.StatusCode >= 500 {
-				time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+				// Exponential backoff: 1s, 2s, 4s, 8s...
+				backoffDelay := time.Duration(1<<uint(attempt)) * time.Second
+				time.Sleep(backoffDelay)
 				continue
 			}
 			return nil, lastErr
