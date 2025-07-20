@@ -80,6 +80,11 @@ func (vm *VoiceManager) PlayAudio(audioData []byte) error {
 	return errors.New("voice features not compiled in - build with -tags voice")
 }
 
+// TriggerManualRecording manually starts a recording session (stub)
+func (vm *VoiceManager) TriggerManualRecording() error {
+	return errors.New("voice features not compiled in - build with -tags voice")
+}
+
 // getEnvDefault gets environment variable with default value (stub)
 func getEnvDefault(key, defaultValue string) string {
 	// This function is used by other parts of the system too

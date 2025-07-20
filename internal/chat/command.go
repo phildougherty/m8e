@@ -34,7 +34,8 @@ Keyboard shortcuts:
 • Tab: Toggle AUTO-EDIT/MANUAL mode
 • Ctrl+R: Toggle verbose/compact output
 • Ctrl+V: Toggle voice mode
-• Spacebar: Push-to-talk (when voice enabled)
+• Ctrl+Space: Push-to-talk recording
+• Ctrl+M: Manual voice trigger (bypass wake word)
 
 Slash commands:
 • /auto - Enable smart automation mode

@@ -141,7 +141,8 @@ export TTS_ENDPOINT=http://your-tts-server:8000/v1/audio/speech
 
 ### Keyboard Shortcuts
 - `Ctrl+V`: Toggle voice mode on/off
-- `Spacebar`: Push-to-talk (when voice enabled)
+- `Ctrl+Space`: Push-to-talk recording
+- `Ctrl+M`: Manual voice trigger (bypass wake word detection)
 - `Ctrl+C`: Exit chat
 - `ESC`: Cancel current operation
 

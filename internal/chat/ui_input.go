@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -79,14 +80,16 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+v": // Toggle voice mode
 		return m.handleVoiceToggle()
 
-	case "space": // PTT (Push-to-Talk) mode
+	case "ctrl+space": // PTT (Push-to-Talk) mode - better key binding
 		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 			return m.handlePushToTalk()
 		}
-		// If voice not enabled, treat as regular space character
-		char := msg.String()
-		m.input = m.input[:m.cursor] + char + m.input[m.cursor:]
-		m.cursor++
+		return m, nil
+
+	case "ctrl+m": // Manual voice trigger (alternative to wake word)
+		if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+			return m.handleManualVoiceTrigger()
+		}
 		return m, nil
 
 	default:
@@ -406,7 +409,7 @@ func (m *ChatUI) handleVoiceToggle() (tea.Model, tea.Cmd) {
 		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
 		m.viewport = append(m.viewport, m.createSuccessMessage("Voice mode ENABLED 🎤"))
 		m.viewport = append(m.viewport, m.createInfoMessage("Wake word: '"+m.termChat.voiceManager.config.WakeWord+"'"))
-		m.viewport = append(m.viewport, m.createInfoMessage("Use Spacebar for Push-to-Talk"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Use Ctrl+Space for Push-to-Talk, Ctrl+M for manual trigger"))
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		m.viewport = append(m.viewport, "")
 	} else {
@@ -433,11 +436,44 @@ func (m *ChatUI) handlePushToTalk() (tea.Model, tea.Cmd) {
 	// Start recording for PTT
 	m.viewport = append(m.viewport, "")
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
-	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Recording... (release Spacebar to stop)"))
+	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Push-to-Talk recording... (Ctrl+Space again to stop)"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	
-	// TODO: Implement PTT recording logic
-	// This would need to be handled with key release events
+	// Trigger manual voice recording
+	go m.triggerVoiceRecording()
 	
 	return m, nil
+}
+
+// handleManualVoiceTrigger handles manual voice activation (bypass wake word)
+func (m *ChatUI) handleManualVoiceTrigger() (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager == nil || !m.termChat.voiceManager.config.Enabled {
+		return m, nil
+	}
+	
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Voice activated manually - listening..."))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	
+	// Trigger manual voice recording (bypass wake word detection)
+	go m.triggerVoiceRecording()
+	
+	return m, nil
+}
+
+// triggerVoiceRecording manually triggers voice recording
+func (m *ChatUI) triggerVoiceRecording() {
+	if m.termChat.voiceManager != nil {
+		// Use the proper manual recording method
+		err := m.termChat.voiceManager.TriggerManualRecording()
+		if err != nil {
+			// Show error in UI
+			if uiProgram != nil {
+				uiProgram.Send(voiceTranscriptMsg{
+					transcript: fmt.Sprintf("Voice recording error: %v", err),
+				})
+			}
+		}
+	}
 }

@@ -52,9 +52,9 @@ type VoiceManager struct {
 // NewVoiceConfig creates voice configuration from environment variables
 func NewVoiceConfig() *VoiceConfig {
 	enabled, _ := strconv.ParseBool(getEnvDefault("VOICE_ENABLED", "false"))
-	sampleRate, _ := strconv.Atoi(getEnvDefault("VOICE_SAMPLE_RATE", "16000"))
-	frameLength, _ := strconv.Atoi(getEnvDefault("VOICE_FRAME_LENGTH", "1024"))
-	energyThreshold, _ := strconv.Atoi(getEnvDefault("VOICE_ENERGY_THRESHOLD", "300"))
+	sampleRate, _ := strconv.Atoi(getEnvDefault("VOICE_SAMPLE_RATE", "44100")) // Higher sample rate for macOS
+	frameLength, _ := strconv.Atoi(getEnvDefault("VOICE_FRAME_LENGTH", "2048")) // Larger frame for better detection
+	energyThreshold, _ := strconv.Atoi(getEnvDefault("VOICE_ENERGY_THRESHOLD", "100")) // Lower threshold for macOS
 	speechTimeout, _ := strconv.ParseFloat(getEnvDefault("VOICE_SPEECH_TIMEOUT", "2.0"), 64)
 	maxRecording, _ := strconv.Atoi(getEnvDefault("VOICE_MAX_RECORDING_SECONDS", "30"))
 	exclusionTime, _ := strconv.ParseFloat(getEnvDefault("VOICE_WAKE_WORD_EXCLUSION_TIME", "1.0"), 64)
@@ -175,6 +175,60 @@ func (vm *VoiceManager) SetCallbacks(onWakeWord func(), onTranscript func(string
 	vm.onWakeWord = onWakeWord
 	vm.onTranscript = onTranscript
 	vm.onTTSReady = onTTSReady
+}
+
+// TriggerManualRecording manually starts a recording session (bypass wake word)
+func (vm *VoiceManager) TriggerManualRecording() error {
+	if !vm.config.Enabled {
+		return fmt.Errorf("voice manager not enabled")
+	}
+
+	// Skip wake word detection and go straight to recording
+	go vm.handleManualRecording()
+	return nil
+}
+
+// handleManualRecording handles manual recording without wake word detection
+func (vm *VoiceManager) handleManualRecording() {
+	vm.mutex.Lock()
+	if vm.isRecording {
+		vm.mutex.Unlock()
+		return
+	}
+	vm.isRecording = true
+	vm.mutex.Unlock()
+
+	defer func() {
+		vm.mutex.Lock()
+		vm.isRecording = false
+		vm.mutex.Unlock()
+	}()
+
+	if vm.onWakeWord != nil {
+		vm.onWakeWord()
+	}
+
+	// Record audio for speech-to-text
+	audioData, err := vm.recordAudio()
+	if err != nil {
+		log.Printf("Error recording audio: %v", err)
+		return
+	}
+
+	if len(audioData) == 0 {
+		return
+	}
+
+	// Transcribe audio
+	transcript, err := vm.transcribeAudio(audioData)
+	if err != nil {
+		log.Printf("Error transcribing audio: %v", err)
+		return
+	}
+
+	if transcript != "" && vm.onTranscript != nil {
+		vm.onTranscript(transcript)
+	}
 }
 
 // processAudio processes incoming audio data
