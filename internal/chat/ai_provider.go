@@ -34,35 +34,9 @@ func (tc *TermChat) renderMarkdown(content string) string {
 
 // addCodeBlockHeaders adds beautiful headers to code blocks
 func (tc *TermChat) addCodeBlockHeaders(content string) string {
-	result := content
-	
-	// Add visual headers for different code block types
-	if strings.Contains(result, "```") {
-		// YAML files
-		result = strings.ReplaceAll(result, "```yaml", "\n\033[1;33m╭─ matey.yaml ─────────────────────────╮\033[0m\n```yaml")
-		result = strings.ReplaceAll(result, "```yml", "\n\033[1;33m╭─ config.yml ─────────────────────────╮\033[0m\n```yml")
-		
-		// JSON files
-		result = strings.ReplaceAll(result, "```json", "\n\033[1;32m╭─ config.json ────────────────────────╮\033[0m\n```json")
-		
-		// Shell/Bash commands
-		result = strings.ReplaceAll(result, "```bash", "\n\033[1;36m╭─ commands ───────────────────────────╮\033[0m\n```bash")
-		result = strings.ReplaceAll(result, "```sh", "\n\033[1;36m╭─ script.sh ──────────────────────────╮\033[0m\n```sh")
-		
-		// Kubernetes manifests
-		result = strings.ReplaceAll(result, "```kubernetes", "\n\033[1;35m╭─ kubernetes.yaml ────────────────────╮\033[0m\n```kubernetes")
-		result = strings.ReplaceAll(result, "```k8s", "\n\033[1;35m╭─ manifest.yaml ──────────────────────╮\033[0m\n```k8s")
-		
-		// Go code
-		result = strings.ReplaceAll(result, "```go", "\n\033[1;34m╭─ main.go ────────────────────────────╮\033[0m\n```go")
-		
-		// Other languages
-		result = strings.ReplaceAll(result, "```python", "\n\033[1;37m╭─ script.py ──────────────────────────╮\033[0m\n```python")
-		result = strings.ReplaceAll(result, "```javascript", "\n\033[1;31m╭─ script.js ──────────────────────────╮\033[0m\n```javascript")
-		result = strings.ReplaceAll(result, "```typescript", "\n\033[1;94m╭─ script.ts ──────────────────────────╮\033[0m\n```typescript")
-	}
-	
-	return result
+	// Don't add custom headers - let glamour handle code block styling properly
+	// The raw ANSI codes were interfering with glamour's rendering
+	return content
 }
 
 // chatWithAISilent processes AI response WITH streaming for UI (silent version for UI)

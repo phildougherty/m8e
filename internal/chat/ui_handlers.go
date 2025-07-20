@@ -57,28 +57,22 @@ func (m *ChatUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleAIStreamMessage handles streaming AI content
 func (m *ChatUI) handleAIStreamMessage(msg aiStreamMsg) (tea.Model, tea.Cmd) {
 	if msg.content == "" {
-		// Start new AI response - add marker for replacement
+		// Start new AI response - track starting position
 		m.loading = true
 		m.appendToViewport("")
-		m.appendToViewport("__AI_RESPONSE_START__") // Marker for replacement
+		// Store the index where AI response content starts
+		m.aiResponseStartIdx = len(m.viewport)
 	} else {
 		// Handle streaming content - add raw content for immediate display
-		if len(m.viewport) > 0 {
-			lines := strings.Split(msg.content, "\n")
-			for i, line := range lines {
-				if i == 0 {
-					// First line - append to current line (unless it's the marker)
-					lastIndex := len(m.viewport) - 1
-					if lastIndex >= 0 && m.viewport[lastIndex] != "__AI_RESPONSE_START__" {
-						m.viewport[lastIndex] += line
-					} else {
-						// Replace marker with content
-						m.viewport[lastIndex] = line
-					}
-				} else {
-					// Subsequent lines - just add them
-					m.appendToViewport(line)
-				}
+		lines := strings.Split(msg.content, "\n")
+		for i, line := range lines {
+			if i == 0 && len(m.viewport) > m.aiResponseStartIdx {
+				// First line - append to current line (only if we're not at the start)
+				lastIndex := len(m.viewport) - 1
+				m.viewport[lastIndex] += line
+			} else {
+				// Subsequent lines or first line at start - just add them
+				m.appendToViewport(line)
 			}
 		}
 	}
@@ -91,12 +85,27 @@ func (m *ChatUI) handleAIResponseMessage(msg aiResponseMsg) (tea.Model, tea.Cmd)
 	m.loading = false
 	m.currentSpinnerQuote = "" // Clear quote for next loading session
 	
-	// Add the properly rendered markdown content (no streaming was added)
-	if msg.content != "" {
-		// Add empty line before AI response
-		m.appendToViewport("")
+	// Replace the streamed raw content with properly rendered markdown
+	if msg.content != "" && m.aiResponseStartIdx >= 0 && m.aiResponseStartIdx < len(m.viewport) {
+		// Preserve function call lines that were added during streaming
+		var preservedLines []string
+		for i := m.aiResponseStartIdx; i < len(m.viewport); i++ {
+			line := m.viewport[i]
+			// Preserve function call display lines (contain → or ✓)
+			if strings.Contains(line, "→") || strings.Contains(line, "✓") || strings.Contains(line, "✗") {
+				preservedLines = append(preservedLines, line)
+			}
+		}
 		
-		// Render and add the complete content
+		// Remove all content from the start index onwards
+		m.viewport = m.viewport[:m.aiResponseStartIdx]
+		
+		// Add preserved function call lines first
+		for _, line := range preservedLines {
+			m.appendToViewport(line)
+		}
+		
+		// Add the properly rendered markdown content
 		rendered := m.termChat.renderMarkdown(msg.content)
 		lines := strings.Split(rendered, "\n")
 		for _, line := range lines {
@@ -108,6 +117,9 @@ func (m *ChatUI) handleAIResponseMessage(msg aiResponseMsg) (tea.Model, tea.Cmd)
 			}
 			m.appendToViewport(line)
 		}
+		
+		// Reset the start index
+		m.aiResponseStartIdx = -1
 	}
 	
 	// Add spacing to separate from next message
@@ -210,11 +222,24 @@ func (m *ChatUI) createEnhancedFunctionParameter(line string) string {
 
 // createEnhancedFunctionConfirmationBox creates a colorful function confirmation box
 func (m *ChatUI) createEnhancedFunctionConfirmationBox(functionName, arguments string) string {
+	// Calculate dynamic width to match other boxes
+	width := 140
+	if m.width > 0 {
+		width = m.width - 2 // Leave 2 characters for margins
+	}
+	
 	var result strings.Builder
 	
-	// Header with enhanced styling
+	// Header with dynamic width - match other headers
+	content := "Function Call Confirmation"
+	dashSpace := width - 5 - len(content)
+	if dashSpace < 0 {
+		dashSpace = 0
+	}
+	header := "┌─ " + content + " " + strings.Repeat("─", dashSpace) + "┐"
+	
 	headerStyle := lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-	result.WriteString(headerStyle.Render("┌─ Function Call Confirmation ─┐"))
+	result.WriteString(headerStyle.Render(header))
 	result.WriteString("\n")
 	
 	// Function details with colorful formatting
@@ -253,9 +278,10 @@ func (m *ChatUI) createEnhancedFunctionConfirmationBox(functionName, arguments s
 	result.WriteString("│ " + promptStyle.Render("Your choice [y/n/a/Y]: "))
 	result.WriteString("\n")
 	
-	// Footer
+	// Footer with dynamic width - match other footers
+	footer := "└" + strings.Repeat("─", width-2) + "┘"
 	footerStyle := lipgloss.NewStyle().Foreground(Brown)
-	result.WriteString(footerStyle.Render("└─────────────────────────────────┘"))
+	result.WriteString(footerStyle.Render(footer))
 	
 	return result.String()
 }

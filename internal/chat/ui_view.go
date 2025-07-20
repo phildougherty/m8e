@@ -3,11 +3,19 @@ package chat
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+// stripANSI removes ANSI escape codes from a string to get visible length
+func stripANSI(str string) string {
+	// ANSI escape sequence regex
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansiRegex.ReplaceAllString(str, "")
+}
 
 // getRandomHackerQuote returns a random hacker/geek movie quote
 func getRandomHackerQuote() string {
@@ -145,10 +153,11 @@ func (m *ChatUI) renderViewport(viewportHeight int) []string {
 
 // renderInputArea renders the input field
 func (m *ChatUI) renderInputArea() string {
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(Brown).
-		Padding(0, 1)
+	// Calculate dynamic width to match other boxes
+	width := 140
+	if m.width > 0 {
+		width = m.width - 2 // Leave 2 characters for margins
+	}
 
 	promptStyle := lipgloss.NewStyle().
 		Foreground(Yellow).
@@ -182,7 +191,17 @@ func (m *ChatUI) renderInputArea() string {
 		inputText += cursorStyle.Render("│")
 	}
 
-	return inputStyle.Render(inputPrompt + inputText)
+	// Use lipgloss with fixed width to match other boxes exactly
+	inputStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(Brown).
+		Width(width - 2). // Total width minus margins
+		Padding(0, 1)
+
+	// Simple content without complex calculations
+	content := inputPrompt + inputText
+	
+	return inputStyle.Render(content)
 }
 
 // renderStatusLine renders the status bar with scroll information

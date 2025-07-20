@@ -126,6 +126,7 @@ type ChatUI struct {
 	currentSpinnerQuote   string // Store current quote for this loading session
 	confirmationMode      bool
 	pendingFunctionCall   *FunctionConfirmation
+	aiResponseStartIdx    int    // Track where AI response content starts for replacement
 }
 
 // FunctionConfirmation represents a pending function call confirmation
