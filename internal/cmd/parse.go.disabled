@@ -1,0 +1,662 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	appcontext "github.com/phildougherty/m8e/internal/context"
+	"github.com/phildougherty/m8e/internal/treesitter"
+)
+
+var parseCmd = &cobra.Command{
+	Use:   "parse [FILE_OR_PATTERN]",
+	Short: "Advanced code analysis with Tree-sitter AST parsing",
+	Long: `Analyze code files with sophisticated Tree-sitter parsing capabilities:
+- Multi-language AST parsing (Go, Python, JavaScript, Rust)
+- Code definition extraction and analysis
+- Function signature analysis with parameters and return types
+- Dependency and import analysis
+- Code complexity metrics and statistics
+- Interactive code exploration with syntax highlighting
+
+Examples:
+  matey parse src/main.go              # Parse single file
+  matey parse "src/**/*.go"            # Parse all Go files in src
+  matey parse --definitions src/       # Extract all definitions
+  matey parse --functions --methods src/lib.go  # Show functions and methods
+  matey parse --imports src/main.go    # Show import analysis
+  matey parse --stats src/             # Show code statistics
+  matey parse --interactive src/main.go # Interactive code explorer`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runParseCommand,
+}
+
+type parseFlags struct {
+	// Analysis options
+	definitions  bool
+	functions    bool
+	methods      bool
+	types        bool
+	constants    bool
+	variables    bool
+	imports      bool
+	exports      bool
+	comments     bool
+	
+	// Output options
+	outputFormat string
+	outputFile   string
+	showContent  bool
+	showLines    bool
+	maxDepth     int
+	
+	// Filtering options
+	namePattern  string
+	language     string
+	minLines     int
+	maxLines     int
+	
+	// Display options
+	stats        bool
+	interactive  bool
+	tree         bool
+	raw          bool
+	
+	// Performance options
+	concurrent   bool
+	cacheSize    int
+	maxFileSize  int64
+}
+
+var parseOpts parseFlags
+
+func init() {
+	rootCmd.AddCommand(parseCmd)
+
+	// Analysis options
+	parseCmd.Flags().BoolVar(&parseOpts.definitions, "definitions", false, "Extract all code definitions")
+	parseCmd.Flags().BoolVar(&parseOpts.functions, "functions", false, "Show functions")
+	parseCmd.Flags().BoolVar(&parseOpts.methods, "methods", false, "Show methods")
+	parseCmd.Flags().BoolVar(&parseOpts.types, "types", false, "Show type definitions")
+	parseCmd.Flags().BoolVar(&parseOpts.constants, "constants", false, "Show constants")
+	parseCmd.Flags().BoolVar(&parseOpts.variables, "variables", false, "Show variables")
+	parseCmd.Flags().BoolVar(&parseOpts.imports, "imports", false, "Show import analysis")
+	parseCmd.Flags().BoolVar(&parseOpts.exports, "exports", false, "Show exports")
+	parseCmd.Flags().BoolVar(&parseOpts.comments, "comments", false, "Include comments in analysis")
+
+	// Output options
+	parseCmd.Flags().StringVar(&parseOpts.outputFormat, "format", "table", "Output format: table, json, tree, markdown")
+	parseCmd.Flags().StringVar(&parseOpts.outputFile, "output", "", "Write output to file")
+	parseCmd.Flags().BoolVar(&parseOpts.showContent, "content", false, "Show code content")
+	parseCmd.Flags().BoolVar(&parseOpts.showLines, "lines", true, "Show line numbers")
+	parseCmd.Flags().IntVar(&parseOpts.maxDepth, "max-depth", 10, "Maximum AST traversal depth")
+
+	// Filtering options
+	parseCmd.Flags().StringVar(&parseOpts.namePattern, "name", "", "Filter by name pattern (supports wildcards)")
+	parseCmd.Flags().StringVar(&parseOpts.language, "language", "", "Filter by language: go, python, javascript, rust")
+	parseCmd.Flags().IntVar(&parseOpts.minLines, "min-lines", 0, "Minimum line count")
+	parseCmd.Flags().IntVar(&parseOpts.maxLines, "max-lines", 0, "Maximum line count")
+
+	// Display options
+	parseCmd.Flags().BoolVar(&parseOpts.stats, "stats", false, "Show code statistics")
+	parseCmd.Flags().BoolVar(&parseOpts.interactive, "interactive", false, "Interactive code explorer")
+	parseCmd.Flags().BoolVar(&parseOpts.tree, "tree", false, "Show AST tree structure")
+	parseCmd.Flags().BoolVar(&parseOpts.raw, "raw", false, "Show raw AST output")
+
+	// Performance options
+	parseCmd.Flags().BoolVar(&parseOpts.concurrent, "concurrent", true, "Enable concurrent parsing")
+	parseCmd.Flags().IntVar(&parseOpts.cacheSize, "cache", 100, "Parser cache size")
+	parseCmd.Flags().Int64Var(&parseOpts.maxFileSize, "max-file-size", 1048576, "Maximum file size in bytes")
+}
+
+func runParseCommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("file or pattern is required")
+	}
+
+	target := args[0]
+
+	// Initialize parser
+	parser, err := initializeParser()
+	if err != nil {
+		return fmt.Errorf("failed to initialize parser: %w", err)
+	}
+
+	// Handle interactive mode
+	if parseOpts.interactive {
+		return runInteractiveParse(parser, target)
+	}
+
+	// Find files to parse
+	files, err := findFilesToParse(target)
+	if err != nil {
+		return fmt.Errorf("failed to find files: %w", err)
+	}
+
+	if len(files) == 0 {
+		fmt.Println("No files found matching the pattern")
+		return nil
+	}
+
+	fmt.Printf("🔍 Parsing %d files...\n\n", len(files))
+
+	// Parse files
+	results, err := parseFiles(parser, files)
+	if err != nil {
+		return fmt.Errorf("parsing failed: %w", err)
+	}
+
+	// Display results
+	return displayParseResults(results)
+}
+
+func initializeParser() (*treesitter.TreeSitterParser, error) {
+	config := treesitter.ParserConfig{
+		CacheSize:     parseOpts.cacheSize,
+		MaxFileSize:   parseOpts.maxFileSize,
+		EnableLogging: false,
+		LazyLoad:      true,
+	}
+
+	return treesitter.NewTreeSitterParser(config)
+}
+
+func findFilesToParse(target string) ([]string, error) {
+	var files []string
+
+	// Check if target is a file
+	if info, err := os.Stat(target); err == nil && !info.IsDir() {
+		return []string{target}, nil
+	}
+
+	// Use file discovery for pattern matching
+	fileDiscovery, err := appcontext.NewFileDiscovery(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize file discovery: %w", err)
+	}
+
+	// Configure search options
+	var extensions []string
+	if parseOpts.language != "" {
+		extensions = getLanguageExtensions(parseOpts.language)
+	} else {
+		extensions = []string{"go", "py", "js", "ts", "rs"} // All supported languages
+	}
+
+	searchOptions := appcontext.SearchOptions{
+		Root:             target,
+		Extensions:       extensions,
+		MaxResults:       1000,
+		IncludeHidden:    false,
+		RespectGitignore: true,
+		Concurrent:       parseOpts.concurrent,
+		Timeout:          30 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	results, err := fileDiscovery.Search(ctx, searchOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, result := range results {
+		if result.Type == "file" {
+			files = append(files, result.Path)
+		}
+	}
+
+	return files, nil
+}
+
+func parseFiles(parser *treesitter.TreeSitterParser, files []string) ([]*ParseResult, error) {
+	var results []*ParseResult
+
+	for _, file := range files {
+		result, err := parseFile(parser, file)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to parse %s: %v\n", file, err)
+			continue
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+func parseFile(parser *treesitter.TreeSitterParser, filePath string) (*ParseResult, error) {
+	// Parse the file
+	parseResult, err := parser.ParseFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ParseResult{
+		FilePath:     filePath,
+		Language:     parseResult.Language,
+		ParseTime:    parseResult.ParseTime,
+		NodeCount:    parseResult.NodeCount,
+		Error:        parseResult.Error,
+		Definitions:  make([]Definition, 0),
+		Imports:      make([]Import, 0),
+		Comments:     make([]Comment, 0),
+	}
+
+	// Extract definitions if requested
+	if parseOpts.definitions || parseOpts.functions || parseOpts.methods || parseOpts.types {
+		defExtractor := treesitter.NewDefinitionExtractor(parser)
+		definitions, err := defExtractor.ExtractDefinitions(parseResult, filePath)
+		if err == nil {
+			result.Definitions = convertDefinitions(definitions)
+		}
+	}
+
+	// Extract imports if requested
+	if parseOpts.imports {
+		imports := extractImports(parser, parseResult)
+		result.Imports = imports
+	}
+
+	// Extract comments if requested
+	if parseOpts.comments {
+		comments := extractComments(parser, parseResult)
+		result.Comments = comments
+	}
+
+	// Calculate statistics
+	result.Stats = calculateStats(parseResult, result)
+
+	return result, nil
+}
+
+func runInteractiveParse(parser *treesitter.TreeSitterParser, target string) error {
+	// This would integrate with the visual components for interactive parsing
+	fmt.Printf("🔍 Interactive parsing mode for: %s\n", target)
+	fmt.Println("(Interactive mode would launch a TUI here)")
+	
+	// For now, just do a basic parse and show results
+	result, err := parseFile(parser, target)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\n📄 File: %s\n", result.FilePath)
+	fmt.Printf("Language: %s\n", result.Language)
+	fmt.Printf("Parse Time: %v\n", result.ParseTime)
+	fmt.Printf("Nodes: %d\n", result.NodeCount)
+	fmt.Printf("Definitions: %d\n", len(result.Definitions))
+
+	if len(result.Definitions) > 0 {
+		fmt.Printf("\nDefinitions:\n")
+		for i, def := range result.Definitions {
+			if i >= 10 { // Limit output
+				fmt.Printf("... and %d more\n", len(result.Definitions)-i)
+				break
+			}
+			fmt.Printf("  %s %s (line %d)\n", def.Type, def.Name, def.Line)
+		}
+	}
+
+	return nil
+}
+
+func displayParseResults(results []*ParseResult) error {
+	if parseOpts.stats {
+		return displayStatistics(results)
+	}
+
+	switch parseOpts.outputFormat {
+	case "json":
+		return displayJSONResults(results)
+	case "tree":
+		return displayTreeResults(results)
+	case "markdown":
+		return displayMarkdownResults(results)
+	default:
+		return displayTableResults(results)
+	}
+}
+
+func displayStatistics(results []*ParseResult) error {
+	if len(results) == 0 {
+		fmt.Println("No results to analyze")
+		return nil
+	}
+
+	fmt.Printf("📊 Code Analysis Statistics:\n")
+	fmt.Printf("════════════════════════════════════════════════════════════════════════════════\n\n")
+
+	// Overall stats
+	totalFiles := len(results)
+	totalNodes := uint32(0)
+	totalDefinitions := 0
+	totalImports := 0
+	totalComments := 0
+	languageCount := make(map[treesitter.Language]int)
+	defTypeCount := make(map[string]int)
+
+	var totalParseTime time.Duration
+
+	for _, result := range results {
+		totalNodes += result.NodeCount
+		totalDefinitions += len(result.Definitions)
+		totalImports += len(result.Imports)
+		totalComments += len(result.Comments)
+		totalParseTime += result.ParseTime
+		languageCount[result.Language]++
+
+		for _, def := range result.Definitions {
+			defTypeCount[def.Type]++
+		}
+	}
+
+	fmt.Printf("Files Analyzed: %d\n", totalFiles)
+	fmt.Printf("Total AST Nodes: %d\n", totalNodes)
+	fmt.Printf("Total Parse Time: %v\n", totalParseTime)
+	fmt.Printf("Average Parse Time: %v\n", totalParseTime/time.Duration(totalFiles))
+	fmt.Printf("\n")
+
+	fmt.Printf("Languages:\n")
+	fmt.Printf("────────────────────────────────────────────────────────────────────────────────\n")
+	for lang, count := range languageCount {
+		fmt.Printf("  %s: %d files\n", lang, count)
+	}
+	fmt.Printf("\n")
+
+	fmt.Printf("Definitions: %d total\n", totalDefinitions)
+	fmt.Printf("────────────────────────────────────────────────────────────────────────────────\n")
+	for defType, count := range defTypeCount {
+		fmt.Printf("  %s: %d\n", defType, count)
+	}
+	fmt.Printf("\n")
+
+	fmt.Printf("Imports: %d total\n", totalImports)
+	fmt.Printf("Comments: %d total\n", totalComments)
+
+	return nil
+}
+
+func displayTableResults(results []*ParseResult) error {
+	// Filter results based on options
+	filteredResults := filterResults(results)
+
+	if len(filteredResults) == 0 {
+		fmt.Println("No results match the filter criteria")
+		return nil
+	}
+
+	// Display file-level results
+	fmt.Printf("📄 Parsed Files (%d):\n", len(filteredResults))
+	fmt.Printf("════════════════════════════════════════════════════════════════════════════════\n\n")
+
+	maxPathLen := 4 // "File"
+	for _, result := range filteredResults {
+		if len(result.FilePath) > maxPathLen {
+			maxPathLen = len(result.FilePath)
+		}
+	}
+	if maxPathLen > 50 {
+		maxPathLen = 50
+	}
+
+	fmt.Printf("%-*s  %-10s  %8s  %8s  %5s\n", maxPathLen, "File", "Language", "Nodes", "Defs", "Time")
+	fmt.Printf("%s  %-10s  %8s  %8s  %5s\n", 
+		strings.Repeat("─", maxPathLen), "──────────", "────────", "────────", "─────")
+
+	for _, result := range filteredResults {
+		path := result.FilePath
+		if len(path) > maxPathLen {
+			path = "..." + path[len(path)-maxPathLen+3:]
+		}
+
+		fmt.Printf("%-*s  %-10s  %8d  %8d  %5s\n",
+			maxPathLen, path,
+			result.Language,
+			result.NodeCount,
+			len(result.Definitions),
+			formatDuration(result.ParseTime))
+	}
+
+	// Display definitions if requested
+	if parseOpts.definitions || parseOpts.functions || parseOpts.methods || parseOpts.types {
+		fmt.Printf("\n🔧 Code Definitions:\n")
+		fmt.Printf("════════════════════════════════════════════════════════════════════════════════\n\n")
+
+		for _, result := range filteredResults {
+			if len(result.Definitions) == 0 {
+				continue
+			}
+
+			fmt.Printf("📄 %s:\n", result.FilePath)
+			for _, def := range result.Definitions {
+				if shouldShowDefinition(def) {
+					fmt.Printf("  %s %s %s", 
+						formatDefinitionType(def.Type), def.Name, def.Signature)
+					if parseOpts.showLines {
+						fmt.Printf(" (line %d:%d)", def.Line, def.Column)
+					}
+					fmt.Println()
+
+					if parseOpts.showContent && def.Content != "" {
+						content := truncateString(def.Content, 100)
+						fmt.Printf("    %s\n", strings.ReplaceAll(content, "\n", "\\n"))
+					}
+				}
+			}
+			fmt.Println()
+		}
+	}
+
+	return nil
+}
+
+func displayJSONResults(results []*ParseResult) error {
+	filteredResults := filterResults(results)
+	
+	if parseOpts.outputFile != "" {
+		file, err := os.Create(parseOpts.outputFile)
+		if err != nil {
+			return fmt.Errorf("failed to create output file: %w", err)
+		}
+		defer file.Close()
+
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(filteredResults)
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(filteredResults)
+}
+
+func displayTreeResults(results []*ParseResult) error {
+	// This would show the AST tree structure
+	fmt.Println("🌳 AST Tree Structure:")
+	fmt.Println("(Tree display not fully implemented)")
+	return nil
+}
+
+func displayMarkdownResults(results []*ParseResult) error {
+	filteredResults := filterResults(results)
+
+	output := strings.Builder{}
+	output.WriteString("# Code Analysis Results\n\n")
+	output.WriteString(fmt.Sprintf("Analyzed %d files\n\n", len(filteredResults)))
+
+	for _, result := range filteredResults {
+		output.WriteString(fmt.Sprintf("## %s\n\n", result.FilePath))
+		output.WriteString(fmt.Sprintf("- **Language**: %s\n", result.Language))
+		output.WriteString(fmt.Sprintf("- **Nodes**: %d\n", result.NodeCount))
+		output.WriteString(fmt.Sprintf("- **Definitions**: %d\n", len(result.Definitions)))
+		output.WriteString(fmt.Sprintf("- **Parse Time**: %v\n\n", result.ParseTime))
+
+		if len(result.Definitions) > 0 {
+			output.WriteString("### Definitions\n\n")
+			for _, def := range result.Definitions {
+				if shouldShowDefinition(def) {
+					output.WriteString(fmt.Sprintf("- **%s** `%s` (line %d)\n", 
+						def.Type, def.Name, def.Line))
+				}
+			}
+			output.WriteString("\n")
+		}
+	}
+
+	if parseOpts.outputFile != "" {
+		return os.WriteFile(parseOpts.outputFile, []byte(output.String()), 0644)
+	}
+
+	fmt.Print(output.String())
+	return nil
+}
+
+func filterResults(results []*ParseResult) []*ParseResult {
+	var filtered []*ParseResult
+
+	for _, result := range results {
+		// Filter by language
+		if parseOpts.language != "" && string(result.Language) != parseOpts.language {
+			continue
+		}
+
+		// Filter by name pattern
+		if parseOpts.namePattern != "" {
+			matched, _ := filepath.Match(parseOpts.namePattern, filepath.Base(result.FilePath))
+			if !matched {
+				continue
+			}
+		}
+
+		filtered = append(filtered, result)
+	}
+
+	return filtered
+}
+
+func shouldShowDefinition(def Definition) bool {
+	// Filter by definition type
+	if parseOpts.functions && def.Type != "function" {
+		return false
+	}
+	if parseOpts.methods && def.Type != "method" {
+		return false
+	}
+	if parseOpts.types && def.Type != "type" && def.Type != "struct" && def.Type != "interface" {
+		return false
+	}
+	if parseOpts.constants && def.Type != "constant" {
+		return false
+	}
+	if parseOpts.variables && def.Type != "variable" {
+		return false
+	}
+
+	// If specific filters are set, only show matching types
+	if (parseOpts.functions || parseOpts.methods || parseOpts.types || 
+		parseOpts.constants || parseOpts.variables) {
+		return true
+	}
+
+	// If no specific filters, show all
+	return true
+}
+
+func getLanguageExtensions(language string) []string {
+	switch language {
+	case "go":
+		return []string{"go"}
+	case "python":
+		return []string{"py", "pyx", "pyi"}
+	case "javascript":
+		return []string{"js", "mjs", "cjs", "ts", "tsx"}
+	case "rust":
+		return []string{"rs"}
+	default:
+		return []string{"go", "py", "js", "ts", "rs"}
+	}
+}
+
+// Types for parse results
+type ParseResult struct {
+	FilePath    string                  `json:"file_path"`
+	Language    treesitter.Language     `json:"language"`
+	ParseTime   time.Duration          `json:"parse_time"`
+	NodeCount   uint32                 `json:"node_count"`
+	Error       string                 `json:"error,omitempty"`
+	Definitions []Definition           `json:"definitions"`
+	Imports     []Import              `json:"imports"`
+	Comments    []Comment             `json:"comments"`
+	Stats       map[string]interface{} `json:"stats"`
+}
+
+type Definition struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Line      int    `json:"line"`
+	Column    int    `json:"column"`
+	Signature string `json:"signature"`
+	Content   string `json:"content,omitempty"`
+	DocString string `json:"doc_string,omitempty"`
+}
+
+type Import struct {
+	Path    string `json:"path"`
+	Name    string `json:"name,omitempty"`
+	Alias   string `json:"alias,omitempty"`
+	Line    int    `json:"line"`
+	Type    string `json:"type"` // "import", "from", "require", etc.
+}
+
+type Comment struct {
+	Content string `json:"content"`
+	Line    int    `json:"line"`
+	Type    string `json:"type"` // "line", "block", "doc"
+}
+
+func convertDefinitions(treeDefs []treesitter.Definition) []Definition {
+	var definitions []Definition
+	for _, def := range treeDefs {
+		definitions = append(definitions, Definition{
+			Name:      def.Name,
+			Type:      def.Type,
+			Line:      int(def.StartLine),
+			Column:    int(def.StartColumn),
+			Signature: def.Signature,
+			DocString: def.DocString,
+		})
+	}
+	return definitions
+}
+
+func extractImports(parser *treesitter.TreeSitterParser, parseResult *treesitter.ParseResult) []Import {
+	// This would extract import statements from the AST
+	// Implementation would depend on language-specific patterns
+	return []Import{}
+}
+
+func extractComments(parser *treesitter.TreeSitterParser, parseResult *treesitter.ParseResult) []Comment {
+	// This would extract comments from the AST
+	// Implementation would depend on language-specific patterns
+	return []Comment{}
+}
+
+func calculateStats(parseResult *treesitter.ParseResult, result *ParseResult) map[string]interface{} {
+	stats := make(map[string]interface{})
+	
+	stats["file_size"] = len(parseResult.Content)
+	stats["lines"] = strings.Count(parseResult.Content, "\n") + 1
+	stats["parse_time_ms"] = parseResult.ParseTime.Milliseconds()
+	stats["nodes_per_line"] = float64(parseResult.NodeCount) / float64(stats["lines"].(int))
+	
+	return stats
+}

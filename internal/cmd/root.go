@@ -48,6 +48,12 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewWorkflowCommand())
 	rootCmd.AddCommand(NewInspectCommand())
 	
+	// Add file editing and analysis commands
+	rootCmd.AddCommand(NewEditCommand())
+	rootCmd.AddCommand(NewSearchCommand())
+	rootCmd.AddCommand(NewContextCommand())
+	rootCmd.AddCommand(NewParseCommand())
+	
 	// Add MCP server command
 	rootCmd.AddCommand(NewMCPServerCommand())
 	

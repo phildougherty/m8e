@@ -103,7 +103,7 @@ func NewTermChat() *TermChat {
 		verboseMode:     false, // Start in compact mode
 		functionResults: make(map[string]string),
 		approvalMode:    DEFAULT, // Start in manual mode for safety
-		maxTurns:        10, // Reasonable limit to prevent infinite loops
+		maxTurns:        15, // Increased to handle auto-continuation after tool limits
 		currentTurns:    0,  // Reset turn counter
 		voiceManager:    voiceManager,
 	}

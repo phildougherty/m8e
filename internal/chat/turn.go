@@ -28,7 +28,7 @@ func NewConversationTurn(chat *TermChat, userRequest string) *ConversationTurn {
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
-		maxTurns:     10, // Prevent infinite loops
+		maxTurns:     15, // Increased to handle auto-continuation after tool limits
 		currentTurn:  0,
 		completed:    false,
 		pendingTools: make([]ai.ToolCall, 0),
@@ -41,7 +41,7 @@ func NewConversationTurnSilent(chat *TermChat, userRequest string) *Conversation
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
-		maxTurns:     10, // Prevent infinite loops
+		maxTurns:     15, // Increased to handle auto-continuation after tool limits
 		currentTurn:  0,
 		completed:    false,
 		pendingTools: make([]ai.ToolCall, 0),
@@ -103,9 +103,27 @@ func (t *ConversationTurn) processConversationFlow(ctx context.Context) error {
 		}
 		
 		// Check if we should continue
-		if !t.shouldContinue() {
+		shouldContinue := t.shouldContinue()
+		if !shouldContinue {
 			t.completed = true
 			break
+		}
+		
+		// Strict enforcement: don't exceed maxTurns even with pending operations
+		if t.currentTurn >= t.maxTurns {
+			if !t.silentMode {
+				fmt.Printf("\n\033[90m⚠ Reached maximum turns (%d). Stopping auto-continuation.\033[0m\n", t.maxTurns)
+			}
+			t.completed = true
+			break
+		}
+		
+		// Show auto-continuation feedback if we're continuing due to tool call limits
+		if t.detectToolCallLimit() && !t.silentMode {
+			fmt.Printf("\n\033[90m▶ Auto-continuing after tool call limit (turn %d/%d)...\033[0m\n", t.currentTurn+1, t.maxTurns)
+		} else if t.detectToolCallLimit() && t.silentMode && GetUIProgram() != nil {
+			// Show in UI
+			GetUIProgram().Send(aiStreamMsg{content: fmt.Sprintf("\n\033[90m▶ Auto-continuing after tool call limit (turn %d/%d)...\033[0m\n", t.currentTurn+1, t.maxTurns)})
 		}
 		
 		// If we have pending tools, execute them and continue
@@ -485,6 +503,11 @@ func (t *ConversationTurn) shouldContinue() bool {
 		return true
 	}
 	
+	// Check if the AI response was cut off while generating tool calls (malformed function calls)
+	if lastMessage.Role == "assistant" && t.detectMalformedToolCalls(lastMessage.Content) {
+		return true
+	}
+	
 	if lastMessage.Role != "assistant" {
 		return false
 	}
@@ -503,11 +526,19 @@ func (t *ConversationTurn) shouldContinue() bool {
 		return false // Stop if we've had multiple recent errors
 	}
 	
-	// Check for completion markers first
+	// Check for tool call limit detection - key addition for auto-continuation
+	if t.detectToolCallLimit() {
+		return true // Auto-continue after hitting tool call limits
+	}
+	
+	// Check for completion markers first - more comprehensive detection
 	completionMarkers := []string{
 		"complete", "finished", "done", "ready", "successfully created",
 		"all set", "configured", "deployed successfully", "task completed",
-		"workflow created", "setup complete",
+		"workflow created", "setup complete", "problem resolved", "issue fixed",
+		"working perfectly", "service is responding", "now properly connected",
+		"configuration reloaded", "proxy reloaded successfully", "discovery refreshed",
+		"everything is working", "issue resolved", "fixed the issue", "solution applied",
 	}
 	
 	for _, marker := range completionMarkers {
@@ -522,11 +553,35 @@ func (t *ConversationTurn) shouldContinue() bool {
 		"next, i will", "now i'll", "next step is to", "i'll now",
 		"let me continue", "continuing with", "next, let me",
 		"now let me", "i should also", "additionally, i will",
+		"i need to", "let me check", "let me examine", "i'll examine",
+		"let me investigate", "i'll investigate", "let me look",
+		"let me search", "i'll search", "let me get", "i'll get",
+		"let me find", "i'll find", "let me also", "i'll also",
+		"let me now", "i'll now check", "i'll now get", "i'll now search",
+		"let me get a comprehensive", "let me get a complete",
 	}
 	
 	for _, indicator := range continuationIndicators {
 		if strings.Contains(content, indicator) {
 			return true
+		}
+	}
+	
+	// Check if the AI indicated it will do something next but didn't actually do it
+	// This handles cases like "Let me get a comprehensive view..." but no tool call followed
+	actionIndicators := []string{
+		"let me get a comprehensive view", "let me get a complete view", 
+		"let me search more", "let me check for", "let me look for",
+		"i'll search for", "i'll check for", "i'll look for",
+		"let me also search", "let me also check", "let me also look",
+	}
+	
+	for _, indicator := range actionIndicators {
+		if strings.Contains(content, indicator) {
+			// Check if there were recent tool calls but AI didn't follow through on the stated action
+			if t.hasRecentToolCalls() && !t.hasVeryRecentToolCalls() {
+				return true // AI said it would do something but didn't
+			}
 		}
 	}
 	
@@ -537,5 +592,184 @@ func (t *ConversationTurn) shouldContinue() bool {
 	
 	// Don't continue unless there's a clear indication the AI wants to continue
 	// This prevents unnecessary empty responses
+	return false
+}
+
+// detectToolCallLimit detects if the AI response was cut off due to tool call limits
+func (t *ConversationTurn) detectToolCallLimit() bool {
+	// Look at recent tool execution patterns to detect tool call limits
+	toolCallCount := 0
+	recentToolMessages := 0
+	
+	// Count tool calls and tool results in recent messages
+	for i := len(t.messages) - 1; i >= 0 && recentToolMessages < 25; i-- {
+		msg := t.messages[i]
+		
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			toolCallCount += len(msg.ToolCalls)
+		}
+		
+		if msg.Role == "tool" || (msg.Role == "assistant" && len(msg.ToolCalls) > 0) {
+			recentToolMessages++
+		}
+		
+		// If we encounter a user message, we've reached the start of this conversation turn
+		if msg.Role == "user" {
+			break
+		}
+	}
+	
+	// Detect tool call limit patterns:
+	// 1. High number of recent tool calls (9+ suggests hitting limits, was 8+ but too aggressive)
+	// 2. AI response ends abruptly without clear completion
+	if toolCallCount >= 9 {
+		lastMessage := t.messages[len(t.messages)-1]
+		if lastMessage.Role == "assistant" {
+			content := strings.ToLower(lastMessage.Content)
+			
+			// First check if this looks like completion despite tool calls
+			completionIndicators := []string{
+				"working perfectly", "problem resolved", "issue fixed", "successfully",
+				"everything is working", "service is responding", "now connected",
+				"reloaded successfully", "configuration updated", "discovery working",
+			}
+			
+			for _, indicator := range completionIndicators {
+				if strings.Contains(content, indicator) {
+					return false // Don't continue if it seems complete
+				}
+			}
+			
+			// Signs the AI was cut off mid-investigation:
+			// - Response ends with investigation language
+			// - No clear completion or summary
+			// - Appears to be in the middle of diagnostic work
+			cutoffIndicators := []string{
+				"let me check", "let me examine", "let me look", "let me try",
+				"i'll check", "i'll examine", "i'll look", "i'll try",
+				"checking", "examining", "looking", "investigating",
+				"i need to", "now i need", "next i need", "i should",
+				"now let me", "let me verify", "i'll verify",
+			}
+			
+			for _, indicator := range cutoffIndicators {
+				if strings.Contains(content, indicator) {
+					return true
+				}
+			}
+			
+			// Also check if the response seems incomplete:
+			// - Very short response after many tool calls
+			// - Ends abruptly without conclusion
+			if len(strings.TrimSpace(content)) < 50 && toolCallCount >= 10 {
+				return true
+			}
+		}
+	}
+	
+	// Special case: if the last message was a tool result and there's no AI response after,
+	// and we had many tool calls, the AI might need to continue processing
+	if len(t.messages) >= 2 {
+		lastMessage := t.messages[len(t.messages)-1]
+		if lastMessage.Role == "tool" && toolCallCount >= 9 {
+			// But don't continue if the tool result suggests completion
+			toolContent := strings.ToLower(lastMessage.Content)
+			successIndicators := []string{
+				"successfully", "working", "running", "connected", "reloaded",
+				"discovery", "responding", "available", "ready",
+			}
+			
+			hasSuccess := false
+			for _, indicator := range successIndicators {
+				if strings.Contains(toolContent, indicator) {
+					hasSuccess = true
+					break
+				}
+			}
+			
+			// Only continue if tool result doesn't indicate success
+			if !hasSuccess {
+				return true
+			}
+		}
+	}
+	
+	return false
+}
+
+// detectMalformedToolCalls detects if the AI response contains malformed tool calls indicating cutoff
+func (t *ConversationTurn) detectMalformedToolCalls(content string) bool {
+	// Look for patterns that suggest malformed JSON or cut-off tool calls
+	malformedPatterns := []string{
+		`{"path": ".", "pattern": "glucose"}{"path":`, // Multiple calls concatenated
+		`": ".","pattern"`, // Broken JSON structure
+		`{"": ".",pattern":`, // Malformed key-value pairs
+		`}{"path":`, // Multiple JSON objects without proper separation
+		`","pattern":ulin`, // Cut-off arguments
+		`"pattern": "blood{"`, // Broken nested JSON
+	}
+	
+	contentLower := strings.ToLower(content)
+	for _, pattern := range malformedPatterns {
+		if strings.Contains(contentLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	
+	// Also check for JSON syntax errors after function names
+	if strings.Contains(contentLower, "search_files") || strings.Contains(contentLower, "execute_bash") {
+		// Look for malformed JSON patterns
+		if strings.Contains(content, `{"`) && strings.Contains(content, `}{"`) {
+			// Multiple JSON objects smashed together
+			return true
+		}
+		
+		if strings.Count(content, `"`) % 2 != 0 {
+			// Odd number of quotes suggests incomplete JSON
+			return true
+		}
+		
+		// Check for incomplete function arguments
+		if strings.Contains(content, `": ".,"`) || strings.Contains(content, `"": ".,`) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// hasRecentToolCalls checks if there were any tool calls in recent conversation
+func (t *ConversationTurn) hasRecentToolCalls() bool {
+	for i := len(t.messages) - 1; i >= 0 && i >= len(t.messages)-10; i-- {
+		msg := t.messages[i]
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			return true
+		}
+		if msg.Role == "tool" {
+			return true
+		}
+		// Stop at user message (start of this turn)
+		if msg.Role == "user" {
+			break
+		}
+	}
+	return false
+}
+
+// hasVeryRecentToolCalls checks if there were tool calls in the last 2 messages
+func (t *ConversationTurn) hasVeryRecentToolCalls() bool {
+	if len(t.messages) < 2 {
+		return false
+	}
+	
+	for i := len(t.messages) - 1; i >= len(t.messages) - 2; i-- {
+		msg := t.messages[i]
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			return true
+		}
+		if msg.Role == "tool" {
+			return true
+		}
+	}
 	return false
 }

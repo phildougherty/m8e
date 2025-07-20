@@ -166,6 +166,12 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/exit")+"     - Exit chat")
 	m.viewport = append(m.viewport, "│")
 	
+	m.viewport = append(m.viewport, m.createEmphasizedText("│ Auto-Continuation:"))
+	m.viewport = append(m.viewport, "│   Automatically continues after tool call limits (max 15 turns)")
+	m.viewport = append(m.viewport, "│   Shows: ▶ Auto-continuing after tool call limit")
+	m.viewport = append(m.viewport, "│   Stops on completion markers or turn limit")
+	m.viewport = append(m.viewport, "│")
+	
 	m.viewport = append(m.viewport, m.createEmphasizedText("│ Keyboard Shortcuts:"))
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("ESC")+"       - Cancel current operation")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+C")+"    - Exit chat")
