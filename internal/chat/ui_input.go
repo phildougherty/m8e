@@ -13,13 +13,22 @@ import (
 func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	keyStr := msg.String()
 	
-	// Debug logging for voice keys (only when voice is enabled)
+	// Debug logging for ALL keys when voice is enabled (to diagnose terminal issues)
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
-		if keyStr == "ctrl+space" || keyStr == "ctrl+m" || keyStr == "ctrl+t" || keyStr == "f1" {
-			// Show debug message for voice key presses
+		// Log all key presses to help debug terminal compatibility
+		if keyStr != "enter" && keyStr != "backspace" && keyStr != "delete" && 
+		   !strings.HasPrefix(keyStr, "rune[") && len(keyStr) > 1 {
 			m.viewport = append(m.viewport, "")
-			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Debug", time.Now().Format("15:04:05")))
-			m.viewport = append(m.viewport, m.createInfoMessage("🔍 Voice key pressed: "+keyStr))
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Key Debug", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createInfoMessage("🔍 Key detected: "+keyStr))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+		}
+		
+		// Special highlighting for target voice keys
+		if keyStr == "ctrl+space" || keyStr == "ctrl+m" || keyStr == "ctrl+t" || keyStr == "f1" {
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Key", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Voice trigger detected: "+keyStr))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		}
 	}

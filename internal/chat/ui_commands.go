@@ -135,6 +135,17 @@ func (m *ChatUI) handleStatusCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Y")+" - Toggle YOLO/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Tab")+" - Toggle AUTO-EDIT/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+R")+" - Toggle verbose/compact output")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+V")+" - Toggle voice mode")
+	
+	// Show voice triggers only if voice is enabled
+	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+		m.viewport = append(m.viewport, "│")
+		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Triggers:"))
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("F1")+"       - Voice recording (most reliable)")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Voice recording (good alternative)")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+M")+"    - Voice recording")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Space")+" - Voice recording (may conflict)")
+	}
 	
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
@@ -163,6 +174,18 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Y")+"    - Toggle YOLO/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Tab")+"       - Toggle AUTO-EDIT/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+R")+"    - Toggle verbose/compact output")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+V")+"    - Toggle voice mode")
+	
+	// Show voice triggers only if voice is enabled  
+	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
+		m.viewport = append(m.viewport, "│")
+		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Triggers:"))
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("F1")+"        - Voice recording (most reliable)")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Voice recording (good alternative)")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+M")+"    - Voice recording")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Space")+" - Voice recording (may conflict)")
+	}
+	
 	m.viewport = append(m.viewport, "│")
 	
 	m.viewport = append(m.viewport, m.createEmphasizedText("│ AI Provider Commands:"))
