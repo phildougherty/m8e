@@ -140,11 +140,8 @@ func (m *ChatUI) handleStatusCommand(timestamp string) tea.Msg {
 	// Show voice triggers only if voice is enabled
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 		m.viewport = append(m.viewport, "│")
-		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Triggers:"))
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("F1")+"       - Voice recording (most reliable)")
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Voice recording (good alternative)")
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+M")+"    - Voice recording")
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Space")+" - Voice recording (may conflict)")
+		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Recording:"))
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start voice recording")
 	}
 	
 	m.viewport = append(m.viewport, m.createBoxFooter())
@@ -179,11 +176,8 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	// Show voice triggers only if voice is enabled  
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 		m.viewport = append(m.viewport, "│")
-		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Triggers:"))
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("F1")+"        - Voice recording (most reliable)")
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Voice recording (good alternative)")
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+M")+"    - Voice recording")
-		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Space")+" - Voice recording (may conflict)")
+		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Recording:"))
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start voice recording")
 	}
 	
 	m.viewport = append(m.viewport, "│")

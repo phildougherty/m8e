@@ -100,48 +100,14 @@ func NewVoiceManager(config *VoiceConfig) (*VoiceManager, error) {
 	return vm, nil
 }
 
-// Start begins voice processing
+// Start begins voice processing (simplified - no wake word detection)
 func (vm *VoiceManager) Start() error {
 	if !vm.config.Enabled {
 		return nil
 	}
 
-	vm.mutex.Lock()
-	defer vm.mutex.Unlock()
-
-	if vm.isListening {
-		return nil
-	}
-
-	// Get default input device
-	inputDevice, err := portaudio.DefaultInputDevice()
-	if err != nil {
-		return fmt.Errorf("failed to get default input device: %w", err)
-	}
-
-	// Open audio stream for recording
-	inputParams := portaudio.StreamParameters{
-		Input: portaudio.StreamDeviceParameters{
-			Device:   inputDevice,
-			Channels: 1,
-			Latency:  inputDevice.DefaultLowInputLatency,
-		},
-		SampleRate:      float64(vm.config.SampleRate),
-		FramesPerBuffer: vm.config.FrameLength,
-	}
-
-	stream, err := portaudio.OpenStream(inputParams, vm.processAudio)
-	if err != nil {
-		return fmt.Errorf("failed to open audio stream: %w", err)
-	}
-
-	vm.audioStream = stream
-	vm.isListening = true
-
-	if err := vm.audioStream.Start(); err != nil {
-		return fmt.Errorf("failed to start audio stream: %w", err)
-	}
-
+	// Initialize PortAudio but don't start continuous listening
+	// Voice recording will be triggered manually via Ctrl+T
 	return nil
 }
 
@@ -154,19 +120,7 @@ func (vm *VoiceManager) Stop() {
 	vm.mutex.Lock()
 	defer vm.mutex.Unlock()
 
-	if !vm.isListening {
-		return
-	}
-
-	vm.isListening = false
 	vm.cancel()
-
-	if vm.audioStream != nil {
-		vm.audioStream.Stop()
-		vm.audioStream.Close()
-		vm.audioStream = nil
-	}
-
 	portaudio.Terminate()
 }
 
@@ -231,85 +185,52 @@ func (vm *VoiceManager) handleManualRecording() {
 	}
 }
 
-// processAudio processes incoming audio data
-func (vm *VoiceManager) processAudio(in []float32) {
-	if !vm.isListening {
-		return
-	}
 
-	// Simple wake word detection using energy threshold
-	energy := vm.calculateEnergy(in)
-	
-	if energy > float32(vm.config.EnergyThreshold) && !vm.isRecording {
-		// Start recording on energy spike
-		go vm.handleWakeWordDetected()
-	}
-}
-
-// calculateEnergy calculates RMS energy of audio frame
-func (vm *VoiceManager) calculateEnergy(samples []float32) float32 {
-	var sum float32
-	for _, sample := range samples {
-		sum += sample * sample
-	}
-	return float32(len(samples)) * sum / float32(len(samples))
-}
-
-// handleWakeWordDetected handles wake word detection
-func (vm *VoiceManager) handleWakeWordDetected() {
-	vm.mutex.Lock()
-	if vm.isRecording {
-		vm.mutex.Unlock()
-		return
-	}
-	vm.isRecording = true
-	vm.mutex.Unlock()
-
-	defer func() {
-		vm.mutex.Lock()
-		vm.isRecording = false
-		vm.mutex.Unlock()
-	}()
-
-	if vm.onWakeWord != nil {
-		vm.onWakeWord()
-	}
-
-	// Record audio for speech-to-text
-	audioData, err := vm.recordAudio()
-	if err != nil {
-		log.Printf("Error recording audio: %v", err)
-		return
-	}
-
-	if len(audioData) == 0 {
-		return
-	}
-
-	// Transcribe audio
-	transcript, err := vm.transcribeAudio(audioData)
-	if err != nil {
-		log.Printf("Error transcribing audio: %v", err)
-		return
-	}
-
-	if transcript != "" && vm.onTranscript != nil {
-		vm.onTranscript(transcript)
-	}
-}
-
-// recordAudio records audio with voice activity detection
+// recordAudio records audio with actual PortAudio capture
 func (vm *VoiceManager) recordAudio() ([]float32, error) {
-	// Simple implementation - record for a fixed duration
-	// In a real implementation, you'd use voice activity detection
 	duration := time.Duration(vm.config.MaxRecordingSeconds) * time.Second
 	frameCount := int(float64(vm.config.SampleRate) * duration.Seconds())
 	
 	audioData := make([]float32, frameCount)
 	
-	// This is a simplified recording implementation
-	// In practice, you'd need to implement proper VAD
+	// Get default input device
+	inputDevice, err := portaudio.DefaultInputDevice()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get input device: %w", err)
+	}
+	
+	// Create recording stream
+	inputParams := portaudio.StreamParameters{
+		Input: portaudio.StreamDeviceParameters{
+			Device:   inputDevice,
+			Channels: 1,
+			Latency:  inputDevice.DefaultLowInputLatency,
+		},
+		SampleRate:      float64(vm.config.SampleRate),
+		FramesPerBuffer: vm.config.FrameLength,
+	}
+	
+	stream, err := portaudio.OpenStream(inputParams, func(in []float32) {
+		// Simple recording - copy input to buffer
+		if len(audioData) > 0 && len(in) > 0 {
+			copy(audioData[len(audioData)-len(in):], in)
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open recording stream: %w", err)
+	}
+	defer stream.Close()
+	
+	// Start recording
+	if err := stream.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start recording: %w", err)
+	}
+	
+	// Record for specified duration
 	time.Sleep(duration)
+	
+	// Stop recording
+	stream.Stop()
 	
 	return audioData, nil
 }
@@ -327,22 +248,85 @@ func (vm *VoiceManager) transcribeAudio(audioData []float32) (string, error) {
 	return vm.callWhisper(tempFile)
 }
 
-// saveAudioToWAV saves audio data to a WAV file
+// saveAudioToWAV saves audio data to a proper WAV file
 func (vm *VoiceManager) saveAudioToWAV(audioData []float32) (string, error) {
 	tempDir := os.TempDir()
 	tempFile := filepath.Join(tempDir, fmt.Sprintf("voice_%d.wav", time.Now().UnixNano()))
 	
-	// Simple WAV file creation (you'd need a proper WAV library)
-	// This is a placeholder - implement proper WAV encoding
 	file, err := os.Create(tempFile)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
 
-	// Write basic WAV header and data
-	// This is simplified - use a proper audio library in production
+	// WAV file parameters
+	sampleRate := uint32(vm.config.SampleRate)
+	numChannels := uint16(1)
+	bitsPerSample := uint16(16)
+	byteRate := sampleRate * uint32(numChannels) * uint32(bitsPerSample) / 8
+	blockAlign := numChannels * bitsPerSample / 8
+	dataSize := uint32(len(audioData)) * uint32(bitsPerSample) / 8
+
+	// Write WAV header
+	// RIFF chunk
+	file.WriteString("RIFF")
+	writeUint32(file, 36+dataSize) // ChunkSize
+	file.WriteString("WAVE")
+	
+	// fmt chunk
+	file.WriteString("fmt ")
+	writeUint32(file, 16)          // Subchunk1Size
+	writeUint16(file, 1)           // AudioFormat (PCM)
+	writeUint16(file, numChannels) // NumChannels
+	writeUint32(file, sampleRate)  // SampleRate
+	writeUint32(file, byteRate)    // ByteRate
+	writeUint16(file, blockAlign)  // BlockAlign
+	writeUint16(file, bitsPerSample) // BitsPerSample
+	
+	// data chunk
+	file.WriteString("data")
+	writeUint32(file, dataSize)
+	
+	// Convert float32 to 16-bit PCM and write
+	for _, sample := range audioData {
+		// Clamp to [-1, 1] and convert to 16-bit
+		if sample > 1.0 {
+			sample = 1.0
+		} else if sample < -1.0 {
+			sample = -1.0
+		}
+		pcmSample := int16(sample * 32767)
+		writeInt16(file, pcmSample)
+	}
+	
 	return tempFile, nil
+}
+
+// Helper functions for binary writing
+func writeUint32(file *os.File, value uint32) {
+	data := []byte{
+		byte(value),
+		byte(value >> 8),
+		byte(value >> 16),
+		byte(value >> 24),
+	}
+	file.Write(data)
+}
+
+func writeUint16(file *os.File, value uint16) {
+	data := []byte{
+		byte(value),
+		byte(value >> 8),
+	}
+	file.Write(data)
+}
+
+func writeInt16(file *os.File, value int16) {
+	data := []byte{
+		byte(value),
+		byte(value >> 8),
+	}
+	file.Write(data)
 }
 
 // callWhisper calls Whisper for transcription
