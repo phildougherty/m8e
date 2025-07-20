@@ -1,5 +1,5 @@
 # Makefile for Matey (m8e) - Kubernetes-native MCP server orchestrator
-.PHONY: build clean test test-coverage test-race lint fmt vet security-scan docker-build help install uninstall dev deps clean-all
+.PHONY: build clean test test-coverage test-race lint fmt vet security-scan docker-build help install uninstall dev deps clean-all build-voice install-voice
 
 # Build variables
 BINARY_NAME=matey
@@ -40,6 +40,28 @@ dev:
 	$(GO) build -race -gcflags="-N -l" $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(SRC_MAIN)
 	@echo "Development build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
+# Build with voice features enabled
+build-voice:
+	@echo "Building matey $(VERSION) with voice features..."
+	@echo "Checking PortAudio installation..."
+	@if ! pkg-config --exists portaudio-2.0; then \
+		echo "Error: PortAudio not found. Please install it first:"; \
+		echo "  Ubuntu/Debian: sudo apt install portaudio19-dev pkg-config"; \
+		echo "  macOS: brew install portaudio pkg-config"; \
+		echo "  Or run: ./scripts/build-with-voice.sh"; \
+		exit 1; \
+	fi
+	@echo "PortAudio found: $$(pkg-config --modversion portaudio-2.0)"
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build -tags voice $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(SRC_MAIN)
+	@echo "Voice-enabled build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+	@echo "Version: $(VERSION)"
+	@echo ""
+	@echo "Voice features enabled! Usage:"
+	@echo "  export VOICE_ENABLED=true"
+	@echo "  export TTS_ENDPOINT=http://localhost:8000/v1/audio/speech"
+	@echo "  ./$(BUILD_DIR)/$(BINARY_NAME) chat"
+
 # Install dependencies
 deps:
 	@echo "Installing dependencies..."
@@ -73,6 +95,29 @@ install-user: build
 	@echo "Make sure ~/.local/bin is in your PATH:"
 	@echo "  export PATH=~/.local/bin:\$$PATH"
 	@echo "Run 'matey --help' to get started"
+
+# Install the voice-enabled application
+install-voice: build-voice
+	@echo "Installing voice-enabled matey to $(INSTALL_BIN)..."
+	@if [ ! -w $(INSTALL_PREFIX) ]; then \
+		echo "Error: $(INSTALL_PREFIX) is not writable. Installing to ~/.local/bin instead..."; \
+		mkdir -p ~/.local/bin; \
+		cp $(BUILD_DIR)/$(BINARY_NAME) ~/.local/bin/$(BINARY_NAME); \
+		chmod +x ~/.local/bin/$(BINARY_NAME); \
+		echo "Installation complete: ~/.local/bin/$(BINARY_NAME)"; \
+		echo "Make sure ~/.local/bin is in your PATH:"; \
+		echo "  export PATH=~/.local/bin:\$$PATH"; \
+	else \
+		mkdir -p $(INSTALL_BIN); \
+		cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_BIN)/$(BINARY_NAME); \
+		chmod +x $(INSTALL_BIN)/$(BINARY_NAME); \
+		echo "Installation complete: $(INSTALL_BIN)/$(BINARY_NAME)"; \
+	fi
+	@echo "Voice features are enabled! Setup:"
+	@echo "  export VOICE_ENABLED=true"
+	@echo "  export TTS_ENDPOINT=http://localhost:8000/v1/audio/speech"
+	@echo "  # Install Whisper: pip install faster-whisper"
+	@echo "  matey chat"
 
 # Uninstall the application
 uninstall:
@@ -193,6 +238,7 @@ help:
 	@echo ""
 	@echo "Build targets:"
 	@echo "  build           - Build the application"
+	@echo "  build-voice     - Build with voice features enabled (requires PortAudio)"
 	@echo "  dev             - Build for development (with race detection)"
 	@echo "  release         - Build optimized release version"
 	@echo "  run             - Build and run the application"
@@ -200,6 +246,7 @@ help:
 	@echo "Installation targets:"
 	@echo "  install         - Install the application to $(INSTALL_BIN) (requires sudo)"
 	@echo "  install-user    - Install the application to ~/.local/bin"
+	@echo "  install-voice   - Install voice-enabled version (requires PortAudio)"
 	@echo "  uninstall       - Uninstall the application"
 	@echo "  deps            - Install/update dependencies"
 	@echo ""
@@ -227,7 +274,9 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build                    # Build the application"
+	@echo "  make build-voice              # Build with voice features"
 	@echo "  make install                  # Install to $(INSTALL_BIN)"
+	@echo "  make install-voice            # Install voice-enabled version"
 	@echo "  make docker-build DOCKER_REGISTRY=my-registry.com"
 	@echo "  make quality                  # Run all quality checks"
 
