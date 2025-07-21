@@ -303,19 +303,12 @@ func (m *TopModel) View() string {
 
 	var b strings.Builder
 
-	// Enhanced header with borders
-	headerBox := lipgloss.NewStyle().
-		Foreground(ArmyGreen).
-		Bold(true).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(Brown).
-		Padding(0, 2).
-		Margin(1, 0)
-	
-	b.WriteString(headerBox.Render("╔═══ Matey Top - MCP Server Monitor ═══╗"))
+	// Clean title header
+	title := titleStyle.Render("Matey Top - MCP Server Monitor")
+	b.WriteString(title)
 	b.WriteString("\n")
 
-	// Enhanced status bar with better formatting
+	// Status bar with clean formatting
 	currentTime := m.lastUpdate.Format("15:04:05")
 	serverCount := len(m.servers)
 	sortDirection := "↑"
@@ -323,209 +316,213 @@ func (m *TopModel) View() string {
 		sortDirection = "↓"
 	}
 	
-	statusBar := fmt.Sprintf("Last Update: %s │ Servers: %d │ Sort: %s %s │ Press 'h' for help",
+	statusBar := fmt.Sprintf("Last Update: %s | Servers: %d | Sort: %s %s | Press 'h' for help",
 		currentTime, serverCount, m.sortBy, sortDirection)
 	
-	statusBarBox := lipgloss.NewStyle().
-		Foreground(GoldYellow).
-		Bold(true).
-		Padding(0, 2).
-		Margin(0, 1)
-	
-	b.WriteString(statusBarBox.Render(statusBar))
+	b.WriteString(statusBarStyle.Render(statusBar))
 	b.WriteString("\n\n")
 
-	// Enhanced help section
+	// Help section
 	if m.showHelp {
-		helpContent := `╔═══ Controls ═══╗
-│ q/Ctrl+C: Quit          │ h/?: Toggle help       │ Space: Reverse sort   │
-│ F5/Ctrl+R: Force refresh                                                 │
-├─── Sort Options ────────────────────────────────────────────────────────┤
-│ n: Sort by name         │ s: Sort by status      │ t: Sort by type       │
-│ r: Sort by restarts     │ a: Sort by age         │ p: Sort by protocol   │
-│ c: Sort by CPU usage    │ m: Sort by memory      │                       │
-╚══════════════════════════════════════════════════════════════════════════╝`
+		helpContent := `Controls:
+  q/Ctrl+C: Quit          h/?: Toggle help       Space: Reverse sort
+  F5/Ctrl+R: Force refresh
+
+Sort Options:
+  n: Sort by name         s: Sort by status      t: Sort by type
+  r: Sort by restarts     a: Sort by age         p: Sort by protocol
+  c: Sort by CPU usage    m: Sort by memory`
 		
-		helpBox := lipgloss.NewStyle().
-			Foreground(Yellow).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(Brown).
-			Padding(1, 2).
-			Margin(1, 1)
-		
-		b.WriteString(helpBox.Render(helpContent))
-		b.WriteString("\n")
+		b.WriteString(helpStyle.Render(helpContent))
+		b.WriteString("\n\n")
 	}
 
-	// Enhanced table header with better spacing
+	// Table header
 	headerRow := fmt.Sprintf("%-20s %-10s %-12s %-8s %-10s %-8s %-8s %-30s %-10s %-6s",
 		"NAME", "STATUS", "TYPE", "RESTARTS", "AGE", "CPU", "MEMORY", "IMAGE", "PROTOCOL", "PORT")
 	
-	headerFormatted := headerStyle.Render(headerRow)
-	b.WriteString(headerFormatted)
+	b.WriteString(headerStyle.Render(headerRow))
 	b.WriteString("\n")
 
-	// Enhanced separator with styled line
-	separatorWidth := m.width
-	if separatorWidth == 0 {
-		separatorWidth = 140
-	}
-	separator := strings.Repeat("─", separatorWidth-4)
-	b.WriteString(separatorStyle.Render("├" + separator + "┤"))
+	// Simple separator line
+	separator := strings.Repeat("─", 130)
+	b.WriteString(separatorStyle.Render(separator))
 	b.WriteString("\n")
 
-	// Server rows with enhanced formatting
+	// Server rows
 	if len(m.servers) == 0 {
 		noServersMsg := "No servers found. Check your configuration and try again."
-		noServersBox := lipgloss.NewStyle().
-			Foreground(Tan).
-			Italic(true).
-			Padding(2, 4).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(Brown)
-		
-		b.WriteString(noServersBox.Render(noServersMsg))
+		b.WriteString(helpStyle.Render(noServersMsg))
+		b.WriteString("\n")
 	} else {
 		for i, server := range m.servers {
-			row := m.formatServerRow(server, i%2 == 0) // Alternate row styling
+			row := m.formatServerRow(server, i%2 == 0)
 			b.WriteString(row)
 			b.WriteString("\n")
 		}
 	}
 
-	// Enhanced footer
-	b.WriteString("\n")
-	footerContent := "Matey MCP Server Orchestrator - Real-time status monitoring"
-	footerBox := lipgloss.NewStyle().
-		Foreground(Brown).
-		Italic(true).
-		Align(lipgloss.Center)
-	
-	b.WriteString(footerBox.Render(footerContent))
-
 	return b.String()
 }
 
-// formatServerRow formats a server row with appropriate styling and alternating colors
+// formatServerRow formats a server row with proper alignment and colors
 func (m *TopModel) formatServerRow(server ServerInfo, isEvenRow bool) string {
-	// Format status with color
-	var statusStr string
+	// Prepare and color each field individually to avoid replacement conflicts
+	
+	// Name field - truncate and color based on type
+	nameStr := server.Name
+	if len(nameStr) > 20 {
+		nameStr = nameStr[:17] + "..."
+	}
+	var nameStyled string
+	switch server.Type {
+	case "matey-core":
+		nameStyled = lipgloss.NewStyle().Foreground(ArmyGreen).Bold(true).Render(nameStr)
+	case "mcp-server":
+		nameStyled = lipgloss.NewStyle().Foreground(LightGreen).Render(nameStr)
+	case "memory":
+		nameStyled = lipgloss.NewStyle().Foreground(GoldYellow).Render(nameStr)
+	case "task-scheduler":
+		nameStyled = lipgloss.NewStyle().Foreground(Yellow).Render(nameStr)
+	default:
+		nameStyled = lipgloss.NewStyle().Foreground(Tan).Render(nameStr)
+	}
+	
+	// Status field - color based on status
+	statusStr := server.Status
+	if len(statusStr) > 10 {
+		statusStr = statusStr[:7] + "..."
+	}
+	var statusStyled string
 	switch server.Status {
 	case "running":
-		statusStr = statusRunningStyle.Render(server.Status)
+		statusStyled = statusRunningStyle.Render(statusStr)
 	case "pending", "starting":
-		statusStr = statusPendingStyle.Render(server.Status)
+		statusStyled = statusPendingStyle.Render(statusStr)
 	case "error", "failed":
-		statusStr = statusErrorStyle.Render(server.Status)
+		statusStyled = statusErrorStyle.Render(statusStr)
 	default:
-		statusStr = statusUnknownStyle.Render(server.Status)
+		statusStyled = statusUnknownStyle.Render(statusStr)
 	}
-
-	// Format age with color based on duration
-	ageStr := m.formatDurationWithColor(server.Age)
-
-	// Format image (truncate if too long) with subtle styling
+	
+	// Type field - plain text, truncate if needed
+	typeStr := server.Type
+	if len(typeStr) > 12 {
+		typeStr = typeStr[:9] + "..."
+	}
+	
+	// Restarts field - color based on count
+	restartsStr := fmt.Sprintf("%d", server.Restarts)
+	var restartsStyled string
+	if server.Restarts > 0 {
+		restartsStyled = statusErrorStyle.Render(restartsStr)
+	} else {
+		restartsStyled = statusRunningStyle.Render(restartsStr)
+	}
+	
+	// Age field - color based on duration
+	ageStr := formatDuration(server.Age)
+	var ageStyled string
+	if server.Age < time.Hour {
+		ageStyled = lipgloss.NewStyle().Foreground(LightGreen).Bold(true).Render(ageStr)
+	} else if server.Age < 24*time.Hour {
+		ageStyled = lipgloss.NewStyle().Foreground(GoldYellow).Render(ageStr)
+	} else {
+		ageStyled = lipgloss.NewStyle().Foreground(Tan).Render(ageStr)
+	}
+	
+	// CPU field - color if present
+	cpuStr := server.CPU
+	if len(cpuStr) > 8 {
+		cpuStr = cpuStr[:5] + "..."
+	}
+	var cpuStyled string
+	if cpuStr != "" {
+		cpuStyled = lipgloss.NewStyle().Foreground(Brown).Render(cpuStr)
+	} else {
+		cpuStyled = cpuStr
+	}
+	
+	// Memory field - color if present
+	memStr := server.Memory
+	if len(memStr) > 8 {
+		memStr = memStr[:5] + "..."
+	}
+	var memStyled string
+	if memStr != "" {
+		memStyled = lipgloss.NewStyle().Foreground(Brown).Render(memStr)
+	} else {
+		memStyled = memStr
+	}
+	
+	// Image field - color and truncate
 	imageStr := server.Image
 	if len(imageStr) > 30 {
 		imageStr = imageStr[:27] + "..."
 	}
 	imageStyled := lipgloss.NewStyle().Foreground(Tan).Render(imageStr)
-
-	// Format port with styling
-	portStr := ""
-	if server.Port > 0 {
-		portStr = lipgloss.NewStyle().Foreground(GoldYellow).Render(fmt.Sprintf("%d", server.Port))
-	}
-
-	// Format restart count with color (red if > 0)
-	restartsStr := fmt.Sprintf("%d", server.Restarts)
-	if server.Restarts > 0 {
-		restartsStr = statusErrorStyle.Render(restartsStr)
-	} else {
-		restartsStr = statusRunningStyle.Render(restartsStr)
-	}
-
-	// Format resource usage with colors
-	cpuStr := server.CPU
-	memStr := server.Memory
-	if cpuStr != "" {
-		cpuStr = lipgloss.NewStyle().Foreground(Brown).Render(cpuStr)
-	}
-	if memStr != "" {
-		memStr = lipgloss.NewStyle().Foreground(Brown).Render(memStr)
-	}
-
-	// Format server name with type-based coloring
-	nameStr := server.Name
-	switch server.Type {
-	case "matey-core":
-		nameStr = lipgloss.NewStyle().Foreground(ArmyGreen).Bold(true).Render(nameStr)
-	case "mcp-server":
-		nameStr = lipgloss.NewStyle().Foreground(LightGreen).Render(nameStr)
-	case "memory":
-		nameStr = lipgloss.NewStyle().Foreground(GoldYellow).Render(nameStr)
-	case "task-scheduler":
-		nameStr = lipgloss.NewStyle().Foreground(Yellow).Render(nameStr)
-	default:
-		nameStr = lipgloss.NewStyle().Foreground(Tan).Render(nameStr)
-	}
-
-	// Format protocol with appropriate color
+	
+	// Protocol field - color based on protocol type
 	protocolStr := server.Protocol
+	if len(protocolStr) > 10 {
+		protocolStr = protocolStr[:7] + "..."
+	}
+	var protocolStyled string
 	if protocolStr != "" {
 		switch protocolStr {
 		case "http", "https":
-			protocolStr = lipgloss.NewStyle().Foreground(LightGreen).Render(protocolStr)
+			protocolStyled = lipgloss.NewStyle().Foreground(LightGreen).Render(protocolStr)
 		case "sse":
-			protocolStr = lipgloss.NewStyle().Foreground(GoldYellow).Render(protocolStr)
+			protocolStyled = lipgloss.NewStyle().Foreground(GoldYellow).Render(protocolStr)
 		case "websocket":
-			protocolStr = lipgloss.NewStyle().Foreground(Yellow).Render(protocolStr)
+			protocolStyled = lipgloss.NewStyle().Foreground(Yellow).Render(protocolStr)
 		case "stdio":
-			protocolStr = lipgloss.NewStyle().Foreground(Brown).Render(protocolStr)
+			protocolStyled = lipgloss.NewStyle().Foreground(Brown).Render(protocolStr)
 		default:
-			protocolStr = lipgloss.NewStyle().Foreground(Tan).Render(protocolStr)
+			protocolStyled = lipgloss.NewStyle().Foreground(Tan).Render(protocolStr)
 		}
-	}
-
-	// Create the formatted row
-	row := fmt.Sprintf("%-20s %-10s %-12s %-8s %-10s %-8s %-8s %-30s %-10s %-6s",
-		nameStr,
-		statusStr,
-		server.Type,
-		restartsStr,
-		ageStr,
-		cpuStr,
-		memStr,
-		imageStyled,
-		protocolStr,
-		portStr)
-
-	// Apply subtle alternating row background
-	if isEvenRow {
-		// Slightly darker background for even rows
-		rowStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
-		return rowStyle.Render(row)
-	}
-	
-	return row
-}
-
-// formatDurationWithColor formats duration with color coding
-func (m *TopModel) formatDurationWithColor(d time.Duration) string {
-	durationStr := formatDuration(d)
-	
-	// Color code based on age
-	if d < time.Hour {
-		// New - bright green
-		return lipgloss.NewStyle().Foreground(LightGreen).Bold(true).Render(durationStr)
-	} else if d < 24*time.Hour {
-		// Recent - yellow
-		return lipgloss.NewStyle().Foreground(GoldYellow).Render(durationStr)
 	} else {
-		// Old - tan
-		return lipgloss.NewStyle().Foreground(Tan).Render(durationStr)
+		protocolStyled = protocolStr
 	}
+	
+	// Port field - color if present
+	portStr := ""
+	if server.Port > 0 {
+		portStr = fmt.Sprintf("%d", server.Port)
+	}
+	var portStyled string
+	if portStr != "" {
+		portStyled = lipgloss.NewStyle().Foreground(GoldYellow).Render(portStr)
+	} else {
+		portStyled = portStr
+	}
+
+	// Now format the row using a custom approach to handle colored strings
+	// We need to pad each styled field to the correct visual width
+	nameField := m.padField(nameStyled, len(nameStr), 20)
+	statusField := m.padField(statusStyled, len(statusStr), 10)
+	typeField := m.padField(typeStr, len(typeStr), 12) // Type is not colored
+	restartsField := m.padField(restartsStyled, len(restartsStr), 8)
+	ageField := m.padField(ageStyled, len(ageStr), 10)
+	cpuField := m.padField(cpuStyled, len(cpuStr), 8)
+	memField := m.padField(memStyled, len(memStr), 8)
+	imageField := m.padField(imageStyled, len(imageStr), 30)
+	protocolField := m.padField(protocolStyled, len(protocolStr), 10)
+	portField := m.padField(portStyled, len(portStr), 6)
+
+	return nameField + " " + statusField + " " + typeField + " " + restartsField + " " + ageField + " " + cpuField + " " + memField + " " + imageField + " " + protocolField + " " + portField
 }
+
+// padField pads a field to the specified visual width, accounting for ANSI color codes
+func (m *TopModel) padField(styledText string, actualTextLength, targetWidth int) string {
+	// Calculate how much padding we need based on the actual text length
+	padding := targetWidth - actualTextLength
+	if padding < 0 {
+		padding = 0
+	}
+	return styledText + strings.Repeat(" ", padding)
+}
+
 
 // formatDuration formats a duration in a human-readable way
 func formatDuration(d time.Duration) string {
