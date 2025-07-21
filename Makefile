@@ -131,13 +131,20 @@ test:
 	@echo "Running tests..."
 	$(GO) test ./...
 
-# Run tests with coverage
+# Run tests with coverage using comprehensive script
 test-coverage:
-	@echo "Running tests with coverage..."
-	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -v -coverprofile=$(COVERAGE_DIR)/coverage.out ./...
-	$(GO) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	@echo "Coverage report generated: $(COVERAGE_DIR)/coverage.html"
+	@echo "Running comprehensive test coverage analysis..."
+	@./scripts/test-coverage.sh all
+
+# Run unit tests with coverage only
+test-coverage-unit:
+	@echo "Running unit tests with coverage..."
+	@./scripts/test-coverage.sh unit
+
+# Run integration tests with coverage
+test-coverage-integration:
+	@echo "Running integration tests with coverage..."
+	@./scripts/test-coverage.sh integration
 
 # Run tests with race detection
 test-race:
@@ -163,14 +170,27 @@ vet:
 	@echo "Running vet..."
 	$(GO) vet ./...
 
-# Run security scan (install gosec if not present)
+# Run comprehensive security scan
 security-scan:
-	@echo "Running security scan..."
-	@if ! command -v gosec >/dev/null 2>&1; then \
-		echo "Installing gosec..."; \
-		go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest; \
-	fi
-	gosec ./...
+	@echo "Running comprehensive security scan..."
+	@./scripts/security-scan.sh all
+
+# Run specific security scans
+security-scan-gosec:
+	@echo "Running gosec security scan..."
+	@./scripts/security-scan.sh gosec
+
+security-scan-vulns:
+	@echo "Running vulnerability scan..."
+	@./scripts/security-scan.sh vulns
+
+security-scan-deps:
+	@echo "Running dependency audit..."
+	@./scripts/security-scan.sh deps
+
+security-scan-secrets:
+	@echo "Running secrets scan..."
+	@./scripts/security-scan.sh secrets
 
 # Build Docker image
 docker-build:
@@ -231,6 +251,36 @@ release:
 	$(GO) build -trimpath $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(SRC_MAIN)
 	@echo "Release build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
+# Prepare release interactively
+prepare-release:
+	@echo "Starting interactive release preparation..."
+	@./scripts/prepare-release.sh interactive
+
+# Validate release readiness
+validate-release:
+	@echo "Validating release readiness..."
+	@./scripts/prepare-release.sh checks
+
+# Generate changelog
+changelog:
+	@echo "Generating changelog..."
+	@./scripts/prepare-release.sh changelog
+
+# Generate comprehensive documentation
+docs:
+	@echo "Generating comprehensive documentation..."
+	@./scripts/generate-docs.sh all
+
+# Generate API documentation
+docs-api:
+	@echo "Generating API documentation..."
+	@./scripts/generate-docs.sh specs
+
+# Generate client examples
+docs-examples:
+	@echo "Generating client examples..."
+	@./scripts/generate-docs.sh examples
+
 # Help
 help:
 	@echo "Matey (m8e) Build System"
@@ -251,20 +301,37 @@ help:
 	@echo "  deps            - Install/update dependencies"
 	@echo ""
 	@echo "Testing targets:"
-	@echo "  test            - Run tests"
-	@echo "  test-coverage   - Run tests with coverage"
-	@echo "  test-race       - Run tests with race detection"
+	@echo "  test                     - Run basic tests"
+	@echo "  test-coverage            - Run comprehensive test coverage analysis"
+	@echo "  test-coverage-unit       - Run unit tests with coverage only"
+	@echo "  test-coverage-integration - Run integration tests with coverage"
+	@echo "  test-race                - Run tests with race detection"
 	@echo ""
 	@echo "Quality targets:"
-	@echo "  lint            - Run linter"
-	@echo "  fmt             - Format code"
-	@echo "  vet             - Run vet"
-	@echo "  security-scan   - Run security scan"
-	@echo "  quality         - Run all quality checks"
+	@echo "  lint                 - Run linter"
+	@echo "  fmt                  - Format code"
+	@echo "  vet                  - Run vet"
+	@echo "  security-scan        - Run comprehensive security scan"
+	@echo "  security-scan-gosec  - Run gosec security scan only"
+	@echo "  security-scan-vulns  - Run vulnerability scan only"
+	@echo "  security-scan-deps   - Run dependency audit only"
+	@echo "  security-scan-secrets - Run secrets scan only"
+	@echo "  quality              - Run all quality checks"
 	@echo ""
 	@echo "Docker targets:"
 	@echo "  docker-build    - Build Docker image"
 	@echo "  docker-push     - Push Docker image (requires DOCKER_REGISTRY)"
+	@echo ""
+	@echo "Release targets:"
+	@echo "  release         - Build optimized release version"
+	@echo "  prepare-release - Interactive release preparation"
+	@echo "  validate-release - Validate release readiness"
+	@echo "  changelog       - Generate changelog"
+	@echo ""
+	@echo "Documentation targets:"
+	@echo "  docs            - Generate comprehensive documentation"
+	@echo "  docs-api        - Generate API documentation and specs"
+	@echo "  docs-examples   - Generate client examples"
 	@echo ""
 	@echo "Maintenance targets:"
 	@echo "  clean           - Clean build artifacts"

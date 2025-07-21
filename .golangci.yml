@@ -1,9 +1,129 @@
+# golangci-lint configuration for Matey
+# This configuration provides comprehensive linting for production-ready Go code
+
 run:
-  timeout: 5m
+  timeout: 10m
+  issues-exit-code: 1
+  tests: true
+  build-tags:
+    - integration
+    - voice
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
 
 linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - io/ioutil.ReadFile
+      - io.Copy(*bytes.Buffer)
+      - io.Copy(os.Stdout)
+
+  govet:
+    check-shadowing: true
+    enable-all: true
+    disable:
+      - fieldalignment
+
+  gocyclo:
+    min-complexity: 15
+
+  goimports:
+    local-prefixes: github.com/phildougherty/m8e
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  misspell:
+    locale: US
+
+  lll:
+    line-length: 120
+
+  unused:
+    check-exported: false
+
+  unparam:
+    check-exported: true
+
+  nakedret:
+    max-func-lines: 30
+
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - dupImport
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+
+  funlen:
+    lines: 100
+    statements: 50
+
+  godox:
+    keywords:
+      - NOTE
+      - OPTIMIZE
+      - HACK
+      - BUG
+      - FIXME
+
+  gofmt:
+    simplify: true
+
+  gofumpt:
+    extra-rules: true
+
+  depguard:
+    rules:
+      main:
+        deny:
+          - pkg: "github.com/sirupsen/logrus"
+            desc: "use standard library log/slog instead"
+          - pkg: "github.com/pkg/errors"
+            desc: "use standard library errors instead"
+
+  godot:
+    scope: declarations
+    capital: false
+
+  testpackage:
+    skip-regexp: (export|internal)_test\.go
+
+  revive:
+    min-confidence: 0
+    rules:
+      - name: atomic
+      - name: line-length-limit
+        arguments: [120]
+      - name: argument-limit
+        arguments: [8]
+      - name: cyclomatic
+        arguments: [15]
+      - name: max-public-structs
+        arguments: [10]
+      - name: file-header
+        disabled: true
+
   mnd:
-    # Allow numbers in tests
     checks:
       - argument
       - case
@@ -14,17 +134,109 @@ linters-settings:
 
 linters:
   enable:
+    - bodyclose
+    - depguard
+    - dogsled
+    - dupl
     - errcheck
-    - nlreturn
+    - exportloopref
+    - funlen
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gofmt
+    - gofumpt
+    - goimports
     - mnd
+    - goprintffuncname
+    - gosec
+    - gosimple
     - govet
-    - staticcheck
     - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - nlreturn
+    - revive
+    - staticcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
     - unused
+    - whitespace
+
+  disable:
+    - asciicheck
+    - cyclop
+    - exhaustive
+    - exhaustruct
+    - forbidigo
+    - forcetypeassert
+    - gochecknoglobals
+    - gocognit
+    - goerr113
+    - ireturn
+    - maintidx
+    - nestif
+    - nilnil
+    - paralleltest
+    - tagliatelle
+    - varnamelen
+    - wrapcheck
 
 issues:
   exclude-rules:
+    # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+        - goconst
+        - gochecknoinits
         - mnd
         - nlreturn
+
+    # Exclude known linter issues
+    - path: internal/auth/
+      linters:
+        - gosec
+      text: "G204" # Subprocess launched with variable
+
+    - path: internal/cmd/
+      linters:
+        - lll
+        - funlen
+
+    # Exclude shadow checking for err variables
+    - linters:
+        - govet
+      text: 'declaration of "(err|ctx)" shadows declaration at'
+
+    # Exclude cyclomatic complexity in switch statements
+    - linters:
+        - gocyclo
+      text: "switch statements should only"
+
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+severity:
+  default-severity: error
+  case-sensitive: false
+  rules:
+    - linters:
+        - dupl
+        - goconst
+        - misspell
+        - prealloc
+        - unparam
+        - gocritic
+      severity: warning
