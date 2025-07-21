@@ -13,22 +13,22 @@
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28+-blue.svg)](https://kubernetes.io/)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-green.svg)](https://modelcontextprotocol.io/)
 
-## 🚀 What is Matey?
+## What is Matey?
 
 Matey is a production-ready Kubernetes-native orchestrator for Model Context Protocol (MCP) servers. It combines the familiar simplicity of Docker Compose configuration with the power and scalability of Kubernetes, making it easy to deploy, manage, and scale MCP applications in cloud-native environments.
 
 ### Key Benefits
 
-- **🎯 Familiar Configuration**: Use Docker Compose-style YAML configurations that automatically translate to Kubernetes resources
-- **☸️ Kubernetes Native**: Built from the ground up for Kubernetes with Custom Resources and Controllers
-- **🔄 MCP Protocol Support**: Full support for MCP 2024-11-05 specification with HTTP, SSE, WebSocket, and STDIO transports
-- **🤖 AI Integration**: Built-in support for OpenAI, Claude, Ollama, and OpenRouter with fallback chains
-- **🔐 Enterprise Security**: OAuth 2.1, JWT, RBAC, and comprehensive audit logging
-- **📊 Rich CLI**: 20+ commands for complete lifecycle management
-- **🔍 Service Discovery**: Automatic Kubernetes-native service discovery and health checking
-- **🛠️ Developer Friendly**: Hot reload, configuration validation, and extensive testing
+- **Familiar Configuration**: Use Docker Compose-style YAML configurations that automatically translate to Kubernetes resources
+- **Kubernetes Native**: Built from the ground up for Kubernetes with Custom Resources and Controllers
+- **MCP Protocol Support**: Full support for MCP 2024-11-05 specification with HTTP, SSE, WebSocket, and STDIO transports
+- **AI Integration**: Built-in support for OpenAI, Claude, Ollama, and OpenRouter with fallback chains
+- **Enterprise Security**: OAuth 2.1, JWT, RBAC, and comprehensive audit logging
+- **Rich CLI**: 20+ commands for complete lifecycle management
+- **Service Discovery**: Automatic Kubernetes-native service discovery and health checking
+- **Developer Friendly**: Hot reload, configuration validation, and extensive testing
 
-## 📦 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -127,7 +127,7 @@ auth:
         client_secret: ${GITHUB_CLIENT_SECRET}
 ```
 
-## 🛠️ Core Features
+## Core Features
 
 ### MCP Protocol Support
 - **Full MCP 2024-11-05 specification compliance**
@@ -157,7 +157,7 @@ auth:
 - **Comprehensive audit logging** for compliance
 - **TLS/SSL support** for secure communication
 
-## 📚 Documentation
+## Documentation
 
 - **[Getting Started Guide](docs/getting-started/)** - Complete setup walkthrough
 - **[Configuration Reference](docs/configuration/)** - All configuration options
@@ -165,7 +165,7 @@ auth:
 - **[Deployment Guide](docs/deployment/)** - Kubernetes deployment options
 - **[Development Guide](docs/development/)** - Contributing and development setup
 
-## 🔧 CLI Commands
+## CLI Commands
 
 ### Core Orchestration
 ```bash
@@ -191,7 +191,7 @@ matey workflow        # Manage workflows
 matey inspect         # Debug services
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 Matey follows a cloud-native architecture:
 
@@ -207,7 +207,7 @@ Matey follows a cloud-native architecture:
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](docs/development/contributing.md) for details.
 
@@ -229,18 +229,18 @@ make test-coverage     # Generate coverage report
 make lint             # Run linting
 ```
 
-## 📄 License
+## License
 
 This project is licensed under the GNU Affero General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
-## 🔗 Links
+## Links
 
 - **Documentation**: [docs/](docs/)
 - **Issues**: [GitHub Issues](https://github.com/phildougherty/m8e/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/phildougherty/m8e/discussions)
 - **MCP Protocol**: [modelcontextprotocol.io](https://modelcontextprotocol.io/)
 
-## 🌟 Why Matey?
+## Why Matey?
 
 > "Ahoy! Navigate the seas of MCP orchestration with the reliability of Kubernetes and the simplicity of Docker Compose."
 
