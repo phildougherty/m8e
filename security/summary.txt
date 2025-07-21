@@ -1,0 +1,48 @@
+# Matey Basic Security Scan Summary
+
+Generated: Mon Jul 21 12:44:46 PM EDT 2025
+
+## Scan Results
+
+### Go Vet Analysis
+Issues found - see vet.txt for details
+
+### Hardcoded Secrets Scan
+⚠️  Potential secrets found - review secrets.txt
+
+### Dependency Analysis
+✅ 234 dependencies analyzed
+✅ All dependencies are stable releases
+
+### File Permissions
+⚠️  Unsafe file permissions found
+
+### Security TODOs
+✅ No security-related TODOs
+
+### Security Antipatterns
+⚠️  Potential security antipatterns found
+
+## Recommendations
+
+1. **External Security Tools**: For comprehensive security analysis, install and run:
+   - gosec: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+   - govulncheck: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+2. **Regular Scanning**: Run security scans regularly, especially before releases
+
+3. **Code Review**: Ensure security-focused code reviews for all changes
+
+4. **Dependency Management**: Keep dependencies updated and monitor for vulnerabilities
+
+## Files Generated
+
+- summary.txt: This summary report
+- vet.txt: Go vet analysis results
+- secrets.txt: Hardcoded secrets scan results
+- dependencies.txt: Complete dependency list
+- dependency-analysis.txt: Dependency analysis
+- permissions.txt: File permissions analysis
+- todos.txt: Security-related TODO/FIXME comments
+- antipatterns.txt: Common security antipattern analysis
+

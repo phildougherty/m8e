@@ -1,0 +1,8 @@
+# github.com/phildougherty/m8e/internal/cmd
+# [github.com/phildougherty/m8e/internal/cmd]
+internal/cmd/scheduler_server.go:89:17: non-constant format string in call to (*github.com/phildougherty/m8e/internal/logging.Logger).Info
+internal/cmd/scheduler_server.go:91:19: non-constant format string in call to (*github.com/phildougherty/m8e/internal/logging.Logger).Error
+internal/cmd/scheduler_server.go:108:18: non-constant format string in call to (*github.com/phildougherty/m8e/internal/logging.Logger).Error
+# github.com/phildougherty/m8e/internal/integration
+# [github.com/phildougherty/m8e/internal/integration]
+internal/integration/agentic_behavior_test.go:772:8: using resp before checking for errors

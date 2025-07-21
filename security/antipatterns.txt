@@ -1,0 +1,28 @@
+# Common Go Security Antipatterns
+Generated: Mon Jul 21 12:44:46 PM EDT 2025
+
+Direct shell command execution found:
+./internal/mcp/matey_server.go:888:	cmd := exec.CommandContext(ctx, "kubectl", cmdArgs...)
+./internal/mcp/matey_server.go:1110:	cmd := exec.CommandContext(ctx, m.mateyBinary, args...)
+./internal/chat/voice.go:463:		cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+./internal/chat/voice.go:531:	cmd := exec.Command("curl", "-X", "POST", 
+./internal/chat/voice.go:763:		vm.currentAudioCmd = exec.CommandContext(ctx, player, tempFile)
+./internal/chat/ui_input.go:220:	cmd := exec.Command("pbpaste")
+./internal/chat/ui_input.go:242:		cmd := exec.Command(method.cmd[0], method.cmd[1:]...)
+./internal/chat/ui_input.go:255:	cmd := exec.Command("powershell", "Get-Clipboard")
+./internal/chat/accessors.go:183:	cmd := exec.Command("bash", "-c", args.Command)
+./internal/chat/voice_check.go:36:		cmd := exec.Command(parts[0], parts[1:]...)
+./internal/chat/voice_check.go:57:		cmd := exec.Command("which", player)
+./internal/runtime/process.go:52:	cmd := exec.Command(command, args...)
+./internal/runtime/process.go:229:		cmd := exec.Command("tail", "-f", p.logFile)
+./internal/runtime/process.go:236:		cmd := exec.Command("cat", p.logFile)
+./internal/server/api_handlers.go:951:	cmd := exec.CommandContext(ctx, "docker", args...)
+./internal/server/api_handlers.go:1003:	cmd := exec.CommandContext(ctx, "docker", args...)
+./internal/server/api_handlers.go:1085:	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format",
+./internal/server/manager.go:1185:	cmd := exec.CommandContext(ctx, "sh", "-c", hookScript)
+./internal/server/stdio_connections.go:599:	cmd := exec.Command("docker", execCmdAndArgs...)
+./internal/compose/lifecycle.go:64:	cmd := exec.CommandContext(ctx, "sh", "-c", hook)
+
+Use of math/rand (consider crypto/rand for security-sensitive operations):
+./internal/chat/ui_view.go:5:	"math/rand"
+
