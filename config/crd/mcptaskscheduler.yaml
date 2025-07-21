@@ -163,6 +163,81 @@ spec:
               workspace:
                 description: Workspace configuration
                 type: string
+              workflows:
+                description: List of workflows to be executed by the task scheduler
+                items:
+                  description: WorkflowDefinition defines a workflow
+                  properties:
+                    name:
+                      description: Name of the workflow
+                      type: string
+                    description:
+                      description: Description of the workflow
+                      type: string
+                    schedule:
+                      description: Cron schedule for the workflow
+                      type: string
+                    enabled:
+                      description: Whether the workflow is enabled
+                      type: boolean
+                    timezone:
+                      description: Timezone for the workflow schedule
+                      type: string
+                    steps:
+                      description: Steps in the workflow
+                      items:
+                        description: WorkflowStep defines a step in a workflow
+                        properties:
+                          name:
+                            description: Name of the step
+                            type: string
+                          tool:
+                            description: Tool to execute
+                            type: string
+                          parameters:
+                            additionalProperties:
+                              type: string
+                            description: Parameters for the tool
+                            type: object
+                          condition:
+                            description: Condition for executing the step
+                            type: string
+                          retryPolicy:
+                            description: Retry policy for the step
+                            properties:
+                              maxRetries:
+                                description: Maximum number of retries
+                                type: integer
+                              retryDelay:
+                                description: Delay between retries
+                                type: string
+                              backoffStrategy:
+                                description: Backoff strategy (linear, exponential, fixed)
+                                type: string
+                            type: object
+                        required:
+                        - name
+                        - tool
+                        type: object
+                      type: array
+                    retryPolicy:
+                      description: Retry policy for the entire workflow
+                      properties:
+                        maxRetries:
+                          description: Maximum number of retries
+                          type: integer
+                        retryDelay:
+                          description: Delay between retries
+                          type: string
+                        backoffStrategy:
+                          description: Backoff strategy (linear, exponential, fixed)
+                          type: string
+                      type: object
+                  required:
+                  - name
+                  - steps
+                  type: object
+                type: array
             type: object
           status:
             description: MCPTaskSchedulerStatus defines the observed state of MCPTaskScheduler

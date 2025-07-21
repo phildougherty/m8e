@@ -1353,17 +1353,22 @@ func (m *MateyMCPServer) addWorkflowToTaskScheduler(ctx context.Context, workflo
 	// First, get the current MCPTaskScheduler to retrieve existing workflows
 	var taskScheduler crd.MCPTaskScheduler
 	taskSchedulerName := "task-scheduler"
+	fmt.Printf("DEBUG: Getting MCPTaskScheduler '%s' from namespace '%s'\n", taskSchedulerName, m.namespace)
+	
 	err := m.k8sClient.Get(ctx, client.ObjectKey{
 		Name:      taskSchedulerName,
 		Namespace: m.namespace,
 	}, &taskScheduler)
 	
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to get MCPTaskScheduler: %v\n", err)
 		return &ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting task scheduler '%s': %v", taskSchedulerName, err)}},
 			IsError: true,
 		}, err
 	}
+	
+	fmt.Printf("DEBUG: Got MCPTaskScheduler successfully, current workflows count: %d\n", len(taskScheduler.Spec.Workflows))
 	
 	// Convert workflow definition to proper WorkflowDefinition struct
 	workflowName, _ := workflowDef["name"].(string)
@@ -1464,14 +1469,17 @@ func (m *MateyMCPServer) addWorkflowToTaskScheduler(ctx context.Context, workflo
 	taskScheduler.Spec.Workflows = append(taskScheduler.Spec.Workflows, newWorkflow)
 	
 	// Update the MCPTaskScheduler
+	fmt.Printf("DEBUG: Updating MCPTaskScheduler with %d workflows (adding '%s')\n", len(taskScheduler.Spec.Workflows), workflowName)
 	err = m.k8sClient.Update(ctx, &taskScheduler)
 	if err != nil {
+		fmt.Printf("DEBUG: Failed to update MCPTaskScheduler: %v\n", err)
 		return &ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error updating task scheduler with new workflow: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
+	fmt.Printf("DEBUG: Successfully updated MCPTaskScheduler with workflow '%s'\n", workflowName)
 	return &ToolResult{
 		Content: []Content{{Type: "text", Text: fmt.Sprintf("Successfully created workflow '%s' in task scheduler. Total workflows: %d", workflowName, len(taskScheduler.Spec.Workflows))}},
 	}, nil

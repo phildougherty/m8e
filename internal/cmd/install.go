@@ -162,7 +162,6 @@ func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
 		"mcptaskscheduler.yaml",
 		"mcpproxy.yaml",
 		"mcptoolbox.yaml",
-		"workflow.yaml",
 	}
 
 	for _, fileName := range crdFileNames {
