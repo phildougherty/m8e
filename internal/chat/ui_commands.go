@@ -405,6 +405,9 @@ func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) te
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Manager", timestamp))
 	m.viewport = append(m.viewport, m.createInfoMessage("Adding directory to context: "+absPath))
 	
+	// Dynamically adjust context size based on current model
+	m.adjustContextSize()
+	
 	// Use fallback search which is more reliable
 	m.viewport = append(m.viewport, m.createInfoMessage("Scanning for files..."))
 	files := m.fallbackFileSearch(absPath)
@@ -455,14 +458,14 @@ func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) te
 	stats := m.termChat.contextManager.GetStats()
 	window := m.termChat.contextManager.GetCurrentWindow()
 	
-	totalFiles := 0
-	if totalFilesVal, ok := stats["total_files"]; ok {
-		if tf, ok := totalFilesVal.(int); ok {
-			totalFiles = tf
+	totalItems := 0
+	if totalItemsVal, ok := stats["total_items"]; ok {
+		if tf, ok := totalItemsVal.(int); ok {
+			totalItems = tf
 		}
 	}
 	
-	m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Total files: %d | Context size: %d tokens", totalFiles, window.TotalTokens)))
+	m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Total files: %d | Context size: %d tokens", totalItems, window.TotalTokens)))
 	
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
@@ -478,14 +481,14 @@ func (m *ChatUI) handleContextStatusCommand(timestamp string) tea.Msg {
 	
 	usagePercent := float64(window.TotalTokens) / float64(window.MaxTokens) * 100
 	
-	totalFiles := 0
-	if totalFilesVal, ok := stats["total_files"]; ok {
-		if tf, ok := totalFilesVal.(int); ok {
-			totalFiles = tf
+	totalItems := 0
+	if totalItemsVal, ok := stats["total_items"]; ok {
+		if tf, ok := totalItemsVal.(int); ok {
+			totalItems = tf
 		}
 	}
 	
-	m.viewport = append(m.viewport, fmt.Sprintf("│ Total Files: %d", totalFiles))
+	m.viewport = append(m.viewport, fmt.Sprintf("│ Total Files: %d", totalItems))
 	m.viewport = append(m.viewport, fmt.Sprintf("│ Context Size: %d / %d tokens (%.1f%%)", window.TotalTokens, window.MaxTokens, usagePercent))
 	m.viewport = append(m.viewport, "│ Context Items: Successfully integrated")
 	
@@ -621,5 +624,74 @@ func isTextFile(content []byte) bool {
 	}
 	
 	return true
+}
+
+// adjustContextSize dynamically adjusts the context window size based on current model
+func (m *ChatUI) adjustContextSize() {
+	if m.termChat.aiManager == nil || m.termChat.contextManager == nil {
+		return
+	}
+	
+	// Get current AI provider
+	provider, err := m.termChat.aiManager.GetCurrentProvider()
+	if err != nil || provider == nil {
+		return
+	}
+	
+	// Get context window size for current model
+	contextWindow := provider.GetModelContextWindow(m.termChat.currentModel)
+	
+	// Cost-aware context sizing
+	var maxContextTokens int
+	var contextMode string
+	
+	// Determine cost-conscious limits based on model
+	if contextWindow >= 1000000 { // 1M+ token models (expensive!)
+		maxContextTokens = int(float64(contextWindow) * 0.1) // Use only 10% - conservative
+		contextMode = "COST-CONSCIOUS"
+	} else if contextWindow >= 200000 { // 200K+ token models (moderate cost)
+		maxContextTokens = int(float64(contextWindow) * 0.3) // Use 30%
+		contextMode = "BALANCED"
+	} else { // Smaller models (less expensive)
+		maxContextTokens = int(float64(contextWindow) * 0.6) // Use 60%
+		contextMode = "EFFICIENT"
+	}
+	
+	// Apply absolute limits for cost control
+	if maxContextTokens < 8192 {
+		maxContextTokens = 8192
+	} else if maxContextTokens > 100000 { // Cap at 100K for cost control
+		maxContextTokens = 100000
+		contextMode += " (CAPPED)"
+	}
+	
+	// Update context manager configuration
+	m.termChat.contextManager.UpdateMaxTokens(maxContextTokens)
+	
+	// Show info about adjustment
+	m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Model: %s (%s tokens total)", 
+		m.termChat.currentModel, 
+		formatNumber(contextWindow))))
+	m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Context Mode: %s - Using %s tokens for files (%.1f%%)", 
+		contextMode,
+		formatNumber(maxContextTokens),
+		float64(maxContextTokens)/float64(contextWindow)*100)))
+}
+
+// formatNumber formats a number with commas for readability
+func formatNumber(n int) string {
+	str := fmt.Sprintf("%d", n)
+	if len(str) <= 3 {
+		return str
+	}
+	
+	var result strings.Builder
+	for i, r := range str {
+		if i > 0 && (len(str)-i)%3 == 0 {
+			result.WriteRune(',')
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
 }
 

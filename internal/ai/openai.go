@@ -267,6 +267,30 @@ func (p *OpenAIProvider) ValidateConfig() error {
 }
 
 // IsAvailable checks if the provider is available
+// GetModelContextWindow returns the context window size for a given model
+func (p *OpenAIProvider) GetModelContextWindow(model string) int {
+	contextWindows := map[string]int{
+		"gpt-4":                  128000,  // 128K tokens
+		"gpt-4-turbo":           128000,  // 128K tokens  
+		"gpt-4-turbo-preview":   128000,  // 128K tokens
+		"gpt-3.5-turbo":         16384,   // 16K tokens
+		"gpt-3.5-turbo-16k":     16384,   // 16K tokens
+	}
+	
+	if window, exists := contextWindows[model]; exists {
+		return window
+	}
+	return 32768 // Default fallback
+}
+
+// DefaultModel returns the default model for this provider
+func (p *OpenAIProvider) DefaultModel() string {
+	if p.config.DefaultModel != "" {
+		return p.config.DefaultModel
+	}
+	return "gpt-4"
+}
+
 func (p *OpenAIProvider) IsAvailable() bool {
 	if err := p.ValidateConfig(); err != nil {
 		return false
@@ -292,7 +316,3 @@ func (p *OpenAIProvider) IsAvailable() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// DefaultModel returns the default model for this provider
-func (p *OpenAIProvider) DefaultModel() string {
-	return p.config.DefaultModel
-}

@@ -76,6 +76,9 @@ type Provider interface {
 	// IsAvailable checks if the provider is available
 	IsAvailable() bool
 	
+	// GetModelContextWindow returns the context window size for a given model
+	GetModelContextWindow(model string) int
+	
 	// DefaultModel returns the default model for this provider
 	DefaultModel() string
 }

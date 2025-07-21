@@ -308,6 +308,33 @@ func (p *OllamaProvider) ValidateConfig() error {
 }
 
 // IsAvailable checks if the provider is available
+// GetModelContextWindow returns the context window size for a given model
+func (p *OllamaProvider) GetModelContextWindow(model string) int {
+	contextWindows := map[string]int{
+		"qwen3:32b":         131072,  // 128K tokens
+		"qwen3:14b":         131072,  // 128K tokens
+		"qwen3:8b":          131072,  // 128K tokens
+		"gemma3:27b":        8192,    // 8K tokens
+		"gemma3:12b":        8192,    // 8K tokens
+		"llama3.3:70b":      131072,  // 128K tokens
+		"deepseek-r1:32b":   131072,  // 128K tokens
+		"devstral:latest":   32768,   // 32K tokens
+	}
+	
+	if window, exists := contextWindows[model]; exists {
+		return window
+	}
+	return 32768 // Default for local models
+}
+
+// DefaultModel returns the default model for this provider  
+func (p *OllamaProvider) DefaultModel() string {
+	if p.config.DefaultModel != "" {
+		return p.config.DefaultModel
+	}
+	return "qwen3:14b"
+}
+
 func (p *OllamaProvider) IsAvailable() bool {
 	if err := p.ValidateConfig(); err != nil {
 		return false
@@ -331,7 +358,3 @@ func (p *OllamaProvider) IsAvailable() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// DefaultModel returns the default model for this provider
-func (p *OllamaProvider) DefaultModel() string {
-	return p.config.DefaultModel
-}

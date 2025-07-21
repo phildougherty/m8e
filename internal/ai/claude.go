@@ -275,6 +275,30 @@ func (p *ClaudeProvider) ValidateConfig() error {
 	return nil
 }
 
+// GetModelContextWindow returns the context window size for a given model
+func (p *ClaudeProvider) GetModelContextWindow(model string) int {
+	contextWindows := map[string]int{
+		"claude-3.5-sonnet":         200000, // 200K tokens
+		"claude-sonnet-4":           200000, // 200K tokens
+		"claude-3.7-sonnet":         200000, // 200K tokens
+		"claude-3.5-haiku":          200000, // 200K tokens
+		"claude-opus-4":             200000, // 200K tokens
+	}
+	
+	if window, exists := contextWindows[model]; exists {
+		return window
+	}
+	return 200000 // Default for Claude
+}
+
+// DefaultModel returns the default model for this provider
+func (p *ClaudeProvider) DefaultModel() string {
+	if p.config.DefaultModel != "" {
+		return p.config.DefaultModel
+	}
+	return "claude-3.5-sonnet"
+}
+
 // IsAvailable checks if the provider is available
 func (p *ClaudeProvider) IsAvailable() bool {
 	if err := p.ValidateConfig(); err != nil {
@@ -315,11 +339,6 @@ func (p *ClaudeProvider) IsAvailable() bool {
 		return false
 	}
 	defer resp.Body.Close()
-	
-	return resp.StatusCode == http.StatusOK
-}
 
-// DefaultModel returns the default model for this provider
-func (p *ClaudeProvider) DefaultModel() string {
-	return p.config.DefaultModel
+	return resp.StatusCode == http.StatusOK
 }

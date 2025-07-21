@@ -103,7 +103,21 @@ func NewTermChat() *TermChat {
 		RetentionDays:       7,
 	}
 	
-	contextManager := appcontext.NewContextManager(contextConfig, nil)
+	// Initialize AI manager for context manager
+	aiConfig := ai.Config{
+		DefaultProvider:   "openrouter", 
+		FallbackProviders: []string{"ollama", "openai", "claude"},
+		Providers: map[string]ai.ProviderConfig{
+			"openrouter": {
+				APIKey:  os.Getenv("OPENROUTER_API_KEY"),
+			},
+		},
+	}
+	aiManager := ai.NewManager(aiConfig)
+	
+	// Get the current provider for the context manager
+	currentProvider, _ := aiManager.GetCurrentProvider()
+	contextManager := appcontext.NewContextManager(contextConfig, currentProvider)
 	fileDiscovery, _ := appcontext.NewFileDiscovery(cwd)
 	mentionProcessor := appcontext.NewMentionProcessor(cwd, fileDiscovery, contextManager)
 

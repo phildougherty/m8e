@@ -568,3 +568,17 @@ func (cm *ContextManager) SaveToK8s(ctx context.Context) error {
 	// TODO: Implement Kubernetes saving
 	return nil
 }
+
+// UpdateMaxTokens dynamically updates the maximum token limit
+func (cm *ContextManager) UpdateMaxTokens(maxTokens int) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	
+	cm.config.MaxTokens = maxTokens
+	cm.window.MaxTokens = maxTokens
+	
+	// Re-truncate if we're now over the limit
+	if cm.window.TotalTokens > maxTokens {
+		cm.updateWindow()
+	}
+}

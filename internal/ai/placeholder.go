@@ -39,12 +39,17 @@ func (p *PlaceholderProvider) ValidateConfig() error {
 	return fmt.Errorf("%s", p.error)
 }
 
-// IsAvailable always returns false
-func (p *PlaceholderProvider) IsAvailable() bool {
-	return false
+// GetModelContextWindow returns a default context window size
+func (p *PlaceholderProvider) GetModelContextWindow(model string) int {
+	return 32768 // Default fallback
 }
 
 // DefaultModel returns empty string
 func (p *PlaceholderProvider) DefaultModel() string {
 	return ""
+}
+
+// IsAvailable always returns false
+func (p *PlaceholderProvider) IsAvailable() bool {
+	return false
 }

@@ -367,7 +367,57 @@ func (p *OpenRouterProvider) IsAvailable() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// GetModelContextWindow returns the context window size for a given model
+func (p *OpenRouterProvider) GetModelContextWindow(model string) int {
+	// Model context windows for common models (based on 2025 specifications)
+	contextWindows := map[string]int{
+		// Original models
+		"moonshotai/kimi-k2":                       66000,   // 66K tokens
+		"minimax/minimax-m1":                       1000000, // 1M tokens (expandable to 4M)
+		"anthropic/claude-sonnet-4":               200000,  // 200K tokens
+		"openai/gpt-4o":                           128000,  // 128K tokens
+		"openai/gpt-4o-mini":                      128000,  // 128K tokens
+		"qwen3:32b":                               131072,  // 128K tokens (32K native, 128K with YaRN)
+		
+		// Mistral models
+		"mistralai/devstral-medium":               131072,  // 131K tokens
+		"mistralai/devstral-small":                131072,  // 131K tokens
+		
+		// X.AI models
+		"x-ai/grok-4":                             262144,  // 256K tokens
+		
+		// Google models
+		"google/gemini-2.5-flash":                 1075200, // 1.05M tokens
+		"google/gemini-2.5-pro":                   1075200, // 1.05M tokens
+		
+		// Qwen models
+		"qwen/qwen3-30b-a3b":                      41943,   // 41K tokens
+		"qwen/qwen3-235b-a22b":                    41943,   // 41K tokens
+		
+		// OpenAI new models
+		"openai/o4-mini":                          200000,  // 200K tokens
+		"openai/gpt-4.1":                          1075200, // 1.05M tokens
+		"openai/gpt-4.1-mini":                     1075200, // 1.05M tokens
+		"openai/o3":                               200000,  // 200K tokens
+		"openai/o4-mini-high":                     200000,  // 200K tokens
+		"openai/o3-mini":                          200000,  // 200K tokens
+		
+		// Amazon models
+		"amazon/nova-pro-v1":                      300000,  // 300K tokens
+	}
+	
+	if window, exists := contextWindows[model]; exists {
+		return window
+	}
+	
+	// Default fallback - conservative estimate
+	return 32768 // 32K tokens
+}
+
 // DefaultModel returns the default model for this provider
 func (p *OpenRouterProvider) DefaultModel() string {
-	return p.config.DefaultModel
+	if p.config.DefaultModel != "" {
+		return p.config.DefaultModel
+	}
+	return "moonshotai/kimi-k2"
 }

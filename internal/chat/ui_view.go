@@ -220,16 +220,16 @@ func (m *ChatUI) renderStatusLine() string {
 		stats := m.termChat.contextManager.GetStats()
 		window := m.termChat.contextManager.GetCurrentWindow()
 		
-		totalFiles := 0
-		if totalFilesVal, ok := stats["total_files"]; ok {
-			if tf, ok := totalFilesVal.(int); ok {
-				totalFiles = tf
+		totalItems := 0
+		if totalItemsVal, ok := stats["total_items"]; ok {
+			if tf, ok := totalItemsVal.(int); ok {
+				totalItems = tf
 			}
 		}
 		
-		if totalFiles > 0 {
+		if totalItems > 0 {
 			usagePercent := float64(window.TotalTokens) / float64(window.MaxTokens) * 100
-			contextStatus := fmt.Sprintf(" | Context: %d files (%.0f%%)", totalFiles, usagePercent)
+			contextStatus := fmt.Sprintf(" | Context: %d files (%.0f%%)", totalItems, usagePercent)
 			statusText += contextStatus
 		}
 	}
