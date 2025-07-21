@@ -846,8 +846,15 @@ func (vm *VoiceManager) SkipToNextTTS() {
 	defer vm.mutex.Unlock()
 	
 	// Stop current audio playback
-	if vm.currentAudioCmd != nil && vm.playbackCancel != nil {
-		vm.playbackCancel()
+	if vm.currentAudioCmd != nil {
+		// First try context cancellation
+		if vm.playbackCancel != nil {
+			vm.playbackCancel()
+		}
+		// Then force kill the process for immediate termination
+		if vm.currentAudioCmd.Process != nil {
+			vm.currentAudioCmd.Process.Kill()
+		}
 		vm.currentAudioCmd = nil
 		vm.playbackCancel = nil
 	}
@@ -857,8 +864,15 @@ func (vm *VoiceManager) SkipToNextTTS() {
 func (vm *VoiceManager) InterruptTTS() {
 	vm.mutex.Lock()
 	// Stop current audio playback
-	if vm.currentAudioCmd != nil && vm.playbackCancel != nil {
-		vm.playbackCancel()
+	if vm.currentAudioCmd != nil {
+		// First try context cancellation
+		if vm.playbackCancel != nil {
+			vm.playbackCancel()
+		}
+		// Then force kill the process for immediate termination
+		if vm.currentAudioCmd.Process != nil {
+			vm.currentAudioCmd.Process.Kill()
+		}
 		vm.currentAudioCmd = nil
 		vm.playbackCancel = nil
 	}
