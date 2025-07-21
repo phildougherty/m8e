@@ -497,7 +497,7 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 		if uiProgram != nil {
 			// Show function name with formatted arguments and color
 			funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m", toolCall.Function.Name)
-			if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+			if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
 				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
 			}
 			uiProgram.Send(AiStreamMsg{Content: "\n" + funcCallMsg})
@@ -576,17 +576,42 @@ func (tc *TermChat) parseArguments(arguments string) map[string]interface{} {
 	return args
 }
 
+// isFileEditingTool checks if the function is related to file editing and should show full diffs
+func (tc *TermChat) isFileEditingTool(functionName string) bool {
+	fileEditTools := []string{
+		"edit_file", "editfile", "edit-file",
+		"write_file", "writefile", "write-file", 
+		"create_file", "createfile", "create-file",
+		"modify_file", "modifyfile", "modify-file",
+		"update_file", "updatefile", "update-file",
+		"patch_file", "patchfile", "patch-file",
+		"diff_file", "difffile", "diff-file",
+		"apply_diff", "applydiff", "apply-diff",
+		"file_edit", "fileedit", "file-edit",
+	}
+	
+	for _, tool := range fileEditTools {
+		if strings.EqualFold(functionName, tool) {
+			return true
+		}
+	}
+	return false
+}
+
 // formatFunctionArgs formats function arguments in a human-readable way with color
-func (tc *TermChat) formatFunctionArgs(arguments string) string {
+func (tc *TermChat) formatFunctionArgs(arguments, functionName string) string {
 	if arguments == "" || arguments == "{}" {
 		return ""
 	}
 	
+	// Check if this is a file editing tool that should show full diffs
+	isFileEditTool := tc.isFileEditingTool(functionName)
+	
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		// If not valid JSON, just return truncated string
+		// If not valid JSON, return truncated string unless it's a file edit tool
 		cleaned := strings.ReplaceAll(arguments, "\n", " ")
-		if len(cleaned) > 60 {
+		if !isFileEditTool && len(cleaned) > 60 {
 			cleaned = cleaned[:57] + "..."
 		}
 		return cleaned
@@ -597,7 +622,8 @@ func (tc *TermChat) formatFunctionArgs(arguments string) string {
 	for key, value := range args {
 		switch v := value.(type) {
 		case string:
-			if len(v) > 40 {
+			// For file edit tools, don't truncate content that might be diffs
+			if !isFileEditTool && len(v) > 40 {
 				v = v[:37] + "..."
 			}
 			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[33m\"%s\"\x1b[0m", key, v))
@@ -609,7 +635,8 @@ func (tc *TermChat) formatFunctionArgs(arguments string) string {
 	}
 	
 	result := strings.Join(parts, " ")
-	if len(result) > 70 {
+	// For file edit tools, don't truncate the overall result to preserve diffs
+	if !isFileEditTool && len(result) > 70 {
 		result = result[:67] + "..."
 	}
 	return result
@@ -677,7 +704,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 	if tc.isNativeFunction(toolCall.Function.Name) {
 		// Show minimal function call progress like Claude Code
 		funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(native)\x1b[0m", toolCall.Function.Name)
-		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
 			funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
 		}
 		select {
@@ -705,7 +732,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 		
 		// Show minimal function call progress like Claude Code
 		funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s)\x1b[0m", toolCall.Function.Name, serverName)
-		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
 			funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
 		}
 		select {

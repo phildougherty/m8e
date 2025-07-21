@@ -317,7 +317,7 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		if t.silentMode && GetUIProgram() != nil {
 			// Show function call start - Claude Code style with color
 			funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m", toolCall.Function.Name)
-			if formattedArgs := t.formatFunctionArgs(toolCall.Function.Arguments); formattedArgs != "" {
+			if formattedArgs := t.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
 				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
 			}
 			GetUIProgram().Send(aiStreamMsg{content: funcCallMsg})
@@ -447,17 +447,42 @@ func (t *ConversationTurn) parseArguments(arguments string) map[string]interface
 	return args
 }
 
+// isFileEditingTool checks if the function is related to file editing and should show full diffs
+func (t *ConversationTurn) isFileEditingTool(functionName string) bool {
+	fileEditTools := []string{
+		"edit_file", "editfile", "edit-file",
+		"write_file", "writefile", "write-file", 
+		"create_file", "createfile", "create-file",
+		"modify_file", "modifyfile", "modify-file",
+		"update_file", "updatefile", "update-file",
+		"patch_file", "patchfile", "patch-file",
+		"diff_file", "difffile", "diff-file",
+		"apply_diff", "applydiff", "apply-diff",
+		"file_edit", "fileedit", "file-edit",
+	}
+	
+	for _, tool := range fileEditTools {
+		if strings.EqualFold(functionName, tool) {
+			return true
+		}
+	}
+	return false
+}
+
 // formatFunctionArgs formats function arguments in a human-readable way with color
-func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
+func (t *ConversationTurn) formatFunctionArgs(arguments, functionName string) string {
 	if arguments == "" || arguments == "{}" {
 		return ""
 	}
 	
+	// Check if this is a file editing tool that should show full diffs
+	isFileEditTool := t.isFileEditingTool(functionName)
+	
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		// If not valid JSON, just return truncated string
+		// If not valid JSON, return truncated string unless it's a file edit tool
 		cleaned := strings.ReplaceAll(arguments, "\n", " ")
-		if len(cleaned) > 120 {
+		if !isFileEditTool && len(cleaned) > 120 {
 			cleaned = cleaned[:117] + "..."
 		}
 		return cleaned
@@ -468,7 +493,8 @@ func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
 	for key, value := range args {
 		switch v := value.(type) {
 		case string:
-			if len(v) > 80 {
+			// For file edit tools, don't truncate content that might be diffs
+			if !isFileEditTool && len(v) > 80 {
 				v = v[:77] + "..."
 			}
 			parts = append(parts, fmt.Sprintf("\x1b[36m%s\x1b[0m=\x1b[33m\"%s\"\x1b[0m", key, v))
@@ -480,7 +506,8 @@ func (t *ConversationTurn) formatFunctionArgs(arguments string) string {
 	}
 	
 	result := strings.Join(parts, " ")
-	if len(result) > 140 {
+	// For file edit tools, don't truncate the overall result to preserve diffs
+	if !isFileEditTool && len(result) > 140 {
 		result = result[:137] + "..."
 	}
 	return result
