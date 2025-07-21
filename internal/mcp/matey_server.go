@@ -45,7 +45,11 @@ func NewMateyMCPServer(mateyBinary, configFile, namespace string) *MateyMCPServe
 
 // initializeK8sComponents initializes the Kubernetes client and composer
 func (m *MateyMCPServer) initializeK8sComponents() {
+	fmt.Printf("DEBUG: Initializing K8s components for MCP server...\n")
+	fmt.Printf("DEBUG: Config file: %s, Namespace: %s\n", m.configFile, m.namespace)
+	
 	// Create composer
+	fmt.Printf("DEBUG: Creating K8s composer...\n")
 	composer, err := compose.NewK8sComposer(m.configFile, m.namespace)
 	if err != nil {
 		// Log error but don't fail - fallback to binary execution
@@ -53,27 +57,35 @@ func (m *MateyMCPServer) initializeK8sComponents() {
 		return
 	}
 	m.composer = composer
+	fmt.Printf("DEBUG: Composer created successfully\n")
 	
 	// Create k8s client
+	fmt.Printf("DEBUG: Creating K8s config...\n")
 	config, err := createK8sConfig()
 	if err != nil {
 		fmt.Printf("Warning: Failed to create k8s config: %v\n", err)
 		return
 	}
 	m.config = config
+	fmt.Printf("DEBUG: K8s config created successfully\n")
 	
+	fmt.Printf("DEBUG: Adding CRD scheme...\n")
 	scheme := runtime.NewScheme()
 	if err := crd.AddToScheme(scheme); err != nil {
 		fmt.Printf("Warning: Failed to add CRD scheme: %v\n", err)
 		return
 	}
+	fmt.Printf("DEBUG: CRD scheme added successfully\n")
 	
+	fmt.Printf("DEBUG: Creating K8s client...\n")
 	client, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		fmt.Printf("Warning: Failed to create k8s client: %v\n", err)
 		return
 	}
 	m.k8sClient = client
+	fmt.Printf("DEBUG: K8s client created successfully\n")
+	fmt.Printf("DEBUG: K8s components initialized successfully - useK8sClient() will return: %v\n", m.useK8sClient())
 }
 
 // createK8sConfig creates a Kubernetes config from in-cluster or kubeconfig
@@ -1312,12 +1324,27 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 	}
 	
 	// Try to get existing MCPTaskScheduler and add workflow to it
-	if m.k8sClient != nil {
+	fmt.Printf("DEBUG: Checking if K8s client is available for workflow creation\n")
+	fmt.Printf("DEBUG: useK8sClient() returns: %v\n", m.useK8sClient())
+	fmt.Printf("DEBUG: k8sClient != nil: %v, composer != nil: %v\n", m.k8sClient != nil, m.composer != nil)
+	
+	if m.useK8sClient() {
+		fmt.Printf("DEBUG: Using K8s client for workflow creation\n")
 		// Use direct k8s client approach
-		return m.addWorkflowToTaskScheduler(ctx, workflowDef)
+		result, err := m.addWorkflowToTaskScheduler(ctx, workflowDef)
+		if err != nil {
+			fmt.Printf("DEBUG: K8s workflow creation failed: %v\n", err)
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Kubernetes workflow creation failed: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		fmt.Printf("DEBUG: K8s workflow creation succeeded\n")
+		return result, nil
 	}
 	
 	// Fall back to binary execution
+	fmt.Printf("DEBUG: Falling back to binary execution for workflow creation\n")
 	return m.createWorkflowWithBinary(ctx, args)
 }
 
@@ -1462,7 +1489,7 @@ func (m *MateyMCPServer) createWorkflowWithBinary(ctx context.Context, args map[
 // listWorkflows lists all workflows in the task scheduler
 func (m *MateyMCPServer) listWorkflows(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
 	// Try direct k8s client first to get MCPTaskScheduler workflows
-	if m.k8sClient != nil {
+	if m.useK8sClient() {
 		var taskSchedulers crd.MCPTaskSchedulerList
 		namespace := m.namespace
 		if allNamespaces, ok := args["all_namespaces"].(bool); ok && allNamespaces {
@@ -1634,7 +1661,7 @@ func (m *MateyMCPServer) getWorkflow(ctx context.Context, args map[string]interf
 		}, fmt.Errorf("name is required")
 	}
 	
-	if m.k8sClient != nil {
+	if m.useK8sClient() {
 		var taskSchedulers crd.MCPTaskSchedulerList
 		listOpts := &client.ListOptions{}
 		if m.namespace != "" {
@@ -1763,7 +1790,7 @@ func (m *MateyMCPServer) deleteWorkflow(ctx context.Context, args map[string]int
 		}, fmt.Errorf("name is required")
 	}
 	
-	if m.k8sClient != nil {
+	if m.useK8sClient() {
 		// Get the current MCPTaskScheduler
 		var taskScheduler crd.MCPTaskScheduler
 		taskSchedulerName := "task-scheduler"
@@ -1881,7 +1908,7 @@ func (m *MateyMCPServer) resumeWorkflow(ctx context.Context, args map[string]int
 
 // updateWorkflowEnabledStatus updates the enabled status of a workflow
 func (m *MateyMCPServer) updateWorkflowEnabledStatus(ctx context.Context, name string, enabled bool) (*ToolResult, error) {
-	if m.k8sClient != nil {
+	if m.useK8sClient() {
 		// Get the current MCPTaskScheduler
 		var taskScheduler crd.MCPTaskScheduler
 		taskSchedulerName := "task-scheduler"
@@ -1942,7 +1969,7 @@ func (m *MateyMCPServer) updateWorkflowEnabledStatus(ctx context.Context, name s
 
 // workflowTemplates lists available workflow templates
 func (m *MateyMCPServer) workflowTemplates(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	if m.k8sClient != nil {
+	if m.useK8sClient() {
 		var taskSchedulers crd.MCPTaskSchedulerList
 		listOpts := &client.ListOptions{}
 		if m.namespace != "" {
