@@ -29,7 +29,7 @@ func NewOpenRouterProvider(config ProviderConfig) (*OpenRouterProvider, error) {
 	}
 	
 	if config.DefaultModel == "" {
-		config.DefaultModel = "anthropic/claude-3.5-sonnet"
+		config.DefaultModel = "moonshotai/kimi-k2"
 	}
 	
 	if config.MaxTokens == 0 {

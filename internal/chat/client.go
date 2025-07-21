@@ -103,7 +103,7 @@ func NewTermChat() *TermChat {
 		verboseMode:     false, // Start in compact mode
 		functionResults: make(map[string]string),
 		approvalMode:    DEFAULT, // Start in manual mode for safety
-		maxTurns:        15, // Increased to handle auto-continuation after tool limits
+		maxTurns:        25, // Increased from 15 to allow more auto-continuation turns
 		currentTurns:    0,  // Reset turn counter
 		voiceManager:    voiceManager,
 	}
@@ -159,7 +159,7 @@ func (tc *TermChat) Run() error {
 			"openrouter": {
 				APIKey:       os.Getenv("OPENROUTER_API_KEY"),
 				Endpoint:     "https://openrouter.ai/api/v1",
-				DefaultModel: "anthropic/claude-sonnet-4",
+				DefaultModel: "moonshotai/kimi-k2",
 			},
 		},
 	}

@@ -167,7 +167,7 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│")
 	
 	m.viewport = append(m.viewport, m.createEmphasizedText("│ Auto-Continuation:"))
-	m.viewport = append(m.viewport, "│   Automatically continues after tool call limits (max 15 turns)")
+	m.viewport = append(m.viewport, "│   Automatically continues after tool call limits (max 25 turns)")
 	m.viewport = append(m.viewport, "│   Shows: ▶ Auto-continuing after tool call limit")
 	m.viewport = append(m.viewport, "│   Stops on completion markers or turn limit")
 	m.viewport = append(m.viewport, "│")
@@ -280,7 +280,7 @@ func (m *ChatUI) handleModelsCommand(timestamp string) tea.Msg {
 	
 	switch m.termChat.currentProvider {
 	case "openrouter":
-		m.viewport = append(m.viewport, "│   • "+m.createHighlightText("anthropic/claude-sonnet-4")+" - Latest Claude Sonnet")
+		m.viewport = append(m.viewport, "│   • "+m.createHighlightText("moonshotai/kimi-k2")+" - Kimi K2 (Default)")
 		m.viewport = append(m.viewport, "│   • "+m.createHighlightText("anthropic/claude-3.5-sonnet")+" - Claude 3.5 Sonnet")
 		m.viewport = append(m.viewport, "│   • "+m.createHighlightText("openai/gpt-4")+" - GPT-4")
 		m.viewport = append(m.viewport, "│   • "+m.createHighlightText("meta-llama/llama-3.1-70b-instruct")+" - Llama 3.1 70B")

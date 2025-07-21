@@ -28,7 +28,7 @@ func NewConversationTurn(chat *TermChat, userRequest string) *ConversationTurn {
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
-		maxTurns:     15, // Increased to handle auto-continuation after tool limits
+		maxTurns:     25, // Increased from 15 to allow more auto-continuation turns
 		currentTurn:  0,
 		completed:    false,
 		pendingTools: make([]ai.ToolCall, 0),
@@ -41,7 +41,7 @@ func NewConversationTurnSilent(chat *TermChat, userRequest string) *Conversation
 	return &ConversationTurn{
 		chat:         chat,
 		userRequest:  userRequest,
-		maxTurns:     15, // Increased to handle auto-continuation after tool limits
+		maxTurns:     25, // Increased from 15 to allow more auto-continuation turns
 		currentTurn:  0,
 		completed:    false,
 		pendingTools: make([]ai.ToolCall, 0),
