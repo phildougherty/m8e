@@ -215,6 +215,25 @@ func (m *ChatUI) renderStatusLine() string {
 	// Build status with scroll info
 	statusText := m.statusLine
 	
+	// Add context status if context manager is available
+	if m.termChat.contextManager != nil {
+		stats := m.termChat.contextManager.GetStats()
+		window := m.termChat.contextManager.GetCurrentWindow()
+		
+		totalFiles := 0
+		if totalFilesVal, ok := stats["total_files"]; ok {
+			if tf, ok := totalFilesVal.(int); ok {
+				totalFiles = tf
+			}
+		}
+		
+		if totalFiles > 0 {
+			usagePercent := float64(window.TotalTokens) / float64(window.MaxTokens) * 100
+			contextStatus := fmt.Sprintf(" | Context: %d files (%.0f%%)", totalFiles, usagePercent)
+			statusText += contextStatus
+		}
+	}
+	
 	// Add scroll indicator if user has scrolled up
 	if m.viewportOffset > 0 {
 		totalLines := len(m.viewport)

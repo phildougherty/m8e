@@ -10,6 +10,7 @@ import (
 
 	"github.com/phildougherty/m8e/internal/ai"
 	"github.com/phildougherty/m8e/internal/mcp"
+	appcontext "github.com/phildougherty/m8e/internal/context"
 )
 
 // ApprovalMode defines the level of autonomous behavior
@@ -101,6 +102,9 @@ type TermChat struct {
 	currentTurns           int          // Current turn count for this conversation
 	uiConfirmationCallback func(functionName, arguments string) bool // Callback for UI-based confirmations
 	voiceManager           *VoiceManager // Voice interaction manager
+	contextManager         *appcontext.ContextManager // Context management for AI workflows
+	fileDiscovery          *appcontext.FileDiscovery   // File discovery system
+	mentionProcessor       *appcontext.MentionProcessor // @-mention processing
 }
 
 // TermChatMessage represents a chat message
@@ -190,6 +194,13 @@ type voiceTranscriptMsg struct {
 
 type voiceTTSReadyMsg struct {
 	audioData []byte
+}
+
+type contextUpdateMsg struct {
+	action      string // "added", "removed", "cleared"
+	path        string
+	stats       map[string]interface{}
+	windowStats *appcontext.ContextWindow
 }
 
 // Color theme constants for consistent styling

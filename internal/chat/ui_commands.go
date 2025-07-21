@@ -2,6 +2,8 @@ package chat
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -51,6 +53,14 @@ func (m *ChatUI) handleSlashCommand(command string) tea.Cmd {
 			return m.handleModelsCommand(timestamp)
 		case "/voice-check":
 			return m.handleVoiceCheckCommand(timestamp)
+		case "/add-context-dir":
+			return m.handleAddContextDirCommand(parts, timestamp)
+		case "/context":
+			return m.handleContextCommand(parts, timestamp)
+		case "/context-status":
+			return m.handleContextStatusCommand(timestamp)
+		case "/context-clear":
+			return m.handleContextClearCommand(timestamp)
 		default:
 			return m.handleUnknownCommand(baseCommand, timestamp)
 		}
@@ -164,6 +174,9 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/clear")+"    - Clear chat history")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/help")+"     - Show this help message")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/voice-check")+" - Check voice system status")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/add-context-dir [path]")+" - Add directory to AI context")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/context-status")+" - Show context usage and stats")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/context-clear")+"  - Clear context completely")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("/exit")+"     - Exit chat")
 	m.viewport = append(m.viewport, "│")
 	
@@ -345,6 +358,177 @@ func (m *ChatUI) handleUnknownCommand(command, timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Error", timestamp))
 	m.viewport = append(m.viewport, m.createErrorMessage("Unknown command: "+command))
 	m.viewport = append(m.viewport, m.createInfoMessage("Type /help for available commands"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return nil
+}
+
+// handleAddContextDirCommand handles the /add-context-dir command
+func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) tea.Msg {
+	var targetPath string
+	
+	// Use provided path or current working directory
+	if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+		targetPath = strings.TrimSpace(parts[1])
+	} else {
+		cwd, err := os.Getwd()
+		if err != nil {
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Error", timestamp))
+			m.viewport = append(m.viewport, m.createErrorMessage("Failed to get current directory: "+err.Error()))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+			m.viewport = append(m.viewport, "")
+			return nil
+		}
+		targetPath = cwd
+	}
+	
+	// Convert to absolute path
+	absPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Error", timestamp))
+		m.viewport = append(m.viewport, m.createErrorMessage("Invalid path: "+err.Error()))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return nil
+	}
+	
+	// Check if directory exists
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Error", timestamp))
+		m.viewport = append(m.viewport, m.createErrorMessage("Directory does not exist: "+absPath))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return nil
+	}
+	
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Manager", timestamp))
+	m.viewport = append(m.viewport, m.createInfoMessage("Adding directory to context: "+absPath))
+	
+	// Use context manager to add directory
+	files, err := m.termChat.fileDiscovery.SearchFiles(absPath+"/*", 100)
+	if err != nil {
+		m.viewport = append(m.viewport, m.createErrorMessage("Failed to discover files: "+err.Error()))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return nil
+	}
+	
+	// Add discovered files to context
+	addedCount := 0
+	for _, file := range files {
+		// Read file content
+		content, err := os.ReadFile(file.Path)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+		
+		if err := m.termChat.contextManager.AddContext("file", file.Path, string(content), nil); err == nil {
+			addedCount++
+		}
+	}
+	
+	m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✓ Added %d files to context", addedCount)))
+	
+	// Show context stats
+	stats := m.termChat.contextManager.GetStats()
+	window := m.termChat.contextManager.GetCurrentWindow()
+	
+	totalFiles := 0
+	if totalFilesVal, ok := stats["total_files"]; ok {
+		if tf, ok := totalFilesVal.(int); ok {
+			totalFiles = tf
+		}
+	}
+	
+	m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Total files: %d | Context size: %d tokens", totalFiles, window.TotalTokens)))
+	
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return nil
+}
+
+// handleContextStatusCommand shows context usage and statistics
+func (m *ChatUI) handleContextStatusCommand(timestamp string) tea.Msg {
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Status", timestamp))
+	
+	stats := m.termChat.contextManager.GetStats()
+	window := m.termChat.contextManager.GetCurrentWindow()
+	
+	usagePercent := float64(window.TotalTokens) / float64(window.MaxTokens) * 100
+	
+	totalFiles := 0
+	if totalFilesVal, ok := stats["total_files"]; ok {
+		if tf, ok := totalFilesVal.(int); ok {
+			totalFiles = tf
+		}
+	}
+	
+	m.viewport = append(m.viewport, fmt.Sprintf("│ Total Files: %d", totalFiles))
+	m.viewport = append(m.viewport, fmt.Sprintf("│ Context Size: %d / %d tokens (%.1f%%)", window.TotalTokens, window.MaxTokens, usagePercent))
+	m.viewport = append(m.viewport, "│ Context Items: Successfully integrated")
+	
+	// Show usage bar
+	barWidth := 40
+	filledWidth := int(float64(barWidth) * usagePercent / 100)
+	bar := "[" + strings.Repeat("█", filledWidth) + strings.Repeat("░", barWidth-filledWidth) + "]"
+	m.viewport = append(m.viewport, "│ Usage: "+bar)
+	
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return nil
+}
+
+// handleContextClearCommand clears all context
+func (m *ChatUI) handleContextClearCommand(timestamp string) tea.Msg {
+	// Clear context by removing all items
+	window := m.termChat.contextManager.GetCurrentWindow()
+	for _, item := range window.Items {
+		m.termChat.contextManager.RemoveContext(item.ID)
+	}
+	
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Manager", timestamp))
+	m.viewport = append(m.viewport, m.createSuccessMessage("✓ Context cleared successfully"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return nil
+}
+
+// handleContextCommand shows context items or processes @-mentions
+func (m *ChatUI) handleContextCommand(parts []string, timestamp string) tea.Msg {
+	if len(parts) > 1 {
+		// Process @-mentions in the provided text
+		text := strings.Join(parts[1:], " ")
+		expandedText, mentions, err := m.termChat.mentionProcessor.ExpandText(text)
+		
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context @-Mentions", timestamp))
+		if err != nil {
+			m.viewport = append(m.viewport, m.createErrorMessage("Error processing mentions: "+err.Error()))
+		} else {
+			m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Processed %d mentions", len(mentions))))
+			m.viewport = append(m.viewport, m.createInfoMessage("Expanded text: "+expandedText))
+		}
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return nil
+	}
+	
+	// Show current context items
+	window := m.termChat.contextManager.GetCurrentWindow()
+	
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Current Context", timestamp))
+	
+	if len(window.Items) == 0 {
+		m.viewport = append(m.viewport, m.createInfoMessage("No files in context. Use /add-context-dir to add files."))
+	} else {
+		for i, item := range window.Items {
+			if i >= 10 { // Limit display to first 10 items
+				m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("... and %d more files", len(window.Items)-10)))
+				break
+			}
+			m.viewport = append(m.viewport, fmt.Sprintf("│ %s", item.FilePath))
+		}
+	}
+	
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
 	return nil

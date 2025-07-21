@@ -15,6 +15,7 @@ import (
 
 	"github.com/phildougherty/m8e/internal/ai"
 	"github.com/phildougherty/m8e/internal/mcp"
+	appcontext "github.com/phildougherty/m8e/internal/context"
 )
 
 // detectClusterMCPProxy detects the MCP proxy endpoint in the cluster
@@ -94,6 +95,18 @@ func NewTermChat() *TermChat {
 		voiceManager = nil
 	}
 
+	// Initialize context manager for intelligent file and repository management
+	cwd, _ := os.Getwd()
+	contextConfig := appcontext.ContextConfig{
+		MaxTokens:           32768,
+		TruncationStrategy:  "intelligent",
+		RetentionDays:       7,
+	}
+	
+	contextManager := appcontext.NewContextManager(contextConfig, nil)
+	fileDiscovery, _ := appcontext.NewFileDiscovery(cwd)
+	mentionProcessor := appcontext.NewMentionProcessor(cwd, fileDiscovery, contextManager)
+
 	tc := &TermChat{
 		ctx:              ctx,
 		cancel:           cancel,
@@ -106,6 +119,9 @@ func NewTermChat() *TermChat {
 		maxTurns:        25, // Increased from 15 to allow more auto-continuation turns
 		currentTurns:    0,  // Reset turn counter
 		voiceManager:    voiceManager,
+		contextManager:   contextManager,
+		fileDiscovery:    fileDiscovery,
+		mentionProcessor: mentionProcessor,
 	}
 
 	// Set up voice callbacks if voice manager is available

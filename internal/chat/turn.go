@@ -68,6 +68,26 @@ func (t *ConversationTurn) buildMessageContext() {
 		},
 	}
 	
+	// Add context manager content if available
+	if t.chat.contextManager != nil {
+		window := t.chat.contextManager.GetCurrentWindow()
+		if len(window.Items) > 0 {
+			var contextContent strings.Builder
+			contextContent.WriteString("# Context Files\n\nThe following files have been added to your context for reference:\n\n")
+			
+			for _, item := range window.Items {
+				if item.Type == "file" && item.FilePath != "" {
+					contextContent.WriteString(fmt.Sprintf("## %s\n\n```\n%s\n```\n\n", item.FilePath, item.Content))
+				}
+			}
+			
+			t.messages = append(t.messages, ai.Message{
+				Role:    "system",
+				Content: contextContent.String(),
+			})
+		}
+	}
+	
 	// Add recent chat history (last 10 messages to keep context manageable)
 	historyLimit := 10
 	startIdx := len(t.chat.GetChatHistory()) - historyLimit
