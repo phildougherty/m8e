@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -105,7 +107,10 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+r": // Toggle verbose/compact output
 		return m.handleVerboseToggle()
 
-	case "ctrl+v": // Toggle voice mode
+	case "ctrl+v": // Paste from clipboard
+		return m.handlePaste()
+
+	case "alt+v", "ctrl+shift+v": // Toggle voice mode (moved from ctrl+v)
 		return m.handleVoiceToggle()
 
 
@@ -118,6 +123,74 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+}
+
+// handlePaste handles pasting from clipboard
+func (m *ChatUI) handlePaste() (tea.Model, tea.Cmd) {
+	// Get clipboard content based on OS
+	var clipboardContent string
+	var err error
+	
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		cmd := exec.Command("pbpaste")
+		output, err := cmd.Output()
+		if err == nil {
+			clipboardContent = string(output)
+		}
+	case "linux":
+		// Try xclip first, then xsel
+		cmd := exec.Command("xclip", "-selection", "clipboard", "-o")
+		output, err := cmd.Output()
+		if err != nil {
+			// Fallback to xsel
+			cmd = exec.Command("xsel", "--clipboard", "--output")
+			output, err = cmd.Output()
+		}
+		if err == nil {
+			clipboardContent = string(output)
+		}
+	case "windows":
+		cmd := exec.Command("powershell", "Get-Clipboard")
+		output, err := cmd.Output()
+		if err == nil {
+			clipboardContent = string(output)
+		}
+	}
+	
+	if err != nil || clipboardContent == "" {
+		// Show error message if paste failed with debug info
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste Error", time.Now().Format("15:04:05")))
+		if err != nil {
+			m.viewport = append(m.viewport, m.createErrorMessage(fmt.Sprintf("Clipboard error: %v", err)))
+		} else {
+			m.viewport = append(m.viewport, m.createErrorMessage("Clipboard is empty"))
+		}
+		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("OS: %s", runtime.GOOS)))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		return m, nil
+	}
+	
+	// Clean up the content (remove trailing newlines)
+	clipboardContent = strings.TrimRight(clipboardContent, "\n\r")
+	
+	// Insert clipboard content at cursor position
+	if clipboardContent != "" {
+		m.input = m.input[:m.cursor] + clipboardContent + m.input[m.cursor:]
+		m.cursor += len(clipboardContent)
+		
+		// Show success feedback
+		lines := strings.Split(clipboardContent, "\n")
+		if len(lines) > 1 {
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste", time.Now().Format("15:04:05")))
+			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("Pasted %d lines", len(lines))))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+		}
+	}
+	
+	return m, nil
 }
 
 // handleEscapeKey handles the escape key press

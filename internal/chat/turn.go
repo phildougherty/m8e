@@ -372,6 +372,8 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			}
 		}
 		
+		fmt.Printf("DEBUG: Tool %s detected as native=%v\n", toolCall.Function.Name, isNative)
+		
 		if isNative {
 			// Execute native function
 			result, err = t.executeToolCall(toolCall, aiMsgIndex)
@@ -394,12 +396,18 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		
 		// In silent mode, show function call result in UI
 		if t.silentMode && GetUIProgram() != nil {
-			// Claude Code style - clean status line only with color
+			// Enhanced formatting for file editing tools, Claude Code style for others
 			var statusMsg string
 			if err != nil {
 				statusMsg = fmt.Sprintf("\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
-				statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+				// Use enhanced formatting for file editing tools
+				if t.isFileEditingTool(toolCall.Function.Name) && result != nil {
+					duration := time.Millisecond * 50 // Placeholder duration
+					statusMsg = t.chat.formatToolResult(toolCall.Function.Name, "native", result, duration)
+				} else {
+					statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+				}
 			}
 			GetUIProgram().Send(aiStreamMsg{content: statusMsg})
 		}

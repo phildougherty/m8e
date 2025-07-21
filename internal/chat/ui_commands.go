@@ -135,7 +135,8 @@ func (m *ChatUI) handleStatusCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Y")+" - Toggle YOLO/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Tab")+" - Toggle AUTO-EDIT/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+R")+" - Toggle verbose/compact output")
-	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+V")+" - Toggle voice mode")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+V")+" - Paste from clipboard")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Alt+V")+"  - Toggle voice mode")
 	
 	// Show voice triggers only if voice is enabled
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {

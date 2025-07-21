@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -545,7 +546,13 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 			if err != nil {
 				statusMsg = fmt.Sprintf("\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
-				statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+				// Use our enhanced formatting for file editing tools
+				if tc.isFileEditingTool(toolCall.Function.Name) && result != nil {
+					duration := time.Millisecond * 50 // Placeholder duration
+					statusMsg = tc.formatToolResult(toolCall.Function.Name, "native", result, duration)
+				} else {
+					statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+				}
 			}
 			uiProgram.Send(AiStreamMsg{Content: statusMsg + "\n"})
 		}
@@ -644,20 +651,40 @@ func (tc *TermChat) formatFunctionArgs(arguments, functionName string) string {
 
 // formatToolResult formats tool execution results in Claude Code style
 func (tc *TermChat) formatToolResult(toolName, serverName string, result interface{}, duration time.Duration) string {
+	// Debug: Always print when called
+	fmt.Printf("DEBUG: formatToolResult called - toolName=%s, serverName=%s\n", toolName, serverName)
+	
 	// Calculate token count estimate (rough approximation)
 	resultStr := fmt.Sprintf("%+v", result)
 	tokenCount := len(strings.Fields(resultStr)) // Simple word count as token estimate
 	
 	// Check if this is a file editing tool result with diff preview
 	if tc.isFileEditingTool(toolName) {
+		fmt.Printf("DEBUG: Tool %s identified as file editing tool\n", toolName)
 		if resultMap, ok := result.(map[string]interface{}); ok {
 			if diffPreview, hasDiff := resultMap["diff_preview"].(string); hasDiff && diffPreview != "" {
 				// Show the visual diff for file editing tools
 				statusLine := fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
 					toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
 				
+				// Format the diff with enhanced visual display
+				var filePath string
+				if fp, hasPath := resultMap["file_path"].(string); hasPath {
+					filePath = fp
+				}
+				
+				formattedDiff := tc.formatEnhancedVisualDiff(diffPreview, filePath)
+				
+				// Debug: Print to see if this is being called
+				fmt.Printf("DEBUG: Enhanced diff generated:\n%s\n", formattedDiff)
+				
+				// Check if it's a dry run
+				if dryRun, isDryRun := resultMap["dry_run"].(bool); isDryRun && dryRun {
+					formattedDiff += "\n\x1b[33m[DRY RUN] Changes not applied\x1b[0m"
+				}
+				
 				// Add the visual diff content
-				return fmt.Sprintf("\n%s\n\n%s", statusLine, diffPreview)
+				return fmt.Sprintf("\n%s\n\n%s", statusLine, formattedDiff)
 			}
 		}
 	}
@@ -668,6 +695,127 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 	
 	// Return just the status line - no verbose content for intermediate function calls
 	return fmt.Sprintf("\n%s", statusLine)
+}
+
+// formatEnhancedVisualDiff creates a colored diff display that bypasses markdown
+func (tc *TermChat) formatEnhancedVisualDiff(diffPreview, filePath string) string {
+	// Parse the SEARCH/REPLACE format
+	lines := strings.Split(diffPreview, "\n")
+	var searchText, replaceText string
+	var inSearch, inReplace bool
+	
+	for _, line := range lines {
+		switch {
+		case strings.Contains(line, "------- SEARCH"):
+			inSearch = true
+			inReplace = false
+		case strings.Contains(line, "======="):
+			inSearch = false
+			inReplace = true
+		case strings.Contains(line, "+++++++ REPLACE"):
+			inReplace = false
+		case inSearch:
+			if searchText != "" {
+				searchText += "\n"
+			}
+			searchText += line
+		case inReplace:
+			if replaceText != "" {
+				replaceText += "\n"
+			}
+			replaceText += line
+		}
+	}
+	
+	// Read the original file to find line numbers
+	var searchLineStart int = -1
+	
+	if filePath != "" {
+		if content, err := os.ReadFile(filePath); err == nil {
+			originalLines := strings.Split(string(content), "\n")
+			
+			// Find where the search text appears in the file
+			searchLines := strings.Split(searchText, "\n")
+			if len(searchLines) > 0 {
+				firstSearchLine := strings.TrimSpace(searchLines[0])
+				for i, line := range originalLines {
+					if strings.TrimSpace(line) == firstSearchLine {
+						// Verify this is the right match by checking subsequent lines
+						match := true
+						for j := 1; j < len(searchLines) && i+j < len(originalLines); j++ {
+							if strings.TrimSpace(originalLines[i+j]) != strings.TrimSpace(searchLines[j]) {
+								match = false
+								break
+							}
+						}
+						if match {
+							searchLineStart = i + 1 // 1-indexed
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Build colored diff with ANSI escape codes
+	var result strings.Builder
+	
+	// Header with file path
+	result.WriteString("\x1b[36m╭─ ")
+	if filePath != "" {
+		result.WriteString(fmt.Sprintf("\x1b[37m%s\x1b[36m ", filePath))
+	}
+	result.WriteString("(diff preview)")
+	result.WriteString(strings.Repeat("─", max(0, 50-len(filePath))))
+	result.WriteString("╮\x1b[0m\n")
+	
+	// Show the diff with line numbers and colors
+	searchLines := strings.Split(searchText, "\n")
+	replaceLines := strings.Split(replaceText, "\n")
+	
+	// Add hunk header
+	if searchLineStart > 0 {
+		result.WriteString(fmt.Sprintf("\x1b[36m│\x1b[0m \x1b[90m@@ -%d,%d +%d,%d @@\x1b[0m\n", 
+			searchLineStart, len(searchLines), 
+			searchLineStart, len(replaceLines)))
+	}
+	
+	// Show removed lines in red
+	for i, line := range searchLines {
+		lineNum := ""
+		if searchLineStart > 0 {
+			lineNum = fmt.Sprintf("%3d", searchLineStart+i)
+		} else {
+			lineNum = "  ?"
+		}
+		result.WriteString(fmt.Sprintf("\x1b[36m│\x1b[0m \x1b[31m%s\x1b[91m -%s\x1b[0m\n", lineNum, line))
+	}
+	
+	// Show added lines in green
+	for i, line := range replaceLines {
+		lineNum := ""
+		if searchLineStart > 0 {
+			lineNum = fmt.Sprintf("%3d", searchLineStart+i)
+		} else {
+			lineNum = "  ?"
+		}
+		result.WriteString(fmt.Sprintf("\x1b[36m│\x1b[0m \x1b[32m%s\x1b[92m +%s\x1b[0m\n", lineNum, line))
+	}
+	
+	result.WriteString("\x1b[36m╰")
+	result.WriteString(strings.Repeat("─", 60))
+	result.WriteString("╯\x1b[0m")
+	
+	return result.String()
+}
+
+// max returns the larger of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // executeUIToolCallConcurrent executes a tool call concurrently for streaming UI

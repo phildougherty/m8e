@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/phildougherty/m8e/internal/ai"
+	"github.com/phildougherty/m8e/internal/edit"
 	"github.com/phildougherty/m8e/internal/mcp"
 )
 
@@ -105,6 +106,7 @@ func (tc *TermChat) ExecuteNativeToolCall(toolCall interface{}, index int) (inte
 	case "get_logs", "get_metrics", "check_health", "get_service_status", "create_backup":
 		return tc.executeMonitoringCommand(call.Function.Name, call.Function.Arguments)
 	case "edit_file", "editfile", "edit-file":
+		fmt.Printf("DEBUG: Executing INTERNAL edit_file function\n")
 		return tc.executeEditFile(call.Function.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown native function: %s", call.Function.Name)
@@ -423,6 +425,9 @@ func (tc *TermChat) executeEditFile(argumentsJSON string) (interface{}, error) {
 		return nil, fmt.Errorf("missing required 'path' parameter")
 	}
 	
+	// Check for dry run mode
+	dryRun, _ := args["dryRun"].(bool)
+	
 	// Check for edits array (Claude Code style)
 	var diffContent strings.Builder
 	if edits, hasEdits := args["edits"].([]interface{}); hasEdits {
@@ -466,6 +471,15 @@ func (tc *TermChat) executeEditFile(argumentsJSON string) (interface{}, error) {
 		return nil, fmt.Errorf("no content, diff_content, or edits provided")
 	}
 	
+	// Create file editor instance
+	editorConfig := edit.EditorConfig{
+		BackupDir:     "/tmp/matey-edit-backups",
+		MaxBackups:    10,
+		ValidateFunc:  nil, // No custom validation for now
+		K8sIntegrated: true,
+	}
+	fileEditor := edit.NewFileEditor(editorConfig)
+	
 	// Create enhanced tools instance with visual diff enabled
 	config := mcp.EnhancedToolConfig{
 		EnableVisualDiff:  true,
@@ -478,15 +492,56 @@ func (tc *TermChat) executeEditFile(argumentsJSON string) (interface{}, error) {
 		DiffMode:          "unified",
 	}
 	
-	// Initialize enhanced tools (simplified for now)
-	enhancedTools := mcp.NewEnhancedTools(config, nil, nil, nil, nil, nil)
+	// Initialize enhanced tools with proper file editor
+	enhancedTools := mcp.NewEnhancedTools(config, fileEditor, nil, nil, nil, nil)
 	
-	// Create edit request
+	// Debug: Check if fileEditor was properly set
+	if fileEditor == nil {
+		return nil, fmt.Errorf("debug: fileEditor is nil after creation")
+	}
+	
+	// Debug: Check if file exists for better error reporting
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		// File doesn't exist - this is OK for dry run mode in some cases
+		if !dryRun {
+			return nil, fmt.Errorf("debug: file does not exist: %s", filePath)
+		}
+	}
+	
+	// Create edit request  
 	editRequest := mcp.EditFileRequest{
 		FilePath:    filePath,
 		DiffContent: diffContent.String(),
 		ShowPreview: true,
-		AutoApprove: config.AutoApprove,
+		AutoApprove: config.AutoApprove && !dryRun, // Don't auto-approve dry runs
+	}
+	
+	// Handle dry run mode
+	if dryRun {
+		// For dry run, try to read the file to create a proper diff preview
+		var originalContent string
+		if fileEditor != nil {
+			originalContent, _ = fileEditor.ReadFile(filePath)
+		}
+		
+		// Generate a visual diff preview for dry run
+		var diffPreview string
+		if originalContent != "" {
+			// Use the visual diff preview functionality
+			diffPreview = fmt.Sprintf("SEARCH/REPLACE Preview for: %s\n%s", filePath, diffContent.String())
+		} else {
+			diffPreview = fmt.Sprintf("New file preview for: %s\n%s", filePath, diffContent.String())
+		}
+		
+		result := map[string]interface{}{
+			"success":      true,
+			"file_path":    filePath,
+			"applied":      false,
+			"dry_run":      true,
+			"diff_preview": diffPreview,
+			"message":      "Dry run mode - changes not applied",
+		}
+		return result, nil
 	}
 	
 	// Execute the edit with visual diff
