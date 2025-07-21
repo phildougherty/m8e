@@ -35,19 +35,33 @@ type VoiceConfig struct {
 	Enabled                bool
 }
 
+// TTSQueueItem represents an item in the TTS queue
+type TTSQueueItem struct {
+	text      string
+	audioData []byte
+	id        int
+}
+
 // VoiceManager handles voice interaction
 type VoiceManager struct {
-	config        *VoiceConfig
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mutex         sync.RWMutex
-	audioStream   *portaudio.Stream
-	isListening   bool
-	isRecording   bool
-	stopRecording bool
-	onWakeWord    func()
-	onTranscript  func(string)
-	onTTSReady    func([]byte)
+	config         *VoiceConfig
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mutex          sync.RWMutex
+	audioStream    *portaudio.Stream
+	isListening    bool
+	isRecording    bool
+	stopRecording  bool
+	onWakeWord     func()
+	onTranscript   func(string)
+	onTTSReady     func([]byte)
+	// TTS Queue Management
+	ttsQueue       []TTSQueueItem
+	ttsQueueMutex  sync.RWMutex
+	currentlyPlaying bool
+	currentAudioCmd *exec.Cmd
+	nextTTSID      int
+	playbackCancel context.CancelFunc
 }
 
 // NewVoiceConfig creates voice configuration from environment variables
@@ -87,9 +101,12 @@ func NewVoiceManager(config *VoiceConfig) (*VoiceManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	vm := &VoiceManager{
-		config: config,
-		ctx:    ctx,
-		cancel: cancel,
+		config:         config,
+		ctx:            ctx,
+		cancel:         cancel,
+		ttsQueue:       make([]TTSQueueItem, 0),
+		currentlyPlaying: false,
+		nextTTSID:      0,
 	}
 
 	// Initialize PortAudio
@@ -487,7 +504,7 @@ func (vm *VoiceManager) callWhisper(audioFile string) (string, error) {
 	return "", fmt.Errorf("whisper transcription failed - install whisper with: pipx install openai-whisper\nLast error: %w", lastError)
 }
 
-// TextToSpeech converts text to speech using configured TTS endpoint
+// TextToSpeech converts text to speech and adds to queue
 func (vm *VoiceManager) TextToSpeech(text string) error {
 	if !vm.config.Enabled {
 		return nil
@@ -521,9 +538,8 @@ func (vm *VoiceManager) TextToSpeech(text string) error {
 		return fmt.Errorf("TTS request failed: %w", err)
 	}
 
-	if vm.onTTSReady != nil {
-		vm.onTTSReady(output)
-	}
+	// Add to TTS queue instead of playing immediately
+	vm.addToTTSQueue(cleanText, output)
 
 	return nil
 }
@@ -725,7 +741,7 @@ func (vm *VoiceManager) expandAcronyms(text string) string {
 	return strings.Join(words, " ")
 }
 
-// PlayAudio plays audio data
+// PlayAudio plays audio data immediately (used by queue system)
 func (vm *VoiceManager) PlayAudio(audioData []byte) error {
 	if !vm.config.Enabled {
 		return nil
@@ -739,16 +755,127 @@ func (vm *VoiceManager) PlayAudio(audioData []byte) error {
 	}
 	defer os.Remove(tempFile)
 
-	// Try different audio players
+	// Try different audio players with context support
 	players := []string{"mpg123", "ffplay", "aplay"}
 	for _, player := range players {
-		cmd := exec.Command(player, tempFile)
-		if err := cmd.Run(); err == nil {
+		ctx, cancel := context.WithCancel(vm.ctx)
+		vm.mutex.Lock()
+		vm.currentAudioCmd = exec.CommandContext(ctx, player, tempFile)
+		vm.playbackCancel = cancel
+		vm.mutex.Unlock()
+		
+		if err := vm.currentAudioCmd.Run(); err == nil {
+			vm.mutex.Lock()
+			vm.currentAudioCmd = nil
+			vm.playbackCancel = nil
+			vm.mutex.Unlock()
 			return nil
 		}
+		cancel()
 	}
 
+	vm.mutex.Lock()
+	vm.currentAudioCmd = nil
+	vm.playbackCancel = nil
+	vm.mutex.Unlock()
 	return fmt.Errorf("no suitable audio player found")
+}
+
+// TTS Queue Management Functions
+
+// addToTTSQueue adds a TTS item to the queue and starts processing if not already playing
+func (vm *VoiceManager) addToTTSQueue(text string, audioData []byte) {
+	vm.ttsQueueMutex.Lock()
+	defer vm.ttsQueueMutex.Unlock()
+	
+	vm.nextTTSID++
+	item := TTSQueueItem{
+		text:      text,
+		audioData: audioData,
+		id:        vm.nextTTSID,
+	}
+	
+	vm.ttsQueue = append(vm.ttsQueue, item)
+	
+	// Start processing queue if not already playing
+	if !vm.currentlyPlaying {
+		go vm.processTTSQueue()
+	}
+}
+
+// processTTSQueue processes the TTS queue sequentially
+func (vm *VoiceManager) processTTSQueue() {
+	vm.ttsQueueMutex.Lock()
+	if vm.currentlyPlaying {
+		vm.ttsQueueMutex.Unlock()
+		return
+	}
+	vm.currentlyPlaying = true
+	vm.ttsQueueMutex.Unlock()
+	
+	defer func() {
+		vm.ttsQueueMutex.Lock()
+		vm.currentlyPlaying = false
+		vm.ttsQueueMutex.Unlock()
+	}()
+	
+	for {
+		vm.ttsQueueMutex.Lock()
+		if len(vm.ttsQueue) == 0 {
+			vm.ttsQueueMutex.Unlock()
+			break
+		}
+		
+		// Get next item
+		item := vm.ttsQueue[0]
+		vm.ttsQueue = vm.ttsQueue[1:]
+		vm.ttsQueueMutex.Unlock()
+		
+		// Play the audio
+		if vm.onTTSReady != nil {
+			vm.onTTSReady(item.audioData)
+		} else {
+			vm.PlayAudio(item.audioData)
+		}
+	}
+}
+
+// skipToNextTTS skips the currently playing TTS and moves to next in queue
+func (vm *VoiceManager) SkipToNextTTS() {
+	vm.mutex.Lock()
+	defer vm.mutex.Unlock()
+	
+	// Stop current audio playback
+	if vm.currentAudioCmd != nil && vm.playbackCancel != nil {
+		vm.playbackCancel()
+		vm.currentAudioCmd = nil
+		vm.playbackCancel = nil
+	}
+}
+
+// interruptTTS stops current TTS playback and clears the queue
+func (vm *VoiceManager) InterruptTTS() {
+	vm.mutex.Lock()
+	// Stop current audio playback
+	if vm.currentAudioCmd != nil && vm.playbackCancel != nil {
+		vm.playbackCancel()
+		vm.currentAudioCmd = nil
+		vm.playbackCancel = nil
+	}
+	vm.mutex.Unlock()
+	
+	// Clear the queue
+	vm.ttsQueueMutex.Lock()
+	vm.ttsQueue = nil
+	vm.currentlyPlaying = false
+	vm.ttsQueueMutex.Unlock()
+}
+
+// getTTSQueueStatus returns info about the current TTS queue
+func (vm *VoiceManager) GetTTSQueueStatus() (queueLength int, isPlaying bool) {
+	vm.ttsQueueMutex.RLock()
+	defer vm.ttsQueueMutex.RUnlock()
+	return len(vm.ttsQueue), vm.currentlyPlaying
 }
 
 // getEnvDefault gets environment variable with default value

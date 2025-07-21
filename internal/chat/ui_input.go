@@ -113,6 +113,14 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+v", "ctrl+shift+v": // Toggle voice mode (moved from ctrl+v)
 		return m.handleVoiceToggle()
 
+	case "ctrl+n": // Skip to next TTS response
+		return m.handleTTSSkip()
+
+	case "ctrl+i": // Interrupt TTS (stop current and clear queue)
+		return m.handleTTSInterrupt()
+
+	case "ctrl+q": // Show TTS queue status
+		return m.handleTTSQueueStatus()
 
 	default:
 		// Regular character input
@@ -621,4 +629,91 @@ func (m *ChatUI) triggerVoiceRecording() {
 			}
 		}
 	}
+}
+
+// TTS Control Handlers
+
+// handleTTSSkip skips to the next TTS response in queue
+func (m *ChatUI) handleTTSSkip() (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager == nil || !m.termChat.voiceManager.config.Enabled {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Control", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createErrorMessage("Voice system not enabled"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return m, nil
+	}
+	
+	// Skip to next TTS
+	m.termChat.voiceManager.SkipToNextTTS()
+	
+	queueLength, isPlaying := m.termChat.voiceManager.GetTTSQueueStatus()
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Control", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createSuccessMessage("⏭️  Skipped to next TTS response"))
+	if queueLength > 0 {
+		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("📋 %d responses remaining in queue", queueLength)))
+	} else if !isPlaying {
+		m.viewport = append(m.viewport, m.createInfoMessage("📋 Queue is empty"))
+	}
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return m, nil
+}
+
+// handleTTSInterrupt stops current TTS and clears the queue
+func (m *ChatUI) handleTTSInterrupt() (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager == nil || !m.termChat.voiceManager.config.Enabled {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Control", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createErrorMessage("Voice system not enabled"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return m, nil
+	}
+	
+	// Interrupt TTS
+	m.termChat.voiceManager.InterruptTTS()
+	
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Control", time.Now().Format("15:04:05")))
+	m.viewport = append(m.viewport, m.createSuccessMessage("🛑 TTS interrupted and queue cleared"))
+	m.viewport = append(m.viewport, m.createInfoMessage("🔇 All speech playback stopped"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return m, nil
+}
+
+// handleTTSQueueStatus shows current TTS queue status
+func (m *ChatUI) handleTTSQueueStatus() (tea.Model, tea.Cmd) {
+	if m.termChat.voiceManager == nil || !m.termChat.voiceManager.config.Enabled {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Status", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createErrorMessage("Voice system not enabled"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return m, nil
+	}
+	
+	queueLength, isPlaying := m.termChat.voiceManager.GetTTSQueueStatus()
+	
+	m.viewport = append(m.viewport, "")
+	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Queue Status", time.Now().Format("15:04:05")))
+	
+	if isPlaying {
+		m.viewport = append(m.viewport, m.createSuccessMessage("🔊 Currently playing TTS response"))
+	} else {
+		m.viewport = append(m.viewport, m.createInfoMessage("🔇 No TTS currently playing"))
+	}
+	
+	if queueLength > 0 {
+		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("📋 %d responses queued for playback", queueLength)))
+	} else {
+		m.viewport = append(m.viewport, m.createInfoMessage("📋 Queue is empty"))
+	}
+	
+	m.viewport = append(m.viewport, m.createInfoMessage("⌨️  Controls: Ctrl+N (skip), Ctrl+I (interrupt), Ctrl+Q (status)"))
+	m.viewport = append(m.viewport, m.createBoxFooter())
+	m.viewport = append(m.viewport, "")
+	return m, nil
 }
