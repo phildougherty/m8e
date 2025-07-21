@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -395,19 +396,6 @@ func (m *MateyMCPServer) GetTools() []Tool {
 				"required": []string{"name"},
 			},
 		},
-		{
-			Name:        "workflow_templates",
-			Description: "List available workflow templates",
-			InputSchema: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"category": map[string]interface{}{
-						"type":        "string",
-						"description": "Filter by category",
-					},
-				},
-			},
-		},
 		// Service management tools
 		{
 			Name:        "start_service",
@@ -495,6 +483,238 @@ func (m *MateyMCPServer) GetTools() []Tool {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{},
+			},
+		},
+		// Task scheduler workflow management
+		{
+			Name:        "create_workflow",
+			Description: "Create a workflow in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow description",
+					},
+					"schedule": map[string]interface{}{
+						"type":        "string",
+						"description": "Cron schedule expression",
+					},
+					"timezone": map[string]interface{}{
+						"type":        "string",
+						"description": "Timezone for schedule (e.g., America/New_York)",
+						"default":     "UTC",
+					},
+					"steps": map[string]interface{}{
+						"type":        "array",
+						"description": "Workflow steps",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"name":       map[string]interface{}{"type": "string"},
+								"tool":       map[string]interface{}{"type": "string"},
+								"parameters": map[string]interface{}{"type": "object"},
+								"dependsOn":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"condition":  map[string]interface{}{"type": "string"},
+								"continueOnError": map[string]interface{}{"type": "boolean"},
+								"timeout":    map[string]interface{}{"type": "string"},
+							},
+							"required": []string{"name", "tool"},
+						},
+					},
+					"enabled": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Enable/disable workflow",
+						"default":     true,
+					},
+					"concurrencyPolicy": map[string]interface{}{
+						"type":        "string",
+						"description": "Concurrent execution policy (Allow, Forbid, Replace)",
+						"enum":        []string{"Allow", "Forbid", "Replace"},
+						"default":     "Forbid",
+					},
+					"timeout": map[string]interface{}{
+						"type":        "string",
+						"description": "Maximum workflow execution timeout (e.g., '1h', '30m')",
+					},
+					"retryPolicy": map[string]interface{}{
+						"type":        "object",
+						"description": "Workflow retry policy",
+						"properties": map[string]interface{}{
+							"maxRetries":      map[string]interface{}{"type": "integer"},
+							"retryDelay":      map[string]interface{}{"type": "string"},
+							"backoffStrategy": map[string]interface{}{"type": "string", "enum": []string{"Linear", "Exponential", "Fixed"}},
+						},
+					},
+				},
+				"required": []string{"name", "steps"},
+			},
+		},
+		{
+			Name:        "list_workflows",
+			Description: "List all workflows in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"all_namespaces": map[string]interface{}{
+						"type":        "boolean",
+						"description": "List workflows from all namespaces",
+						"default":     false,
+					},
+					"output_format": map[string]interface{}{
+						"type":        "string",
+						"description": "Output format (table, json, yaml)",
+						"default":     "table",
+					},
+					"tags": map[string]interface{}{
+						"type":        "array",
+						"description": "Filter by tags",
+						"items":       map[string]interface{}{"type": "string"},
+					},
+					"enabled_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Show only enabled workflows",
+						"default":     false,
+					},
+				},
+			},
+		},
+		{
+			Name:        "get_workflow",
+			Description: "Get details of a specific workflow in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"output_format": map[string]interface{}{
+						"type":        "string",
+						"description": "Output format (table, json, yaml)",
+						"default":     "table",
+					},
+					"show_executions": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include execution history",
+						"default":     true,
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "delete_workflow",
+			Description: "Delete a workflow from the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "execute_workflow",
+			Description: "Manually execute a workflow in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"parameters": map[string]interface{}{
+						"type":        "object",
+						"description": "Override parameters for this execution",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "workflow_logs",
+			Description: "Get workflow execution logs from the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"execution_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Specific execution ID",
+					},
+					"step": map[string]interface{}{
+						"type":        "string",
+						"description": "Get logs for specific step",
+					},
+					"follow": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Follow log output",
+						"default":     false,
+					},
+					"tail": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of lines to show from the end",
+						"default":     100,
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "pause_workflow",
+			Description: "Pause a workflow in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "resume_workflow",
+			Description: "Resume a paused workflow in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "workflow_templates",
+			Description: "List available workflow templates in the task scheduler",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"category": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by category",
+					},
+					"output_format": map[string]interface{}{
+						"type":        "string",
+						"description": "Output format (table, json, yaml)",
+						"default":     "table",
+					},
+				},
 			},
 		},
 		// Toolbox management
@@ -588,18 +808,25 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 	case "get_cluster_state":
 		return m.getClusterState(ctx, arguments)
 	
-	// Workflow management  
-	case "create_workflow", "list_workflows":
-		// TODO: Implement unified Task Scheduler workflow tools
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "Workflow tools are being migrated to unified Task Scheduler. Use task scheduler workflow tools instead."}},
-			IsError: true,
-		}, fmt.Errorf("workflow tools not available - use task scheduler instead")
-	case "get_workflow", "delete_workflow", "execute_workflow", "workflow_logs", "pause_workflow", "resume_workflow", "workflow_templates":
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "Workflow tools are being migrated to unified Task Scheduler. Use task scheduler workflow tools instead."}},
-			IsError: true,
-		}, fmt.Errorf("workflow tools not available - use task scheduler instead")
+	// Workflow management (unified under Task Scheduler)
+	case "create_workflow":
+		return m.createWorkflow(ctx, arguments)
+	case "list_workflows":
+		return m.listWorkflows(ctx, arguments)
+	case "get_workflow":
+		return m.getWorkflow(ctx, arguments)
+	case "delete_workflow":
+		return m.deleteWorkflow(ctx, arguments)
+	case "execute_workflow":
+		return m.executeWorkflow(ctx, arguments)
+	case "workflow_logs":
+		return m.workflowLogs(ctx, arguments)
+	case "pause_workflow":
+		return m.pauseWorkflow(ctx, arguments)
+	case "resume_workflow":
+		return m.resumeWorkflow(ctx, arguments)
+	case "workflow_templates":
+		return m.workflowTemplates(ctx, arguments)
 	
 	// Service management
 	case "start_service":
@@ -987,9 +1214,9 @@ func (m *MateyMCPServer) getClusterState(ctx context.Context, args map[string]in
 	}, nil
 }
 
-// createWorkflow creates a workflow from provided configuration
-// TODO: Update to use MCPTaskScheduler workflow creation
-/*
+// Workflow management implementations using MCPTaskScheduler
+
+// createWorkflow creates a workflow in the MCPTaskScheduler
 func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
 	name, ok := args["name"].(string)
 	if !ok || name == "" {
@@ -1007,8 +1234,8 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 		}, fmt.Errorf("steps are required")
 	}
 	
-	// Process steps to ensure correct structure for CRD
-	processedSteps := make([]map[string]interface{}, 0, len(steps))
+	// Process steps for MCPTaskScheduler WorkflowDefinition
+	workflowSteps := make([]map[string]interface{}, 0, len(steps))
 	for i, step := range steps {
 		stepMap, ok := step.(map[string]interface{})
 		if !ok {
@@ -1028,76 +1255,619 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 			}, fmt.Errorf("step %d is missing required 'name' or 'tool' field", i)
 		}
 		
-		// Create properly structured step
-		processedStep := map[string]interface{}{
+		// Create WorkflowStep structure
+		workflowStep := map[string]interface{}{
 			"name": stepName,
 			"tool": stepTool,
 		}
 		
-		// Add parameters if they exist
+		// Add optional fields
 		if parameters, ok := stepMap["parameters"].(map[string]interface{}); ok {
-			processedStep["parameters"] = parameters
+			workflowStep["parameters"] = parameters
 		}
-		
-		// Add other optional fields
 		if condition, ok := stepMap["condition"].(string); ok && condition != "" {
-			processedStep["condition"] = condition
+			workflowStep["condition"] = condition
 		}
-		
 		if continueOnError, ok := stepMap["continueOnError"].(bool); ok {
-			processedStep["continueOnError"] = continueOnError
+			workflowStep["continueOnError"] = continueOnError
 		}
-		
 		if dependsOn, ok := stepMap["dependsOn"].([]interface{}); ok && len(dependsOn) > 0 {
-			processedStep["dependsOn"] = dependsOn
+			workflowStep["dependsOn"] = dependsOn
+		}
+		if timeout, ok := stepMap["timeout"].(string); ok && timeout != "" {
+			workflowStep["timeout"] = timeout
 		}
 		
-		processedSteps = append(processedSteps, processedStep)
+		workflowSteps = append(workflowSteps, workflowStep)
 	}
 	
-	// Create workflow YAML structure matching the CRD
-	workflow := map[string]interface{}{
-		"apiVersion": "mcp.matey.ai/v1",
-		"kind":       "Workflow",
-		"metadata": map[string]interface{}{
-			"name": name,
-		},
-		"spec": map[string]interface{}{
-			"enabled":  true,
-			"steps":    processedSteps,
-			"schedule": "0 0 * * *", // Default to daily at midnight
-		},
+	// Build workflow definition for MCPTaskScheduler
+	workflowDef := map[string]interface{}{
+		"name":    name,
+		"steps":   workflowSteps,
+		"enabled": true,
 	}
 	
-	// Add description as annotation if provided
+	// Add optional fields
 	if description, ok := args["description"].(string); ok && description != "" {
-		metadata := workflow["metadata"].(map[string]interface{})
-		annotations := make(map[string]interface{})
-		annotations["description"] = description
-		metadata["annotations"] = annotations
+		workflowDef["description"] = description
 	}
-	
-	// Override default schedule if provided
 	if schedule, ok := args["schedule"].(string); ok && schedule != "" {
-		workflow["spec"].(map[string]interface{})["schedule"] = schedule
+		workflowDef["schedule"] = schedule
+	}
+	if timezone, ok := args["timezone"].(string); ok && timezone != "" {
+		workflowDef["timezone"] = timezone
+	}
+	if enabled, ok := args["enabled"].(bool); ok {
+		workflowDef["enabled"] = enabled
+	}
+	if concurrencyPolicy, ok := args["concurrencyPolicy"].(string); ok && concurrencyPolicy != "" {
+		workflowDef["concurrencyPolicy"] = concurrencyPolicy
+	}
+	if timeout, ok := args["timeout"].(string); ok && timeout != "" {
+		workflowDef["timeout"] = timeout
+	}
+	if retryPolicy, ok := args["retryPolicy"].(map[string]interface{}); ok {
+		workflowDef["retryPolicy"] = retryPolicy
 	}
 	
-	// Convert to JSON (kubectl accepts both JSON and YAML)
-	jsonBytes, err := json.MarshalIndent(workflow, "", "  ")
+	// Try to get existing MCPTaskScheduler and add workflow to it
+	if m.k8sClient != nil {
+		// Use direct k8s client approach
+		return m.addWorkflowToTaskScheduler(ctx, workflowDef)
+	}
+	
+	// Fall back to binary execution
+	return m.createWorkflowWithBinary(ctx, args)
+}
+
+// addWorkflowToTaskScheduler adds a workflow to an existing MCPTaskScheduler
+func (m *MateyMCPServer) addWorkflowToTaskScheduler(ctx context.Context, workflowDef map[string]interface{}) (*ToolResult, error) {
+	// Convert workflow definition to JSON for patch
+	workflowJSON, err := json.MarshalIndent(workflowDef, "", "  ")
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error creating workflow JSON: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error marshaling workflow: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
-	// Apply the workflow
-	return m.applyConfig(ctx, map[string]interface{}{
-		"config_yaml": string(jsonBytes),
-		"config_type": "workflow",
-	})
+	// Create kubectl patch command to add workflow to MCPTaskScheduler
+	patchData := fmt.Sprintf(`{"spec":{"workflows":[%s]}}`, string(workflowJSON))
+	
+	// Use kubectl to patch the MCPTaskScheduler - assumes there's one named "task-scheduler" 
+	cmdArgs := []string{"patch", "mcptaskscheduler", "task-scheduler", "--type", "merge", "-p", patchData}
+	if m.namespace != "" {
+		cmdArgs = append(cmdArgs, "-n", m.namespace)
+	}
+	
+	cmd := exec.CommandContext(ctx, "kubectl", cmdArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error adding workflow to task scheduler: %v\nOutput: %s", err, string(output))}},
+			IsError: true,
+		}, err
+	}
+	
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Successfully created workflow '%s' in task scheduler\n%s", workflowDef["name"], string(output))}},
+	}, nil
 }
-*/
+
+// createWorkflowWithBinary falls back to binary execution
+func (m *MateyMCPServer) createWorkflowWithBinary(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	// For now, return a placeholder - would need actual workflow CLI commands
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: "Workflow creation via binary not yet implemented. Please ensure MCPTaskScheduler is deployed and try again."}},
+		IsError: true,
+	}, fmt.Errorf("workflow creation via binary not implemented")
+}
+
+// listWorkflows lists all workflows in the task scheduler
+func (m *MateyMCPServer) listWorkflows(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	// Try direct k8s client first to get MCPTaskScheduler workflows
+	if m.k8sClient != nil {
+		var taskSchedulers crd.MCPTaskSchedulerList
+		namespace := m.namespace
+		if allNamespaces, ok := args["all_namespaces"].(bool); ok && allNamespaces {
+			namespace = ""
+		}
+		
+		listOpts := &client.ListOptions{}
+		if namespace != "" {
+			listOpts.Namespace = namespace
+		}
+		
+		err := m.k8sClient.List(ctx, &taskSchedulers, listOpts)
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error listing task schedulers: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		
+		// Extract workflows from all task schedulers
+		var allWorkflows []map[string]interface{}
+		for _, ts := range taskSchedulers.Items {
+			for _, workflow := range ts.Spec.Workflows {
+				workflowInfo := map[string]interface{}{
+					"name":        workflow.Name,
+					"namespace":   ts.Namespace,
+					"enabled":     workflow.Enabled,
+					"schedule":    workflow.Schedule,
+					"timezone":    workflow.Timezone,
+					"description": workflow.Description,
+					"stepCount":   len(workflow.Steps),
+				}
+				
+				// Filter by enabled_only if specified
+				if enabledOnly, ok := args["enabled_only"].(bool); ok && enabledOnly && !workflow.Enabled {
+					continue
+				}
+				
+				// Filter by tags if specified
+				if filterTags, ok := args["tags"].([]interface{}); ok && len(filterTags) > 0 {
+					hasTag := false
+					for _, filterTag := range filterTags {
+						if filterTagStr, ok := filterTag.(string); ok {
+							for _, workflowTag := range workflow.Tags {
+								if workflowTag == filterTagStr {
+									hasTag = true
+									break
+								}
+							}
+							if hasTag {
+								break
+							}
+						}
+					}
+					if !hasTag {
+						continue
+					}
+				}
+				
+				allWorkflows = append(allWorkflows, workflowInfo)
+			}
+		}
+		
+		// Format output
+		outputFormat := "table"
+		if format, ok := args["output_format"].(string); ok && format != "" {
+			outputFormat = format
+		}
+		
+		return m.formatWorkflowsList(allWorkflows, outputFormat)
+	}
+	
+	// Fall back to binary execution
+	return m.listWorkflowsWithBinary(ctx, args)
+}
+
+// formatWorkflowsList formats workflow list output
+func (m *MateyMCPServer) formatWorkflowsList(workflows []map[string]interface{}, outputFormat string) (*ToolResult, error) {
+	switch outputFormat {
+	case "json":
+		jsonBytes, err := json.MarshalIndent(workflows, "", "  ")
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error formatting workflows as JSON: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: string(jsonBytes)}},
+		}, nil
+	case "yaml":
+		var yamlOutput strings.Builder
+		for _, workflow := range workflows {
+			yamlOutput.WriteString(fmt.Sprintf("- name: %v\n", workflow["name"]))
+			yamlOutput.WriteString(fmt.Sprintf("  namespace: %v\n", workflow["namespace"]))
+			yamlOutput.WriteString(fmt.Sprintf("  enabled: %v\n", workflow["enabled"]))
+			if schedule := workflow["schedule"]; schedule != nil && schedule != "" {
+				yamlOutput.WriteString(fmt.Sprintf("  schedule: %v\n", schedule))
+			}
+			if description := workflow["description"]; description != nil && description != "" {
+				yamlOutput.WriteString(fmt.Sprintf("  description: %v\n", description))
+			}
+			yamlOutput.WriteString(fmt.Sprintf("  steps: %v\n", workflow["stepCount"]))
+			yamlOutput.WriteString("\n")
+		}
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: yamlOutput.String()}},
+		}, nil
+	default: // table format
+		var output strings.Builder
+		output.WriteString("NAME                 NAMESPACE       ENABLED    SCHEDULE        STEPS    DESCRIPTION\n")
+		output.WriteString("----                 ---------       -------    --------        -----    -----------\n")
+		
+		for _, workflow := range workflows {
+			name := fmt.Sprintf("%v", workflow["name"])
+			if len(name) > 20 {
+				name = name[:17] + "..."
+			}
+			
+			namespace := fmt.Sprintf("%v", workflow["namespace"])
+			if len(namespace) > 15 {
+				namespace = namespace[:12] + "..."
+			}
+			
+			enabled := fmt.Sprintf("%v", workflow["enabled"])
+			schedule := fmt.Sprintf("%v", workflow["schedule"])
+			if schedule == "" || schedule == "<nil>" {
+				schedule = "Manual"
+			}
+			if len(schedule) > 15 {
+				schedule = schedule[:12] + "..."
+			}
+			
+			stepCount := fmt.Sprintf("%v", workflow["stepCount"])
+			
+			description := fmt.Sprintf("%v", workflow["description"])
+			if len(description) > 20 {
+				description = description[:17] + "..."
+			}
+			if description == "<nil>" {
+				description = "-"
+			}
+			
+			output.WriteString(fmt.Sprintf("%-20s %-15s %-10s %-15s %-8s %-20s\n",
+				name, namespace, enabled, schedule, stepCount, description))
+		}
+		
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: output.String()}},
+		}, nil
+	}
+}
+
+// listWorkflowsWithBinary falls back to binary execution
+func (m *MateyMCPServer) listWorkflowsWithBinary(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: "Workflow listing via binary not yet implemented. Please ensure MCPTaskScheduler is deployed and try using the k8s client."}},
+		IsError: true,
+	}, fmt.Errorf("workflow listing via binary not implemented")
+}
+
+// getWorkflow gets details of a specific workflow
+func (m *MateyMCPServer) getWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "name is required"}},
+			IsError: true,
+		}, fmt.Errorf("name is required")
+	}
+	
+	if m.k8sClient != nil {
+		var taskSchedulers crd.MCPTaskSchedulerList
+		listOpts := &client.ListOptions{}
+		if m.namespace != "" {
+			listOpts.Namespace = m.namespace
+		}
+		
+		err := m.k8sClient.List(ctx, &taskSchedulers, listOpts)
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error listing task schedulers: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		
+		// Find the workflow in any task scheduler
+		for _, ts := range taskSchedulers.Items {
+			for _, workflow := range ts.Spec.Workflows {
+				if workflow.Name == name {
+					// Format output
+					outputFormat := "table"
+					if format, ok := args["output_format"].(string); ok && format != "" {
+						outputFormat = format
+					}
+					
+					return m.formatSingleWorkflowFromTaskScheduler(workflow, ts.Namespace, outputFormat)
+				}
+			}
+		}
+		
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Workflow '%s' not found", name)}},
+			IsError: true,
+		}, fmt.Errorf("workflow %s not found", name)
+	}
+	
+	// Fall back to binary execution
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: "Workflow details via binary not yet implemented."}},
+		IsError: true,
+	}, fmt.Errorf("workflow details via binary not implemented")
+}
+
+// formatSingleWorkflowFromTaskScheduler formats a single workflow from MCPTaskScheduler
+func (m *MateyMCPServer) formatSingleWorkflowFromTaskScheduler(workflow crd.WorkflowDefinition, namespace, outputFormat string) (*ToolResult, error) {
+	switch outputFormat {
+	case "json":
+		jsonBytes, err := json.MarshalIndent(workflow, "", "  ")
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error formatting workflow as JSON: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: string(jsonBytes)}},
+		}, nil
+	case "yaml":
+		var yamlOutput strings.Builder
+		yamlOutput.WriteString(fmt.Sprintf("name: %s\n", workflow.Name))
+		yamlOutput.WriteString(fmt.Sprintf("namespace: %s\n", namespace))
+		yamlOutput.WriteString(fmt.Sprintf("enabled: %v\n", workflow.Enabled))
+		if workflow.Schedule != "" {
+			yamlOutput.WriteString(fmt.Sprintf("schedule: %s\n", workflow.Schedule))
+		}
+		if workflow.Timezone != "" {
+			yamlOutput.WriteString(fmt.Sprintf("timezone: %s\n", workflow.Timezone))
+		}
+		if workflow.Description != "" {
+			yamlOutput.WriteString(fmt.Sprintf("description: %s\n", workflow.Description))
+		}
+		yamlOutput.WriteString(fmt.Sprintf("steps: %d\n", len(workflow.Steps)))
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: yamlOutput.String()}},
+		}, nil
+	default: // table format
+		var output strings.Builder
+		output.WriteString("=== Workflow Details ===\n")
+		output.WriteString(fmt.Sprintf("Name: %s\n", workflow.Name))
+		output.WriteString(fmt.Sprintf("Namespace: %s\n", namespace))
+		output.WriteString(fmt.Sprintf("Enabled: %v\n", workflow.Enabled))
+		if workflow.Schedule != "" {
+			output.WriteString(fmt.Sprintf("Schedule: %s\n", workflow.Schedule))
+		}
+		if workflow.Timezone != "" {
+			output.WriteString(fmt.Sprintf("Timezone: %s\n", workflow.Timezone))
+		}
+		if workflow.Description != "" {
+			output.WriteString(fmt.Sprintf("Description: %s\n", workflow.Description))
+		}
+		if workflow.ConcurrencyPolicy != "" {
+			output.WriteString(fmt.Sprintf("Concurrency Policy: %s\n", workflow.ConcurrencyPolicy))
+		}
+		if workflow.Timeout != "" {
+			output.WriteString(fmt.Sprintf("Timeout: %s\n", workflow.Timeout))
+		}
+		
+		if len(workflow.Steps) > 0 {
+			output.WriteString("\n=== Steps ===\n")
+			for i, step := range workflow.Steps {
+				output.WriteString(fmt.Sprintf("%d. %s (tool: %s)\n", i+1, step.Name, step.Tool))
+				if len(step.DependsOn) > 0 {
+					output.WriteString(fmt.Sprintf("   Depends On: %v\n", step.DependsOn))
+				}
+				if step.Condition != "" {
+					output.WriteString(fmt.Sprintf("   Condition: %s\n", step.Condition))
+				}
+				if step.Timeout != "" {
+					output.WriteString(fmt.Sprintf("   Timeout: %s\n", step.Timeout))
+				}
+			}
+		}
+		
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: output.String()}},
+		}, nil
+	}
+}
+
+// deleteWorkflow deletes a workflow from the task scheduler
+func (m *MateyMCPServer) deleteWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "name is required"}},
+			IsError: true,
+		}, fmt.Errorf("name is required")
+	}
+	
+	// For now, return a placeholder - would need to implement workflow removal from MCPTaskScheduler
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Deleting workflow '%s' is not yet implemented. This requires removing the workflow from the MCPTaskScheduler spec.", name)}},
+		IsError: true,
+	}, fmt.Errorf("workflow deletion not implemented")
+}
+
+// executeWorkflow manually executes a workflow
+func (m *MateyMCPServer) executeWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "name is required"}},
+			IsError: true,
+		}, fmt.Errorf("name is required")
+	}
+	
+	// For now, return a placeholder - would need actual workflow execution API
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Manual execution of workflow '%s' is not yet implemented. This requires connecting to the task scheduler's execution API.", name)}},
+		IsError: true,
+	}, fmt.Errorf("workflow execution not implemented")
+}
+
+// workflowLogs gets workflow execution logs
+func (m *MateyMCPServer) workflowLogs(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "name is required"}},
+			IsError: true,
+		}, fmt.Errorf("name is required")
+	}
+	
+	// For now, return a placeholder - would need actual workflow logs API
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Getting logs for workflow '%s' is not yet implemented. This requires connecting to the task scheduler's logging API.", name)}},
+		IsError: true,
+	}, fmt.Errorf("workflow logs not implemented")
+}
+
+// pauseWorkflow pauses a workflow
+func (m *MateyMCPServer) pauseWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "name is required"}},
+			IsError: true,
+		}, fmt.Errorf("name is required")
+	}
+	
+	// For now, return a placeholder - would need to set enabled=false
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Pausing workflow '%s' is not yet implemented. This requires updating the workflow's enabled field to false.", name)}},
+		IsError: true,
+	}, fmt.Errorf("workflow pause not implemented")
+}
+
+// resumeWorkflow resumes a paused workflow
+func (m *MateyMCPServer) resumeWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "name is required"}},
+			IsError: true,
+		}, fmt.Errorf("name is required")
+	}
+	
+	// For now, return a placeholder - would need to set enabled=true
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Resuming workflow '%s' is not yet implemented. This requires updating the workflow's enabled field to true.", name)}},
+		IsError: true,
+	}, fmt.Errorf("workflow resume not implemented")
+}
+
+// workflowTemplates lists available workflow templates
+func (m *MateyMCPServer) workflowTemplates(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	if m.k8sClient != nil {
+		var taskSchedulers crd.MCPTaskSchedulerList
+		listOpts := &client.ListOptions{}
+		if m.namespace != "" {
+			listOpts.Namespace = m.namespace
+		}
+		
+		err := m.k8sClient.List(ctx, &taskSchedulers, listOpts)
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error listing task schedulers: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		
+		// Extract templates from all task schedulers
+		var allTemplates []map[string]interface{}
+		category := ""
+		if cat, ok := args["category"].(string); ok {
+			category = cat
+		}
+		
+		for _, ts := range taskSchedulers.Items {
+			for _, template := range ts.Spec.Templates {
+				// Filter by category if specified
+				if category != "" && template.Category != category {
+					continue
+				}
+				
+				templateInfo := map[string]interface{}{
+					"name":        template.Name,
+					"category":    template.Category,
+					"description": template.Description,
+					"version":     template.Version,
+					"parameters":  len(template.Parameters),
+					"steps":       len(template.Workflow.Steps),
+				}
+				allTemplates = append(allTemplates, templateInfo)
+			}
+		}
+		
+		// Format output
+		outputFormat := "table"
+		if format, ok := args["output_format"].(string); ok && format != "" {
+			outputFormat = format
+		}
+		
+		return m.formatTemplatesList(allTemplates, outputFormat)
+	}
+	
+	// Fall back to placeholder
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: "Workflow templates listing not yet implemented via binary."}},
+		IsError: true,
+	}, fmt.Errorf("workflow templates not implemented")
+}
+
+// formatTemplatesList formats templates list output
+func (m *MateyMCPServer) formatTemplatesList(templates []map[string]interface{}, outputFormat string) (*ToolResult, error) {
+	switch outputFormat {
+	case "json":
+		jsonBytes, err := json.MarshalIndent(templates, "", "  ")
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error formatting templates as JSON: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: string(jsonBytes)}},
+		}, nil
+	case "yaml":
+		var yamlOutput strings.Builder
+		for _, template := range templates {
+			yamlOutput.WriteString(fmt.Sprintf("- name: %v\n", template["name"]))
+			yamlOutput.WriteString(fmt.Sprintf("  category: %v\n", template["category"]))
+			yamlOutput.WriteString(fmt.Sprintf("  description: %v\n", template["description"]))
+			yamlOutput.WriteString(fmt.Sprintf("  version: %v\n", template["version"]))
+			yamlOutput.WriteString(fmt.Sprintf("  parameters: %v\n", template["parameters"]))
+			yamlOutput.WriteString(fmt.Sprintf("  steps: %v\n", template["steps"]))
+			yamlOutput.WriteString("\n")
+		}
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: yamlOutput.String()}},
+		}, nil
+	default: // table format
+		var output strings.Builder
+		output.WriteString("NAME                 CATEGORY        VERSION    PARAMS   STEPS    DESCRIPTION\n")
+		output.WriteString("----                 --------        -------    ------   -----    -----------\n")
+		
+		for _, template := range templates {
+			name := fmt.Sprintf("%v", template["name"])
+			if len(name) > 20 {
+				name = name[:17] + "..."
+			}
+			
+			category := fmt.Sprintf("%v", template["category"])
+			if len(category) > 15 {
+				category = category[:12] + "..."
+			}
+			
+			version := fmt.Sprintf("%v", template["version"])
+			if len(version) > 10 {
+				version = version[:7] + "..."
+			}
+			
+			params := fmt.Sprintf("%v", template["parameters"])
+			steps := fmt.Sprintf("%v", template["steps"])
+			
+			description := fmt.Sprintf("%v", template["description"])
+			if len(description) > 20 {
+				description = description[:17] + "..."
+			}
+			
+			output.WriteString(fmt.Sprintf("%-20s %-15s %-10s %-8s %-8s %-20s\n",
+				name, category, version, params, steps, description))
+		}
+		
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: output.String()}},
+		}, nil
+	}
+}
 
 // runMateyCommand runs a matey command and returns the output (fallback for unsupported operations)
 func (m *MateyMCPServer) runMateyCommand(ctx context.Context, args ...string) (string, error) {
