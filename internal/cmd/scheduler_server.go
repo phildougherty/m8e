@@ -83,7 +83,7 @@ Examples:
 				}
 				// Use Kubernetes service DNS for proxy discovery
 				mcpProxyURL = fmt.Sprintf("http://matey-proxy.%s.svc.cluster.local:9876", namespace)
-				logger.Info("Using Kubernetes service discovery for MCP proxy", "url", mcpProxyURL)
+				logger.Info("Using Kubernetes service discovery for MCP proxy: %s", mcpProxyURL)
 			}
 			
 			workflowEngine := scheduler.NewWorkflowEngine(mcpProxyURL, mcpProxyAPIKey, logr.WithName("workflow"))

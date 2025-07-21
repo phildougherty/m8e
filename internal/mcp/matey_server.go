@@ -1323,35 +1323,130 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 
 // addWorkflowToTaskScheduler adds a workflow to an existing MCPTaskScheduler
 func (m *MateyMCPServer) addWorkflowToTaskScheduler(ctx context.Context, workflowDef map[string]interface{}) (*ToolResult, error) {
-	// Convert workflow definition to JSON for patch
-	workflowJSON, err := json.MarshalIndent(workflowDef, "", "  ")
+	// First, get the current MCPTaskScheduler to retrieve existing workflows
+	var taskScheduler crd.MCPTaskScheduler
+	taskSchedulerName := "task-scheduler"
+	err := m.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      taskSchedulerName,
+		Namespace: m.namespace,
+	}, &taskScheduler)
+	
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error marshaling workflow: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting task scheduler '%s': %v", taskSchedulerName, err)}},
 			IsError: true,
 		}, err
 	}
 	
-	// Create kubectl patch command to add workflow to MCPTaskScheduler
-	patchData := fmt.Sprintf(`{"spec":{"workflows":[%s]}}`, string(workflowJSON))
+	// Convert workflow definition to proper WorkflowDefinition struct
+	workflowName, _ := workflowDef["name"].(string)
 	
-	// Use kubectl to patch the MCPTaskScheduler - assumes there's one named "task-scheduler" 
-	cmdArgs := []string{"patch", "mcptaskscheduler", "task-scheduler", "--type", "merge", "-p", patchData}
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
+	// Check if workflow with same name already exists
+	for _, existingWorkflow := range taskScheduler.Spec.Workflows {
+		if existingWorkflow.Name == workflowName {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Workflow '%s' already exists. Use update operation to modify it.", workflowName)}},
+				IsError: true,
+			}, fmt.Errorf("workflow '%s' already exists", workflowName)
+		}
 	}
 	
-	cmd := exec.CommandContext(ctx, "kubectl", cmdArgs...)
-	output, err := cmd.CombinedOutput()
+	// Convert map to WorkflowDefinition struct
+	newWorkflow := crd.WorkflowDefinition{
+		Name:    workflowName,
+		Enabled: true,
+	}
+	
+	// Set optional fields
+	if description, ok := workflowDef["description"].(string); ok {
+		newWorkflow.Description = description
+	}
+	if schedule, ok := workflowDef["schedule"].(string); ok {
+		newWorkflow.Schedule = schedule
+	}
+	if timezone, ok := workflowDef["timezone"].(string); ok {
+		newWorkflow.Timezone = timezone
+	}
+	if enabled, ok := workflowDef["enabled"].(bool); ok {
+		newWorkflow.Enabled = enabled
+	}
+	if concurrencyPolicy, ok := workflowDef["concurrencyPolicy"].(string); ok {
+		newWorkflow.ConcurrencyPolicy = crd.WorkflowConcurrencyPolicy(concurrencyPolicy)
+	}
+	if timeout, ok := workflowDef["timeout"].(string); ok {
+		newWorkflow.Timeout = timeout
+	}
+	
+	// Convert steps
+	if stepsInterface, ok := workflowDef["steps"].([]map[string]interface{}); ok {
+		for _, stepMap := range stepsInterface {
+			step := crd.WorkflowStep{
+				Name: stepMap["name"].(string),
+				Tool: stepMap["tool"].(string),
+			}
+			
+			if parameters, ok := stepMap["parameters"].(map[string]interface{}); ok {
+				step.Parameters = parameters
+			}
+			if condition, ok := stepMap["condition"].(string); ok {
+				step.Condition = condition
+			}
+			if continueOnError, ok := stepMap["continueOnError"].(bool); ok {
+				step.ContinueOnError = continueOnError
+			}
+			if dependsOnInterface, ok := stepMap["dependsOn"].([]interface{}); ok {
+				dependsOn := make([]string, len(dependsOnInterface))
+				for i, dep := range dependsOnInterface {
+					if depStr, ok := dep.(string); ok {
+						dependsOn[i] = depStr
+					}
+				}
+				step.DependsOn = dependsOn
+			}
+			if timeout, ok := stepMap["timeout"].(string); ok {
+				step.Timeout = timeout
+			}
+			
+			newWorkflow.Steps = append(newWorkflow.Steps, step)
+		}
+	}
+	
+	// Handle retry policy
+	if retryPolicyMap, ok := workflowDef["retryPolicy"].(map[string]interface{}); ok {
+		retryPolicy := &crd.WorkflowRetryPolicy{}
+		if maxRetries, ok := retryPolicyMap["maxRetries"].(float64); ok {
+			maxRetriesInt := int32(maxRetries)
+			retryPolicy.MaxRetries = maxRetriesInt
+		}
+		if retryDelay, ok := retryPolicyMap["retryDelay"].(string); ok {
+			retryPolicy.RetryDelay = retryDelay
+		}
+		if backoffStrategy, ok := retryPolicyMap["backoffStrategy"].(string); ok {
+			retryPolicy.BackoffStrategy = crd.WorkflowBackoffStrategy(backoffStrategy)
+		}
+		if maxRetryDelay, ok := retryPolicyMap["maxRetryDelay"].(string); ok {
+			retryPolicy.MaxRetryDelay = maxRetryDelay
+		}
+		if backoffMultiplier, ok := retryPolicyMap["backoffMultiplier"].(float64); ok {
+			retryPolicy.BackoffMultiplier = backoffMultiplier
+		}
+		newWorkflow.RetryPolicy = retryPolicy
+	}
+	
+	// Add the new workflow to the existing list
+	taskScheduler.Spec.Workflows = append(taskScheduler.Spec.Workflows, newWorkflow)
+	
+	// Update the MCPTaskScheduler
+	err = m.k8sClient.Update(ctx, &taskScheduler)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error adding workflow to task scheduler: %v\nOutput: %s", err, string(output))}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error updating task scheduler with new workflow: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("Successfully created workflow '%s' in task scheduler\n%s", workflowDef["name"], string(output))}},
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Successfully created workflow '%s' in task scheduler. Total workflows: %d", workflowName, len(taskScheduler.Spec.Workflows))}},
 	}, nil
 }
 
@@ -1668,11 +1763,60 @@ func (m *MateyMCPServer) deleteWorkflow(ctx context.Context, args map[string]int
 		}, fmt.Errorf("name is required")
 	}
 	
-	// For now, return a placeholder - would need to implement workflow removal from MCPTaskScheduler
+	if m.k8sClient != nil {
+		// Get the current MCPTaskScheduler
+		var taskScheduler crd.MCPTaskScheduler
+		taskSchedulerName := "task-scheduler"
+		err := m.k8sClient.Get(ctx, client.ObjectKey{
+			Name:      taskSchedulerName,
+			Namespace: m.namespace,
+		}, &taskScheduler)
+		
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting task scheduler '%s': %v", taskSchedulerName, err)}},
+				IsError: true,
+			}, err
+		}
+		
+		// Find and remove the workflow
+		workflowFound := false
+		var updatedWorkflows []crd.WorkflowDefinition
+		for _, workflow := range taskScheduler.Spec.Workflows {
+			if workflow.Name != name {
+				updatedWorkflows = append(updatedWorkflows, workflow)
+			} else {
+				workflowFound = true
+			}
+		}
+		
+		if !workflowFound {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Workflow '%s' not found", name)}},
+				IsError: true,
+			}, fmt.Errorf("workflow '%s' not found", name)
+		}
+		
+		// Update the task scheduler
+		taskScheduler.Spec.Workflows = updatedWorkflows
+		err = m.k8sClient.Update(ctx, &taskScheduler)
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error removing workflow from task scheduler: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Successfully deleted workflow '%s' from task scheduler. Remaining workflows: %d", name, len(updatedWorkflows))}},
+		}, nil
+	}
+	
+	// Fall back to binary execution
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("Deleting workflow '%s' is not yet implemented. This requires removing the workflow from the MCPTaskScheduler spec.", name)}},
+		Content: []Content{{Type: "text", Text: "Workflow deletion via binary not yet implemented."}},
 		IsError: true,
-	}, fmt.Errorf("workflow deletion not implemented")
+	}, fmt.Errorf("workflow deletion via binary not implemented")
 }
 
 // executeWorkflow manually executes a workflow
@@ -1719,11 +1863,7 @@ func (m *MateyMCPServer) pauseWorkflow(ctx context.Context, args map[string]inte
 		}, fmt.Errorf("name is required")
 	}
 	
-	// For now, return a placeholder - would need to set enabled=false
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("Pausing workflow '%s' is not yet implemented. This requires updating the workflow's enabled field to false.", name)}},
-		IsError: true,
-	}, fmt.Errorf("workflow pause not implemented")
+	return m.updateWorkflowEnabledStatus(ctx, name, false)
 }
 
 // resumeWorkflow resumes a paused workflow
@@ -1736,11 +1876,68 @@ func (m *MateyMCPServer) resumeWorkflow(ctx context.Context, args map[string]int
 		}, fmt.Errorf("name is required")
 	}
 	
-	// For now, return a placeholder - would need to set enabled=true
+	return m.updateWorkflowEnabledStatus(ctx, name, true)
+}
+
+// updateWorkflowEnabledStatus updates the enabled status of a workflow
+func (m *MateyMCPServer) updateWorkflowEnabledStatus(ctx context.Context, name string, enabled bool) (*ToolResult, error) {
+	if m.k8sClient != nil {
+		// Get the current MCPTaskScheduler
+		var taskScheduler crd.MCPTaskScheduler
+		taskSchedulerName := "task-scheduler"
+		err := m.k8sClient.Get(ctx, client.ObjectKey{
+			Name:      taskSchedulerName,
+			Namespace: m.namespace,
+		}, &taskScheduler)
+		
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting task scheduler '%s': %v", taskSchedulerName, err)}},
+				IsError: true,
+			}, err
+		}
+		
+		// Find and update the workflow
+		workflowFound := false
+		for i, workflow := range taskScheduler.Spec.Workflows {
+			if workflow.Name == name {
+				taskScheduler.Spec.Workflows[i].Enabled = enabled
+				workflowFound = true
+				break
+			}
+		}
+		
+		if !workflowFound {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Workflow '%s' not found", name)}},
+				IsError: true,
+			}, fmt.Errorf("workflow '%s' not found", name)
+		}
+		
+		// Update the task scheduler
+		err = m.k8sClient.Update(ctx, &taskScheduler)
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error updating workflow enabled status: %v", err)}},
+				IsError: true,
+			}, err
+		}
+		
+		status := "paused"
+		if enabled {
+			status = "resumed"
+		}
+		
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Successfully %s workflow '%s'", status, name)}},
+		}, nil
+	}
+	
+	// Fall back to binary execution
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("Resuming workflow '%s' is not yet implemented. This requires updating the workflow's enabled field to true.", name)}},
+		Content: []Content{{Type: "text", Text: "Workflow status update via binary not yet implemented."}},
 		IsError: true,
-	}, fmt.Errorf("workflow resume not implemented")
+	}, fmt.Errorf("workflow status update via binary not implemented")
 }
 
 // workflowTemplates lists available workflow templates
@@ -1881,522 +2078,6 @@ func (m *MateyMCPServer) useK8sClient() bool {
 	return m.k8sClient != nil && m.composer != nil
 }
 
-// Workflow management implementations
-// TODO: Update workflow tools to use unified MCPTaskScheduler instead of separate Workflow CRD
-/*
-// listWorkflows lists all workflows in the cluster
-func (m *MateyMCPServer) listWorkflows(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	// Try direct k8s client first
-	if m.k8sClient != nil {
-		var workflows crd.WorkflowList
-		namespace := m.namespace
-		if allNamespaces, ok := args["all_namespaces"].(bool); ok && allNamespaces {
-			namespace = ""
-		}
-		
-		listOpts := &client.ListOptions{}
-		if namespace != "" {
-			listOpts.Namespace = namespace
-		}
-		
-		err := m.k8sClient.List(ctx, &workflows, listOpts)
-		if err != nil {
-			// Fall back to binary execution
-			return m.listWorkflowsWithBinary(ctx, args)
-		}
-		
-		// Format output
-		outputFormat := "table"
-		if format, ok := args["output_format"].(string); ok && format != "" {
-			outputFormat = format
-		}
-		
-		return m.formatWorkflowList(workflows.Items, outputFormat)
-	}
-	
-	// Fall back to binary execution
-	return m.listWorkflowsWithBinary(ctx, args)
-}
-
-// listWorkflowsWithBinary falls back to binary execution
-func (m *MateyMCPServer) listWorkflowsWithBinary(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	cmdArgs := []string{"workflow", "list"}
-	
-	if allNamespaces, ok := args["all_namespaces"].(bool); ok && allNamespaces {
-		cmdArgs = append(cmdArgs, "--all-namespaces")
-	}
-	
-	if outputFormat, ok := args["output_format"].(string); ok && outputFormat != "" {
-		cmdArgs = append(cmdArgs, "-o", outputFormat)
-	}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error listing workflows: %v\nOutput: %s", err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-// formatWorkflowList formats workflow list output
-func (m *MateyMCPServer) formatWorkflowList(workflows []crd.Workflow, outputFormat string) (*ToolResult, error) {
-	switch outputFormat {
-	case "json":
-		jsonBytes, err := json.MarshalIndent(workflows, "", "  ")
-		if err != nil {
-			return &ToolResult{
-				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error formatting workflows as JSON: %v", err)}},
-				IsError: true,
-			}, err
-		}
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: string(jsonBytes)}},
-		}, nil
-	case "yaml":
-		// For YAML output, we'll use a simple format
-		var yamlOutput strings.Builder
-		for _, workflow := range workflows {
-			yamlOutput.WriteString(fmt.Sprintf("- name: %s\n", workflow.Name))
-			yamlOutput.WriteString(fmt.Sprintf("  namespace: %s\n", workflow.Namespace))
-			yamlOutput.WriteString(fmt.Sprintf("  enabled: %v\n", workflow.Spec.Enabled))
-			if workflow.Spec.Schedule != "" {
-				yamlOutput.WriteString(fmt.Sprintf("  schedule: %s\n", workflow.Spec.Schedule))
-			}
-			yamlOutput.WriteString("\n")
-		}
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: yamlOutput.String()}},
-		}, nil
-	default: // table format
-		var output strings.Builder
-		output.WriteString("NAME                 NAMESPACE       ENABLED    SCHEDULE        LAST RUN             PHASE     \n")
-		output.WriteString("----                 ---------       -------    --------        --------             -----     \n")
-		
-		for _, workflow := range workflows {
-			name := workflow.Name
-			if len(name) > 20 {
-				name = name[:17] + "..."
-			}
-			
-			namespace := workflow.Namespace
-			if len(namespace) > 15 {
-				namespace = namespace[:12] + "..."
-			}
-			
-			enabled := fmt.Sprintf("%v", workflow.Spec.Enabled)
-			schedule := workflow.Spec.Schedule
-			if schedule == "" {
-				schedule = "Manual"
-			}
-			if len(schedule) > 15 {
-				schedule = schedule[:12] + "..."
-			}
-			
-			lastRun := "Never"
-			if workflow.Status.LastExecutionTime != nil {
-				lastRun = workflow.Status.LastExecutionTime.Format("2006-01-02 15:04")
-			}
-			
-			phase := "Unknown"
-			if workflow.Status.Phase != "" {
-				phase = string(workflow.Status.Phase)
-			}
-			
-			output.WriteString(fmt.Sprintf("%-20s %-15s %-10s %-15s %-20s %-10s\n",
-				name, namespace, enabled, schedule, lastRun, phase))
-		}
-		
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: output.String()}},
-		}, nil
-	}
-}
-
-// getWorkflow gets details of a specific workflow
-func (m *MateyMCPServer) getWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "Error: name parameter is required for get_workflow. Usage: get_workflow({\"name\": \"workflow-name\"})"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	// Try direct k8s client first
-	if m.k8sClient != nil {
-		workflow := &crd.Workflow{}
-		err := m.k8sClient.Get(ctx, types.NamespacedName{
-			Name:      name,
-			Namespace: m.namespace,
-		}, workflow)
-		
-		if err != nil {
-			return &ToolResult{
-				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error finding workflow %s: %v", name, err)}},
-				IsError: true,
-			}, err
-		}
-		
-		// Format output
-		outputFormat := "table"
-		if format, ok := args["output_format"].(string); ok && format != "" {
-			outputFormat = format
-		}
-		
-		return m.formatSingleWorkflow(*workflow, outputFormat)
-	}
-	
-	// Fall back to binary execution
-	return m.getWorkflowWithBinary(ctx, args)
-}
-
-func (m *MateyMCPServer) getWorkflowWithBinary(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	cmdArgs := []string{"workflow", "get", name}
-	
-	if outputFormat, ok := args["output_format"].(string); ok && outputFormat != "" {
-		cmdArgs = append(cmdArgs, "-o", outputFormat)
-	}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting workflow %s: %v\nOutput: %s", name, err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-func (m *MateyMCPServer) formatSingleWorkflow(workflow crd.Workflow, outputFormat string) (*ToolResult, error) {
-	switch outputFormat {
-	case "json":
-		jsonBytes, err := json.MarshalIndent(workflow, "", "  ")
-		if err != nil {
-			return &ToolResult{
-				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error formatting workflow as JSON: %v", err)}},
-				IsError: true,
-			}, err
-		}
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: string(jsonBytes)}},
-		}, nil
-	case "yaml":
-		var yamlOutput strings.Builder
-		yamlOutput.WriteString(fmt.Sprintf("name: %s\n", workflow.Name))
-		yamlOutput.WriteString(fmt.Sprintf("namespace: %s\n", workflow.Namespace))
-		yamlOutput.WriteString(fmt.Sprintf("enabled: %v\n", workflow.Spec.Enabled))
-		if workflow.Spec.Schedule != "" {
-			yamlOutput.WriteString(fmt.Sprintf("schedule: %s\n", workflow.Spec.Schedule))
-		}
-		yamlOutput.WriteString(fmt.Sprintf("phase: %s\n", workflow.Status.Phase))
-		if workflow.Status.LastExecutionTime != nil {
-			yamlOutput.WriteString(fmt.Sprintf("last_run: %s\n", workflow.Status.LastExecutionTime.Format("2006-01-02 15:04:05")))
-		}
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: yamlOutput.String()}},
-		}, nil
-	default: // table format
-		var output strings.Builder
-		output.WriteString("=== Workflow Details ===\n")
-		output.WriteString(fmt.Sprintf("Name: %s\n", workflow.Name))
-		output.WriteString(fmt.Sprintf("Namespace: %s\n", workflow.Namespace))
-		output.WriteString(fmt.Sprintf("Enabled: %v\n", workflow.Spec.Enabled))
-		if workflow.Spec.Schedule != "" {
-			output.WriteString(fmt.Sprintf("Schedule: %s\n", workflow.Spec.Schedule))
-		}
-		output.WriteString(fmt.Sprintf("Phase: %s\n", workflow.Status.Phase))
-		if workflow.Status.LastExecutionTime != nil {
-			output.WriteString(fmt.Sprintf("Last Run: %s\n", workflow.Status.LastExecutionTime.Format("2006-01-02 15:04:05")))
-		}
-		
-		if len(workflow.Spec.Steps) > 0 {
-			output.WriteString("\n=== Steps ===\n")
-			for i, step := range workflow.Spec.Steps {
-				output.WriteString(fmt.Sprintf("%d. %s (tool: %s)\n", i+1, step.Name, step.Tool))
-			}
-		}
-		
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: output.String()}},
-		}, nil
-	}
-}
-
-// deleteWorkflow deletes a workflow
-func (m *MateyMCPServer) deleteWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	// Try direct k8s client first
-	if m.k8sClient != nil {
-		workflow := &crd.Workflow{}
-		err := m.k8sClient.Get(ctx, types.NamespacedName{
-			Name:      name,
-			Namespace: m.namespace,
-		}, workflow)
-		
-		if err != nil {
-			return &ToolResult{
-				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error finding workflow %s: %v", name, err)}},
-				IsError: true,
-			}, err
-		}
-		
-		err = m.k8sClient.Delete(ctx, workflow)
-		if err != nil {
-			return &ToolResult{
-				Content: []Content{{Type: "text", Text: fmt.Sprintf("Error deleting workflow %s: %v", name, err)}},
-				IsError: true,
-			}, err
-		}
-		
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Workflow %s deleted successfully", name)}},
-		}, nil
-	}
-	
-	// Fall back to binary execution
-	return m.deleteWorkflowWithBinary(ctx, args)
-}
-
-func (m *MateyMCPServer) deleteWorkflowWithBinary(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	cmdArgs := []string{"workflow", "delete", name}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error deleting workflow %s: %v\nOutput: %s", name, err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-// executeWorkflow manually executes a workflow
-func (m *MateyMCPServer) executeWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	cmdArgs := []string{"workflow", "execute", name}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error executing workflow %s: %v\nOutput: %s", name, err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-// workflowLogs gets workflow execution logs
-func (m *MateyMCPServer) workflowLogs(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	cmdArgs := []string{"workflow", "logs", name}
-	
-	if step, ok := args["step"].(string); ok && step != "" {
-		cmdArgs = append(cmdArgs, "--step", step)
-	}
-	
-	if follow, ok := args["follow"].(bool); ok && follow {
-		cmdArgs = append(cmdArgs, "-f")
-	}
-	
-	if tail, ok := args["tail"].(float64); ok && tail > 0 {
-		cmdArgs = append(cmdArgs, "--tail", fmt.Sprintf("%.0f", tail))
-	}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting workflow logs for %s: %v\nOutput: %s", name, err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-// pauseWorkflow pauses a workflow
-func (m *MateyMCPServer) pauseWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	cmdArgs := []string{"workflow", "pause", name}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error pausing workflow %s: %v\nOutput: %s", name, err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-// resumeWorkflow resumes a paused workflow
-func (m *MateyMCPServer) resumeWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "name is required"}},
-			IsError: true,
-		}, fmt.Errorf("name is required")
-	}
-	
-	cmdArgs := []string{"workflow", "resume", name}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	if m.namespace != "" {
-		cmdArgs = append(cmdArgs, "-n", m.namespace)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error resuming workflow %s: %v\nOutput: %s", name, err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-
-// workflowTemplates lists available workflow templates
-func (m *MateyMCPServer) workflowTemplates(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
-	cmdArgs := []string{"workflow", "templates"}
-	
-	if category, ok := args["category"].(string); ok && category != "" {
-		cmdArgs = append(cmdArgs, "--category", category)
-	}
-	
-	if m.configFile != "" {
-		cmdArgs = append(cmdArgs, "-c", m.configFile)
-	}
-	
-	output, err := m.runMateyCommand(ctx, cmdArgs...)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error listing workflow templates: %v\nOutput: %s", err, output)}},
-			IsError: true,
-		}, err
-	}
-	
-	return &ToolResult{
-		Content: []Content{{Type: "text", Text: output}},
-	}, nil
-}
-*/
 
 // Service management implementations
 
