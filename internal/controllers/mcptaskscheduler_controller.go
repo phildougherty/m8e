@@ -496,7 +496,7 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 	container := corev1.Container{
 		Name:            "task-scheduler",
 		Image:           image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: corev1.PullAlways,
 		Command:         []string{"./matey"},
 		Args:            []string{"scheduler-server"},
 		Env:             env,

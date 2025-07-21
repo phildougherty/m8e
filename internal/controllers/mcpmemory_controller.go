@@ -691,7 +691,7 @@ func (r *MCPMemoryReconciler) buildMemoryPodSpec(memory *crd.MCPMemory) corev1.P
 	container := corev1.Container{
 		Name:            "memory",
 		Image:           image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: corev1.PullAlways,
 		Env:             env,
 		Ports: []corev1.ContainerPort{
 			{
@@ -785,7 +785,7 @@ func (r *MCPMemoryReconciler) buildPostgresPodSpec(memory *crd.MCPMemory) corev1
 	container := corev1.Container{
 		Name:            "postgres",
 		Image:           "postgres:15-alpine",
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: corev1.PullAlways,
 		Env: []corev1.EnvVar{
 			{Name: "POSTGRES_DB", Value: memory.Spec.PostgresDB},
 			{Name: "POSTGRES_USER", Value: memory.Spec.PostgresUser},

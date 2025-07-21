@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -29,7 +31,7 @@ func NewInstallCommand() *cobra.Command {
 		Long: `Install Matey Custom Resource Definitions (CRDs) and required Kubernetes resources.
 
 This command must be run before using 'matey up' for the first time to install
-the necessary CRDs (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy) and RBAC resources into the cluster.
+the necessary CRDs (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy, MCPToolbox, Workflow) and RBAC resources into the cluster.
 
 Examples:
   matey install                    # Install all CRDs and resources
@@ -94,6 +96,13 @@ func installCRDs(dryRun bool) error {
 	}
 	fmt.Println("✓ ClusterRoleBinding installed")
 
+	// Install built-in matey-mcp-server
+	err = installMateaMCPServer(ctx, k8sClient)
+	if err != nil {
+		return fmt.Errorf("failed to install Matey MCP Server: %w", err)
+	}
+	fmt.Println("✓ Matey MCP Server installed")
+
 	fmt.Println("\nMatey installation complete!")
 	fmt.Println("You can now run 'matey up' or 'matey proxy' to start your services.")
 
@@ -152,6 +161,8 @@ func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
 		"mcpmemory.yaml",
 		"mcptaskscheduler.yaml",
 		"mcpproxy.yaml",
+		"mcptoolbox.yaml",
+		"workflow.yaml",
 	}
 
 	for _, fileName := range crdFileNames {
@@ -266,5 +277,43 @@ func installClusterRoleBinding(ctx context.Context, k8sClient client.Client) err
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
+	return nil
+}
+
+// installMateaMCPServer installs the built-in Matey MCP Server deployment
+func installMateaMCPServer(ctx context.Context, k8sClient client.Client) error {
+	// Read the YAML file
+	yamlData, err := os.ReadFile("k8s/matey-mcp-server-deployment.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to read matey-mcp-server deployment file: %w", err)
+	}
+
+	// Parse and apply each resource in the YAML file
+	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
+	for {
+		var obj map[string]interface{}
+		err := decoder.Decode(&obj)
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return fmt.Errorf("failed to decode YAML: %w", err)
+		}
+
+		if obj == nil {
+			continue
+		}
+
+		// Convert to unstructured object
+		unstructuredObj := &unstructured.Unstructured{Object: obj}
+		
+		// Apply the resource
+		err = k8sClient.Create(ctx, unstructuredObj)
+		if err != nil && !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create resource %s/%s: %w", 
+				unstructuredObj.GetKind(), unstructuredObj.GetName(), err)
+		}
+	}
+
 	return nil
 }

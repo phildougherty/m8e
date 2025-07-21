@@ -259,7 +259,7 @@ func (r *MCPServerReconciler) buildDeploymentSpec(mcpServer *mcpv1.MCPServer) ap
 	container := corev1.Container{
 		Name:            "mcp-server",
 		Image:           mcpServer.Spec.Image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
+		ImagePullPolicy: corev1.PullAlways,
 	}
 
 	// Set command and args
