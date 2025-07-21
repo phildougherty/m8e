@@ -405,18 +405,18 @@ func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) te
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Manager", timestamp))
 	m.viewport = append(m.viewport, m.createInfoMessage("Adding directory to context: "+absPath))
 	
-	// Use a more efficient approach: find specific file types and limit results
-	commonExtensions := []string{".go", ".md", ".yaml", ".yml", ".json", ".toml", ".txt"}
-	files, err := m.termChat.fileDiscovery.SearchByExtension(commonExtensions, 50) // Limit to 50 files
-	if err != nil {
-		// Fallback: try simple directory walk with timeout
-		files = m.fallbackFileSearch(absPath)
-		if len(files) == 0 {
-			m.viewport = append(m.viewport, m.createErrorMessage("Failed to discover files: "+err.Error()))
-			m.viewport = append(m.viewport, m.createBoxFooter())
-			m.viewport = append(m.viewport, "")
-			return nil
-		}
+	// Use fallback search which is more reliable
+	m.viewport = append(m.viewport, m.createInfoMessage("Scanning for files..."))
+	files := m.fallbackFileSearch(absPath)
+	
+	m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Found %d candidate files", len(files))))
+	
+	if len(files) == 0 {
+		m.viewport = append(m.viewport, m.createErrorMessage("No supported files found in directory"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Looking for: .go, .md, .yaml, .yml, .json, .toml, .txt files"))
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		m.viewport = append(m.viewport, "")
+		return nil
 	}
 	
 	// Add discovered files to context with size limits
@@ -562,20 +562,27 @@ func (m *ChatUI) fallbackFileSearch(dirPath string) []appcontext.SearchResult {
 	
 	// Simple walk with basic filtering
 	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return nil
 		}
 		
-		// Skip hidden files and common ignore patterns
-		if strings.HasPrefix(info.Name(), ".") || 
-		   strings.Contains(path, "node_modules") ||
-		   strings.Contains(path, ".git") ||
-		   strings.Contains(path, "vendor") {
+		if info.IsDir() {
+			// Skip certain directories but don't stop walking
+			dirName := info.Name()
+			if dirName == ".git" || dirName == "node_modules" || dirName == "vendor" || 
+			   dirName == ".claude" || dirName == "bin" || strings.HasPrefix(dirName, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		
+		// Skip hidden files
+		if strings.HasPrefix(info.Name(), ".") {
 			return nil
 		}
 		
 		// Only include common text file extensions
-		ext := filepath.Ext(path)
+		ext := strings.ToLower(filepath.Ext(path))
 		if ext == ".go" || ext == ".md" || ext == ".yaml" || ext == ".yml" || 
 		   ext == ".json" || ext == ".toml" || ext == ".txt" {
 			results = append(results, appcontext.SearchResult{
@@ -586,7 +593,7 @@ func (m *ChatUI) fallbackFileSearch(dirPath string) []appcontext.SearchResult {
 		}
 		
 		// Limit results to prevent timeout
-		if len(results) >= 30 {
+		if len(results) >= 50 {
 			return filepath.SkipDir
 		}
 		
