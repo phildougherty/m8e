@@ -151,6 +151,12 @@ func (tc *TermChat) showHelp() {
 • Ctrl+Y    - Toggle YOLO/MANUAL mode
 • Tab       - Toggle AUTO-EDIT/MANUAL mode
 • Ctrl+R    - Toggle verbose/compact output
+• Ctrl+V    - Paste from clipboard
+• Alt+V     - Toggle voice mode
+• Ctrl+T    - Voice recording
+• Ctrl+N    - Skip to next TTS response
+• Ctrl+I    - Interrupt TTS playback
+• Ctrl+Q    - Show TTS queue status
 
 Ready to orchestrate your Kubernetes infrastructure!`
 

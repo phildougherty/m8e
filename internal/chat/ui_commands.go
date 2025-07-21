@@ -180,15 +180,23 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Y")+"    - Toggle YOLO/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Tab")+"       - Toggle AUTO-EDIT/MANUAL mode")
 	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+R")+"    - Toggle verbose/compact output")
-	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+V")+"    - Toggle voice mode")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+V")+"    - Paste from clipboard")
+	m.viewport = append(m.viewport, "│   "+m.createHighlightText("Alt+V")+"     - Toggle voice mode")
 	
-	// Show voice triggers only if voice is enabled  
+	// Show voice controls only if voice is enabled  
 	if m.termChat.voiceManager != nil && m.termChat.voiceManager.config.Enabled {
 		m.viewport = append(m.viewport, "│")
 		m.viewport = append(m.viewport, m.createEmphasizedText("│ Voice Recording:"))
 		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+T")+"    - Start/stop voice recording")
 		m.viewport = append(m.viewport, "│   • Auto-stops when you finish speaking")
 		m.viewport = append(m.viewport, "│   • Press Ctrl+T again to stop early")
+		m.viewport = append(m.viewport, "│")
+		m.viewport = append(m.viewport, m.createEmphasizedText("│ TTS Controls:"))
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+N")+"    - Skip to next TTS response")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+I")+"    - Interrupt TTS (stop all audio)")
+		m.viewport = append(m.viewport, "│   "+m.createHighlightText("Ctrl+Q")+"    - Show TTS queue status")
+		m.viewport = append(m.viewport, "│   • TTS responses play in order (no overlap)")
+		m.viewport = append(m.viewport, "│   • Skip controls won't interrupt AI work")
 	}
 	
 	m.viewport = append(m.viewport, "│")
@@ -203,6 +211,7 @@ func (m *ChatUI) handleHelpCommand(timestamp string) tea.Msg {
 	m.viewport = append(m.viewport, m.createEmphasizedText("│ Pro Tips:"))
 	m.viewport = append(m.viewport, "│   • Use AUTO mode for safe operations like status checks")
 	m.viewport = append(m.viewport, "│   • Use YOLO mode when you want maximum speed and trust the AI")
+	m.viewport = append(m.viewport, "│   • TTS responses queue automatically - use Ctrl+N to skip long ones")
 	m.viewport = append(m.viewport, "│   • Try asking: 'Deploy a microservice' or 'Show cluster health'")
 	
 	m.viewport = append(m.viewport, m.createBoxFooter())
