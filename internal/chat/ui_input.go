@@ -127,47 +127,33 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handlePaste handles pasting from clipboard
 func (m *ChatUI) handlePaste() (tea.Model, tea.Cmd) {
-	// Get clipboard content based on OS
-	var clipboardContent string
-	var err error
+	clipboardContent, err := m.getClipboardContent()
 	
-	switch runtime.GOOS {
-	case "darwin": // macOS
-		cmd := exec.Command("pbpaste")
-		output, err := cmd.Output()
-		if err == nil {
-			clipboardContent = string(output)
-		}
-	case "linux":
-		// Try xclip first, then xsel
-		cmd := exec.Command("xclip", "-selection", "clipboard", "-o")
-		output, err := cmd.Output()
-		if err != nil {
-			// Fallback to xsel
-			cmd = exec.Command("xsel", "--clipboard", "--output")
-			output, err = cmd.Output()
-		}
-		if err == nil {
-			clipboardContent = string(output)
-		}
-	case "windows":
-		cmd := exec.Command("powershell", "Get-Clipboard")
-		output, err := cmd.Output()
-		if err == nil {
-			clipboardContent = string(output)
-		}
-	}
-	
-	if err != nil || clipboardContent == "" {
-		// Show error message if paste failed with debug info
+	if err != nil {
+		// Show detailed error message with troubleshooting info
 		m.viewport = append(m.viewport, "")
 		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste Error", time.Now().Format("15:04:05")))
-		if err != nil {
-			m.viewport = append(m.viewport, m.createErrorMessage(fmt.Sprintf("Clipboard error: %v", err)))
-		} else {
-			m.viewport = append(m.viewport, m.createErrorMessage("Clipboard is empty"))
-		}
+		m.viewport = append(m.viewport, m.createErrorMessage(fmt.Sprintf("Clipboard error: %v", err)))
 		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("OS: %s", runtime.GOOS)))
+		
+		// Add OS-specific troubleshooting
+		switch runtime.GOOS {
+		case "linux":
+			m.viewport = append(m.viewport, m.createInfoMessage("Install: sudo apt install xclip (or xsel)"))
+		case "darwin":
+			m.viewport = append(m.viewport, m.createInfoMessage("Try copying text again with ⌘+C"))
+		case "windows":
+			m.viewport = append(m.viewport, m.createInfoMessage("PowerShell clipboard access required"))
+		}
+		
+		m.viewport = append(m.viewport, m.createBoxFooter())
+		return m, nil
+	}
+	
+	if clipboardContent == "" {
+		m.viewport = append(m.viewport, "")
+		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste", time.Now().Format("15:04:05")))
+		m.viewport = append(m.viewport, m.createInfoMessage("Clipboard is empty"))
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		return m, nil
 	}
@@ -185,12 +171,82 @@ func (m *ChatUI) handlePaste() (tea.Model, tea.Cmd) {
 		if len(lines) > 1 {
 			m.viewport = append(m.viewport, "")
 			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste", time.Now().Format("15:04:05")))
-			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("Pasted %d lines", len(lines))))
+			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✅ Pasted %d lines", len(lines))))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+		} else {
+			// For single line, just show brief success
+			m.viewport = append(m.viewport, "")
+			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste", time.Now().Format("15:04:05")))
+			preview := clipboardContent
+			if len(preview) > 50 {
+				preview = preview[:47] + "..."
+			}
+			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✅ Pasted: %s", preview)))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		}
 	}
 	
 	return m, nil
+}
+
+// getClipboardContent gets clipboard content with improved cross-platform support
+func (m *ChatUI) getClipboardContent() (string, error) {
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		return m.getMacClipboard()
+	case "linux":
+		return m.getLinuxClipboard()
+	case "windows":
+		return m.getWindowsClipboard()
+	default:
+		return "", fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+	}
+}
+
+// getMacClipboard gets clipboard content on macOS
+func (m *ChatUI) getMacClipboard() (string, error) {
+	// Try pbpaste
+	cmd := exec.Command("pbpaste")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("pbpaste failed: %w", err)
+	}
+	return string(output), nil
+}
+
+// getLinuxClipboard gets clipboard content on Linux with multiple fallbacks
+func (m *ChatUI) getLinuxClipboard() (string, error) {
+	// Try multiple methods in order of preference
+	methods := []struct {
+		name string
+		cmd  []string
+	}{
+		{"xclip", []string{"xclip", "-selection", "clipboard", "-o"}},
+		{"xsel", []string{"xsel", "--clipboard", "--output"}},
+		{"wl-paste", []string{"wl-paste"}}, // Wayland clipboard
+	}
+	
+	var lastErr error
+	for _, method := range methods {
+		cmd := exec.Command(method.cmd[0], method.cmd[1:]...)
+		output, err := cmd.Output()
+		if err == nil {
+			return string(output), nil
+		}
+		lastErr = fmt.Errorf("%s failed: %w", method.name, err)
+	}
+	
+	return "", fmt.Errorf("all clipboard methods failed, last error: %v", lastErr)
+}
+
+// getWindowsClipboard gets clipboard content on Windows
+func (m *ChatUI) getWindowsClipboard() (string, error) {
+	cmd := exec.Command("powershell", "Get-Clipboard")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("powershell Get-Clipboard failed: %w", err)
+	}
+	return string(output), nil
 }
 
 // handleEscapeKey handles the escape key press
