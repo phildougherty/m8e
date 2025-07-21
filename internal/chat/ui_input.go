@@ -116,7 +116,7 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+n": // Skip to next TTS response
 		return m.handleTTSSkip()
 
-	case "ctrl+i": // Interrupt TTS (stop current and clear queue)
+	case "ctrl+x": // Interrupt TTS (stop current and clear queue)
 		return m.handleTTSInterrupt()
 
 	case "ctrl+q": // Show TTS queue status
@@ -712,7 +712,7 @@ func (m *ChatUI) handleTTSQueueStatus() (tea.Model, tea.Cmd) {
 		m.viewport = append(m.viewport, m.createInfoMessage("📋 Queue is empty"))
 	}
 	
-	m.viewport = append(m.viewport, m.createInfoMessage("⌨️  Controls: Ctrl+N (skip), Ctrl+I (interrupt), Ctrl+Q (status)"))
+	m.viewport = append(m.viewport, m.createInfoMessage("⌨️  Controls: Ctrl+N (skip), Ctrl+X (interrupt), Ctrl+Q (status)"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
 	return m, nil
