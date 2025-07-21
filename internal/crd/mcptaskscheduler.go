@@ -2,6 +2,8 @@
 package crd
 
 import (
+	"time"
+	
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -95,6 +97,16 @@ type MCPTaskSchedulerSpec struct {
 
 	// Scheduling configuration
 	SchedulerConfig TaskSchedulerConfig `json:"schedulerConfig,omitempty"`
+
+	// Workflow management - NEW: Unified workflow capabilities
+	Tasks     []ScheduledTask     `json:"tasks,omitempty"`
+	Workflows []WorkflowDefinition `json:"workflows,omitempty"`
+	Templates []WorkflowTemplate  `json:"templates,omitempty"`
+
+	// Global workflow configuration
+	GlobalRetryPolicy   *WorkflowRetryPolicy `json:"globalRetryPolicy,omitempty"`
+	DependencyTimeout   string              `json:"dependencyTimeout,omitempty"`
+	WorkflowHistoryLimit int32              `json:"workflowHistoryLimit,omitempty"`
 }
 
 // TaskSchedulerConfig defines task scheduler specific settings
@@ -280,6 +292,223 @@ type CustomMetric struct {
 	Selector map[string]string `json:"selector,omitempty"`
 }
 
+// ScheduledTask defines a simple cron-scheduled task
+type ScheduledTask struct {
+	// Task name
+	Name string `json:"name"`
+
+	// Cron schedule expression
+	Schedule string `json:"schedule"`
+
+	// MCP tool to execute
+	Tool string `json:"tool"`
+
+	// Parameters for the tool
+	Parameters map[string]interface{} `json:"parameters,omitempty"`
+
+	// Enable/disable task
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Task-specific retry policy
+	RetryPolicy *WorkflowRetryPolicy `json:"retryPolicy,omitempty"`
+
+	// Timeout for task execution
+	Timeout string `json:"timeout,omitempty"`
+
+	// Tags for categorization
+	Tags []string `json:"tags,omitempty"`
+
+	// Description
+	Description string `json:"description,omitempty"`
+}
+
+// WorkflowDefinition defines a multi-step workflow
+type WorkflowDefinition struct {
+	// Workflow name
+	Name string `json:"name"`
+
+	// Cron schedule expression
+	Schedule string `json:"schedule,omitempty"`
+
+	// Timezone for schedule
+	Timezone string `json:"timezone,omitempty"`
+
+	// Workflow steps
+	Steps []WorkflowStep `json:"steps"`
+
+	// Enable/disable workflow
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Concurrent execution policy
+	ConcurrencyPolicy WorkflowConcurrencyPolicy `json:"concurrencyPolicy,omitempty"`
+
+	// Global parameters for all steps
+	Parameters map[string]interface{} `json:"parameters,omitempty"`
+
+	// Workflow-level retry policy
+	RetryPolicy *WorkflowRetryPolicy `json:"retryPolicy,omitempty"`
+
+	// Maximum workflow execution timeout
+	Timeout string `json:"timeout,omitempty"`
+
+	// Tags for categorization
+	Tags []string `json:"tags,omitempty"`
+
+	// Description
+	Description string `json:"description,omitempty"`
+
+	// Event triggers for this workflow
+	EventTriggers []EventTrigger `json:"eventTriggers,omitempty"`
+
+	// Manual execution allowed
+	ManualExecution bool `json:"manualExecution,omitempty"`
+
+	// Success/failure job history limits
+	SuccessfulJobsHistoryLimit *int32 `json:"successfulJobsHistoryLimit,omitempty"`
+	FailedJobsHistoryLimit     *int32 `json:"failedJobsHistoryLimit,omitempty"`
+}
+
+// WorkflowStep defines a single step in a unified workflow (consolidated into Task Scheduler)
+type WorkflowStep struct {
+	// Step name
+	Name string `json:"name"`
+
+	// MCP tool to execute
+	Tool string `json:"tool"`
+
+	// Parameters for the tool (supports templating)
+	Parameters map[string]interface{} `json:"parameters,omitempty"`
+
+	// Step dependencies (must complete first)
+	DependsOn []string `json:"dependsOn,omitempty"`
+
+	// Condition for execution (template expression)
+	Condition string `json:"condition,omitempty"`
+
+	// When to run this step
+	RunPolicy WorkflowRunPolicy `json:"runPolicy,omitempty"`
+
+	// Continue workflow if this step fails
+	ContinueOnError bool `json:"continueOnError,omitempty"`
+
+	// Step timeout (duration string like "5m", "1h")
+	Timeout string `json:"timeout,omitempty"`
+
+	// Step-specific retry policy
+	RetryPolicy *WorkflowRetryPolicy `json:"retryPolicy,omitempty"`
+
+	// Step description
+	Description string `json:"description,omitempty"`
+}
+
+// WorkflowTemplate defines a reusable workflow template
+type WorkflowTemplate struct {
+	// Template name
+	Name string `json:"name"`
+
+	// Template category
+	Category string `json:"category,omitempty"`
+
+	// Template description
+	Description string `json:"description,omitempty"`
+
+	// Template parameters
+	Parameters []TemplateParameter `json:"parameters,omitempty"`
+
+	// Workflow definition
+	Workflow WorkflowDefinition `json:"workflow"`
+
+	// Template tags
+	Tags []string `json:"tags,omitempty"`
+
+	// Template version
+	Version string `json:"version,omitempty"`
+}
+
+// TemplateParameter defines a parameter for a workflow template
+type TemplateParameter struct {
+	// Parameter name
+	Name string `json:"name"`
+
+	// Parameter type (string, int, bool, array, object)
+	Type string `json:"type,omitempty"`
+
+	// Parameter description
+	Description string `json:"description,omitempty"`
+
+	// Whether parameter is required
+	Required bool `json:"required,omitempty"`
+
+	// Default value
+	Default interface{} `json:"default,omitempty"`
+
+	// Validation pattern (for strings)
+	Pattern string `json:"pattern,omitempty"`
+
+	// Min/max values (for numbers)
+	Minimum *float64 `json:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty"`
+
+	// Allowed values
+	Enum []interface{} `json:"enum,omitempty"`
+}
+
+// WorkflowRetryPolicy defines retry behavior for workflows and steps
+type WorkflowRetryPolicy struct {
+	// Maximum number of retries
+	MaxRetries int32 `json:"maxRetries,omitempty"`
+
+	// Initial retry delay
+	RetryDelay string `json:"retryDelay,omitempty"`
+
+	// Backoff strategy (linear, exponential, fixed)
+	BackoffStrategy WorkflowBackoffStrategy `json:"backoffStrategy,omitempty"`
+
+	// Maximum retry delay (for exponential backoff)
+	MaxRetryDelay string `json:"maxRetryDelay,omitempty"`
+
+	// Multiplier for exponential backoff
+	BackoffMultiplier float64 `json:"backoffMultiplier,omitempty"`
+}
+
+// WorkflowConcurrencyPolicy defines how concurrent executions are handled
+type WorkflowConcurrencyPolicy string
+
+const (
+	// Allow concurrent executions
+	WorkflowConcurrencyAllow WorkflowConcurrencyPolicy = "Allow"
+	// Forbid concurrent executions, skip new execution
+	WorkflowConcurrencyForbid WorkflowConcurrencyPolicy = "Forbid"
+	// Replace running execution with new one
+	WorkflowConcurrencyReplace WorkflowConcurrencyPolicy = "Replace"
+)
+
+// WorkflowRunPolicy defines when a step should run
+type WorkflowRunPolicy string
+
+const (
+	// Always run the step
+	WorkflowRunAlways WorkflowRunPolicy = "Always"
+	// Run only if previous steps succeeded
+	WorkflowRunOnSuccess WorkflowRunPolicy = "OnSuccess"
+	// Run only if previous steps failed
+	WorkflowRunOnFailure WorkflowRunPolicy = "OnFailure"
+	// Run based on condition evaluation
+	WorkflowRunOnCondition WorkflowRunPolicy = "OnCondition"
+)
+
+// WorkflowBackoffStrategy defines retry backoff strategies
+type WorkflowBackoffStrategy string
+
+const (
+	// Linear backoff (constant delay)
+	WorkflowBackoffLinear WorkflowBackoffStrategy = "Linear"
+	// Exponential backoff
+	WorkflowBackoffExponential WorkflowBackoffStrategy = "Exponential"
+	// Fixed delay
+	WorkflowBackoffFixed WorkflowBackoffStrategy = "Fixed"
+)
+
 // MCPTaskSchedulerStatus defines the observed state of MCPTaskScheduler
 type MCPTaskSchedulerStatus struct {
 	// Phase represents the current phase of the MCPTaskScheduler
@@ -296,6 +525,12 @@ type MCPTaskSchedulerStatus struct {
 
 	// Task statistics
 	TaskStats TaskStatistics `json:"taskStats,omitempty"`
+
+	// Workflow statistics
+	WorkflowStats WorkflowStatistics `json:"workflowStats,omitempty"`
+
+	// Workflow execution history (most recent 10 executions per workflow)
+	WorkflowExecutions []WorkflowExecution `json:"workflowExecutions,omitempty"`
 
 	// Deployment status
 	Replicas      int32 `json:"replicas,omitempty"`
@@ -320,6 +555,22 @@ type TaskStatistics struct {
 	ScheduledTasks  int64 `json:"scheduledTasks,omitempty"`
 	LastTaskTime    string `json:"lastTaskTime,omitempty"`
 	AverageTaskTime string `json:"averageTaskTime,omitempty"`
+}
+
+// WorkflowStatistics represents workflow execution statistics
+type WorkflowStatistics struct {
+	TotalWorkflows         int64 `json:"totalWorkflows,omitempty"`
+	CompletedWorkflows     int64 `json:"completedWorkflows,omitempty"`
+	FailedWorkflows        int64 `json:"failedWorkflows,omitempty"`
+	RunningWorkflows       int64 `json:"runningWorkflows,omitempty"`
+	ScheduledWorkflows     int64 `json:"scheduledWorkflows,omitempty"`
+	LastWorkflowTime       string `json:"lastWorkflowTime,omitempty"`
+	AverageWorkflowTime    string `json:"averageWorkflowTime,omitempty"`
+	TotalSteps             int64 `json:"totalSteps,omitempty"`
+	CompletedSteps         int64 `json:"completedSteps,omitempty"`
+	FailedSteps            int64 `json:"failedSteps,omitempty"`
+	SkippedSteps           int64 `json:"skippedSteps,omitempty"`
+	AverageStepsPerWorkflow float64 `json:"averageStepsPerWorkflow,omitempty"`
 }
 
 // MCPTaskSchedulerPhase represents the phase of an MCPTaskScheduler
@@ -383,6 +634,74 @@ func (m *MCPTaskSchedulerList) GroupVersionKind() schema.GroupVersionKind {
 }
 
 // DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+// WorkflowExecution represents a single execution instance of a workflow
+type WorkflowExecution struct {
+	// Execution ID (unique)
+	ID string `json:"id"`
+
+	// Workflow name
+	WorkflowName string `json:"workflowName"`
+
+	// Execution start time
+	StartTime time.Time `json:"startTime"`
+
+	// Execution end time (if completed)
+	EndTime *time.Time `json:"endTime,omitempty"`
+
+	// Execution duration (if completed)
+	Duration *time.Duration `json:"duration,omitempty"`
+
+	// Current phase of the execution
+	Phase WorkflowPhase `json:"phase"`
+
+	// Human-readable message describing current state
+	Message string `json:"message,omitempty"`
+
+	// Results from each step
+	StepResults map[string]StepResult `json:"stepResults,omitempty"`
+}
+
+// WorkflowPhase represents the phase of a workflow execution
+type WorkflowPhase string
+
+const (
+	WorkflowPhasePending   WorkflowPhase = "Pending"
+	WorkflowPhaseRunning   WorkflowPhase = "Running"
+	WorkflowPhaseSucceeded WorkflowPhase = "Succeeded"
+	WorkflowPhaseFailed    WorkflowPhase = "Failed"
+	WorkflowPhaseCancelled WorkflowPhase = "Cancelled"
+)
+
+// StepResult represents the result of a single workflow step execution
+type StepResult struct {
+	// Current phase of the step
+	Phase StepPhase `json:"phase"`
+
+	// Step output (if successful)
+	Output interface{} `json:"output,omitempty"`
+
+	// Error message (if failed)
+	Error string `json:"error,omitempty"`
+
+	// Step execution duration
+	Duration time.Duration `json:"duration"`
+
+	// Number of attempts made
+	Attempts int32 `json:"attempts"`
+}
+
+// StepPhase represents the phase of a workflow step execution
+type StepPhase string
+
+const (
+	StepPhasePending   StepPhase = "Pending"
+	StepPhaseRunning   StepPhase = "Running"
+	StepPhaseSucceeded StepPhase = "Succeeded"
+	StepPhaseFailed    StepPhase = "Failed"
+	StepPhaseSkipped   StepPhase = "Skipped"
+	StepPhaseRetrying  StepPhase = "Retrying"
+)
+
 func (in *MCPTaskScheduler) DeepCopyInto(out *MCPTaskScheduler) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
@@ -511,6 +830,34 @@ func (in *MCPTaskSchedulerSpec) DeepCopyInto(out *MCPTaskSchedulerSpec) {
 		(*in).DeepCopyInto(*out)
 	}
 	in.SchedulerConfig.DeepCopyInto(&out.SchedulerConfig)
+	
+	// Copy new workflow fields
+	if in.Tasks != nil {
+		in, out := &in.Tasks, &out.Tasks
+		*out = make([]ScheduledTask, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.Workflows != nil {
+		in, out := &in.Workflows, &out.Workflows
+		*out = make([]WorkflowDefinition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.Templates != nil {
+		in, out := &in.Templates, &out.Templates
+		*out = make([]WorkflowTemplate, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.GlobalRetryPolicy != nil {
+		in, out := &in.GlobalRetryPolicy, &out.GlobalRetryPolicy
+		*out = new(WorkflowRetryPolicy)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 func (in *MCPTaskSchedulerSpec) DeepCopy() *MCPTaskSchedulerSpec {
@@ -537,6 +884,14 @@ func (in *MCPTaskSchedulerStatus) DeepCopyInto(out *MCPTaskSchedulerStatus) {
 		**out = **in
 	}
 	in.TaskStats.DeepCopyInto(&out.TaskStats)
+	in.WorkflowStats.DeepCopyInto(&out.WorkflowStats)
+	if in.WorkflowExecutions != nil {
+		in, out := &in.WorkflowExecutions, &out.WorkflowExecutions
+		*out = make([]WorkflowExecution, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.ServiceEndpoints != nil {
 		in, out := &in.ServiceEndpoints, &out.ServiceEndpoints
 		*out = make([]ServiceEndpoint, len(*in))
@@ -828,6 +1183,245 @@ func (in *CustomMetric) DeepCopy() *CustomMetric {
 		return nil
 	}
 	out := new(CustomMetric)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopy methods for new workflow structs
+func (in *ScheduledTask) DeepCopyInto(out *ScheduledTask) {
+	*out = *in
+	if in.Parameters != nil {
+		in, out := &in.Parameters, &out.Parameters
+		*out = make(map[string]interface{}, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.RetryPolicy != nil {
+		in, out := &in.RetryPolicy, &out.RetryPolicy
+		*out = new(WorkflowRetryPolicy)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Tags != nil {
+		in, out := &in.Tags, &out.Tags
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *ScheduledTask) DeepCopy() *ScheduledTask {
+	if in == nil {
+		return nil
+	}
+	out := new(ScheduledTask)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *WorkflowDefinition) DeepCopyInto(out *WorkflowDefinition) {
+	*out = *in
+	if in.Steps != nil {
+		in, out := &in.Steps, &out.Steps
+		*out = make([]WorkflowStep, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.Parameters != nil {
+		in, out := &in.Parameters, &out.Parameters
+		*out = make(map[string]interface{}, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.RetryPolicy != nil {
+		in, out := &in.RetryPolicy, &out.RetryPolicy
+		*out = new(WorkflowRetryPolicy)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.Tags != nil {
+		in, out := &in.Tags, &out.Tags
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.EventTriggers != nil {
+		in, out := &in.EventTriggers, &out.EventTriggers
+		*out = make([]EventTrigger, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.SuccessfulJobsHistoryLimit != nil {
+		in, out := &in.SuccessfulJobsHistoryLimit, &out.SuccessfulJobsHistoryLimit
+		*out = new(int32)
+		**out = **in
+	}
+	if in.FailedJobsHistoryLimit != nil {
+		in, out := &in.FailedJobsHistoryLimit, &out.FailedJobsHistoryLimit
+		*out = new(int32)
+		**out = **in
+	}
+}
+
+func (in *WorkflowDefinition) DeepCopy() *WorkflowDefinition {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowDefinition)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *WorkflowStep) DeepCopyInto(out *WorkflowStep) {
+	*out = *in
+	if in.Parameters != nil {
+		in, out := &in.Parameters, &out.Parameters
+		*out = make(map[string]interface{}, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.DependsOn != nil {
+		in, out := &in.DependsOn, &out.DependsOn
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.RetryPolicy != nil {
+		in, out := &in.RetryPolicy, &out.RetryPolicy
+		*out = new(WorkflowRetryPolicy)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+func (in *WorkflowStep) DeepCopy() *WorkflowStep {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowStep)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *WorkflowTemplate) DeepCopyInto(out *WorkflowTemplate) {
+	*out = *in
+	if in.Parameters != nil {
+		in, out := &in.Parameters, &out.Parameters
+		*out = make([]TemplateParameter, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	in.Workflow.DeepCopyInto(&out.Workflow)
+	if in.Tags != nil {
+		in, out := &in.Tags, &out.Tags
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *WorkflowTemplate) DeepCopy() *WorkflowTemplate {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowTemplate)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *TemplateParameter) DeepCopyInto(out *TemplateParameter) {
+	*out = *in
+	if in.Minimum != nil {
+		in, out := &in.Minimum, &out.Minimum
+		*out = new(float64)
+		**out = **in
+	}
+	if in.Maximum != nil {
+		in, out := &in.Maximum, &out.Maximum
+		*out = new(float64)
+		**out = **in
+	}
+	if in.Enum != nil {
+		in, out := &in.Enum, &out.Enum
+		*out = make([]interface{}, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *TemplateParameter) DeepCopy() *TemplateParameter {
+	if in == nil {
+		return nil
+	}
+	out := new(TemplateParameter)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *WorkflowRetryPolicy) DeepCopyInto(out *WorkflowRetryPolicy) {
+	*out = *in
+}
+
+func (in *WorkflowRetryPolicy) DeepCopy() *WorkflowRetryPolicy {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowRetryPolicy)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *WorkflowStatistics) DeepCopyInto(out *WorkflowStatistics) {
+	*out = *in
+}
+
+func (in *WorkflowStatistics) DeepCopy() *WorkflowStatistics {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowStatistics)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopy methods for new workflow execution types
+func (in *WorkflowExecution) DeepCopyInto(out *WorkflowExecution) {
+	*out = *in
+	if in.EndTime != nil {
+		in, out := &in.EndTime, &out.EndTime
+		*out = new(time.Time)
+		**out = **in
+	}
+	if in.Duration != nil {
+		in, out := &in.Duration, &out.Duration
+		*out = new(time.Duration)
+		**out = **in
+	}
+	if in.StepResults != nil {
+		in, out := &in.StepResults, &out.StepResults
+		*out = make(map[string]StepResult, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+}
+
+func (in *WorkflowExecution) DeepCopy() *WorkflowExecution {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowExecution)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *StepResult) DeepCopyInto(out *StepResult) {
+	*out = *in
+}
+
+func (in *StepResult) DeepCopy() *StepResult {
+	if in == nil {
+		return nil
+	}
+	out := new(StepResult)
 	in.DeepCopyInto(out)
 	return out
 }

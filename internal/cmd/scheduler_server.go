@@ -66,10 +66,53 @@ Examples:
 			
 			// Create the cron and workflow engines
 			cronEngine := scheduler.NewCronEngine(logr.WithName("cron"))
-			workflowEngine := scheduler.NewWorkflowEngine(logr.WithName("workflow"))
+			
+			// Get MCP proxy configuration with Kubernetes service discovery
+			var mcpProxyURL, mcpProxyAPIKey string
+			
+			if cfg.TaskScheduler != nil {
+				mcpProxyURL = cfg.TaskScheduler.MCPProxyURL
+				mcpProxyAPIKey = cfg.TaskScheduler.MCPProxyAPIKey
+			}
+			
+			// If no proxy URL configured, try Kubernetes service discovery
+			if mcpProxyURL == "" {
+				namespace, _ := cmd.Flags().GetString("namespace")
+				if namespace == "" {
+					namespace = "default"
+				}
+				// Use Kubernetes service DNS for proxy discovery
+				mcpProxyURL = fmt.Sprintf("http://matey-proxy.%s.svc.cluster.local:9876", namespace)
+				logger.Info("Using Kubernetes service discovery for MCP proxy", "url", mcpProxyURL)
+			}
+			
+			workflowEngine := scheduler.NewWorkflowEngine(mcpProxyURL, mcpProxyAPIKey, logr.WithName("workflow"))
 			
 			// Create the MCP tool server
 			toolServer := scheduler.NewMCPToolServer(cronEngine, workflowEngine, logr.WithName("scheduler"))
+
+			// Set up Kubernetes client for CRD access
+			namespace, _ := cmd.Flags().GetString("namespace")
+			if namespace == "" {
+				namespace = "default"
+			}
+
+			k8sClient, err := createK8sClientWithScheme()
+			var workflowScheduler *scheduler.WorkflowScheduler
+			if err != nil {
+				logger.Warning("Failed to create Kubernetes client, workflow CRD management will be disabled: %v", err)
+			} else {
+				toolServer.SetK8sClient(k8sClient, namespace)
+				logger.Info("Kubernetes client configured for workflow management")
+				
+				// Create and start workflow scheduler for automated workflow execution
+				workflowScheduler = scheduler.NewWorkflowScheduler(cronEngine, workflowEngine, k8sClient, namespace, logr.WithName("workflow-scheduler"))
+				if err := workflowScheduler.Start(); err != nil {
+					logger.Error("Failed to start workflow scheduler: %v", err)
+				} else {
+					logger.Info("Workflow scheduler started successfully")
+				}
+			}
 			
 			// Create the MCP server
 			mcpServer := scheduler.NewMCPServer(toolServer, logr.WithName("mcp"))
@@ -104,6 +147,12 @@ Examples:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			
+			// Stop workflow scheduler if it was started
+			if workflowScheduler != nil {
+				logger.Info("Stopping workflow scheduler...")
+				workflowScheduler.Stop()
+			}
+			
 			if err := server.Shutdown(ctx); err != nil {
 				logger.Error("Failed to gracefully shutdown server: %v", err)
 				return err
@@ -119,3 +168,4 @@ Examples:
 
 	return cmd
 }
+

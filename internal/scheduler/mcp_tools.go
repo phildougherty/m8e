@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/phildougherty/m8e/internal/crd"
 )
 
 // MCPToolServer provides MCP protocol tools for task scheduler management
@@ -15,6 +19,8 @@ type MCPToolServer struct {
 	cronEngine     *CronEngine
 	workflowEngine *WorkflowEngine
 	templateRegistry *TemplateRegistry
+	k8sClient      client.Client // NEW: Kubernetes client for CRD access
+	namespace      string        // NEW: Kubernetes namespace
 	logger         logr.Logger
 }
 
@@ -23,7 +29,16 @@ func NewMCPToolServer(cronEngine *CronEngine, workflowEngine *WorkflowEngine, lo
 		cronEngine:       cronEngine,
 		workflowEngine:   workflowEngine,
 		templateRegistry: NewTemplateRegistry(),
+		namespace:        "default", // Default namespace
 		logger:           logger,
+	}
+}
+
+// SetK8sClient sets the Kubernetes client and namespace for CRD access
+func (mts *MCPToolServer) SetK8sClient(client client.Client, namespace string) {
+	mts.k8sClient = client
+	if namespace != "" {
+		mts.namespace = namespace
 	}
 }
 
@@ -267,6 +282,159 @@ func (mts *MCPToolServer) GetMCPTools() []MCPToolDefinition {
 				},
 			},
 		},
+		// NEW: Workflow Management Tools
+		{
+			Name:        "create_workflow",
+			Description: "Create a new workflow in the MCPTaskScheduler CRD",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"schedule": map[string]interface{}{
+						"type":        "string",
+						"description": "Cron schedule expression (optional)",
+					},
+					"steps": map[string]interface{}{
+						"type":        "array",
+						"description": "Workflow steps",
+						"items": map[string]interface{}{
+							"type": "object",
+						},
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name", "steps"},
+			},
+		},
+		{
+			Name:        "list_workflows",
+			Description: "List all workflows from MCPTaskScheduler CRD",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+					"enabled_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Only return enabled workflows",
+						"default":     false,
+					},
+				},
+			},
+		},
+		{
+			Name:        "get_workflow",
+			Description: "Get a specific workflow by name from MCPTaskScheduler CRD",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "execute_workflow",
+			Description: "Execute a workflow immediately (bypass schedule)",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"parameters": map[string]interface{}{
+						"type":        "object",
+						"description": "Runtime parameters",
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "pause_workflow",
+			Description: "Pause a running workflow",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "resume_workflow",
+			Description: "Resume a paused workflow",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "get_workflow_status",
+			Description: "Get detailed status of a workflow execution",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"run_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Specific run ID (optional)",
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
 		{
 			Name:        "get_template",
 			Description: "Get details of a specific workflow template",
@@ -336,6 +504,21 @@ func (mts *MCPToolServer) ExecuteMCPTool(ctx context.Context, toolName string, p
 		return mts.listTemplates(ctx, parameters)
 	case "get_template":
 		return mts.getTemplate(ctx, parameters)
+	// NEW: Workflow management tools
+	case "create_workflow":
+		return mts.createWorkflow(ctx, parameters)
+	case "list_workflows":
+		return mts.listWorkflows(ctx, parameters)
+	case "get_workflow":
+		return mts.getWorkflow(ctx, parameters)
+	case "execute_workflow":
+		return mts.executeWorkflow(ctx, parameters)
+	case "pause_workflow":
+		return mts.pauseWorkflow(ctx, parameters)
+	case "resume_workflow":
+		return mts.resumeWorkflow(ctx, parameters)
+	case "get_workflow_status":
+		return mts.getWorkflowStatus(ctx, parameters)
 	case "health_check":
 		return mts.healthCheck(ctx, parameters)
 	case "get_metrics":
@@ -594,35 +777,141 @@ func (mts *MCPToolServer) runTask(ctx context.Context, params map[string]interfa
 }
 
 func (mts *MCPToolServer) listRunStatus(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
-	// For now, return mock data - in a real implementation this would query execution history
+	if mts.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	limit := 10
+	if l, ok := params["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	taskName := ""
+	if name, ok := params["task_name"].(string); ok {
+		taskName = name
+	}
+
+	// Get the MCPTaskScheduler resource to get execution history
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Get execution history from status
+	runs := make([]map[string]interface{}, 0)
+	for _, execution := range taskScheduler.Status.WorkflowExecutions {
+		if taskName != "" && execution.WorkflowName != taskName {
+			continue
+		}
+
+		runInfo := map[string]interface{}{
+			"id":        execution.ID,
+			"task_name": execution.WorkflowName,
+			"status":    string(execution.Phase),
+			"start_time": execution.StartTime.Format(time.RFC3339),
+		}
+
+		if execution.EndTime != nil {
+			runInfo["end_time"] = execution.EndTime.Format(time.RFC3339)
+			if execution.Duration != nil {
+				runInfo["duration"] = execution.Duration.String()
+			}
+		}
+
+		if execution.Message != "" {
+			runInfo["message"] = execution.Message
+		}
+
+		runs = append(runs, runInfo)
+
+		if len(runs) >= limit {
+			break
+		}
+	}
+
 	return map[string]interface{}{
-		"runs": []map[string]interface{}{
-			{
-				"id":         "run-1",
-				"task_name":  "example-task",
-				"status":     "success",
-				"start_time": time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
-				"end_time":   time.Now().Add(-55 * time.Minute).Format(time.RFC3339),
-				"duration":   "5m0s",
-			},
-		},
-		"count": 1,
+		"runs":  runs,
+		"count": len(runs),
 	}, nil
 }
 
 func (mts *MCPToolServer) getRunOutput(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+
 	runID, ok := params["run_id"].(string)
 	if !ok {
 		return nil, fmt.Errorf("run_id parameter is required")
 	}
 
-	// For now, return mock data
-	return map[string]interface{}{
-		"run_id": runID,
-		"output": "Mock task output",
-		"logs":   "Mock task logs",
-		"status": "success",
-	}, nil
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Get the MCPTaskScheduler resource
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Find the specific execution
+	for _, execution := range taskScheduler.Status.WorkflowExecutions {
+		if execution.ID == runID {
+			result := map[string]interface{}{
+				"run_id":     runID,
+				"status":     string(execution.Phase),
+				"start_time": execution.StartTime.Format(time.RFC3339),
+				"steps":      make([]map[string]interface{}, 0),
+			}
+
+			if execution.EndTime != nil {
+				result["end_time"] = execution.EndTime.Format(time.RFC3339)
+				if execution.Duration != nil {
+					result["duration"] = execution.Duration.String()
+				}
+			}
+
+			if execution.Message != "" {
+				result["message"] = execution.Message
+			}
+
+			// Get step results
+			steps := make([]map[string]interface{}, 0, len(execution.StepResults))
+			for stepName, stepResult := range execution.StepResults {
+				stepInfo := map[string]interface{}{
+					"name":     stepName,
+					"status":   string(stepResult.Phase),
+					"output":   stepResult.Output,
+					"duration": stepResult.Duration.String(),
+					"attempts": stepResult.Attempts,
+				}
+				if stepResult.Error != "" {
+					stepInfo["error"] = stepResult.Error
+				}
+				steps = append(steps, stepInfo)
+			}
+			result["steps"] = steps
+
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("run %s not found", runID)
 }
 
 func (mts *MCPToolServer) listTemplates(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
@@ -718,4 +1007,406 @@ func (mts *MCPToolServer) getMetrics(ctx context.Context, params map[string]inte
 			"status": "healthy",
 		},
 	}, nil
+}
+
+// NEW: Workflow Management Tool Implementations
+
+func (mts *MCPToolServer) createWorkflow(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	steps, ok := params["steps"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("steps parameter is required")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Get the MCPTaskScheduler resource
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Convert steps interface{} to WorkflowStep structs
+	workflowSteps := make([]crd.WorkflowStep, 0, len(steps))
+	for i, stepInterface := range steps {
+		stepMap, ok := stepInterface.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("step %d is not a valid object", i)
+		}
+
+		step := crd.WorkflowStep{
+			Name: fmt.Sprintf("%v", stepMap["name"]),
+		}
+		
+		// Set tool to execute
+		if tool, ok := stepMap["tool"].(string); ok {
+			step.Tool = tool
+		} else {
+			// Default to echo tool for demo
+			step.Tool = "echo"
+		}
+		
+		// Set parameters
+		if params, ok := stepMap["parameters"].(map[string]interface{}); ok {
+			step.Parameters = params
+		}
+		
+		workflowSteps = append(workflowSteps, step)
+	}
+
+	// Create the workflow definition
+	workflow := crd.WorkflowDefinition{
+		Name:    name,
+		Enabled: true,
+		Steps:   workflowSteps,
+	}
+
+	// Set schedule if provided
+	if schedule, ok := params["schedule"].(string); ok {
+		workflow.Schedule = schedule
+	}
+
+	// Add to workflows list
+	taskScheduler.Spec.Workflows = append(taskScheduler.Spec.Workflows, workflow)
+
+	// Update the resource
+	err = mts.k8sClient.Update(ctx, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update MCPTaskScheduler: %w", err)
+	}
+
+	mts.logger.Info("Created workflow", "name", name, "namespace", namespace)
+
+	return map[string]interface{}{
+		"name":      name,
+		"namespace": namespace,
+		"steps":     len(workflowSteps),
+		"message":   "Workflow created successfully",
+	}, nil
+}
+
+func (mts *MCPToolServer) listWorkflows(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	enabledOnly := false
+	if enabled, ok := params["enabled_only"].(bool); ok {
+		enabledOnly = enabled
+	}
+
+	// Get the MCPTaskScheduler resource
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	workflows := make([]map[string]interface{}, 0)
+	for _, workflow := range taskScheduler.Spec.Workflows {
+		if enabledOnly && !workflow.Enabled {
+			continue
+		}
+
+		workflowInfo := map[string]interface{}{
+			"name":         workflow.Name,
+			"enabled":      workflow.Enabled,
+			"steps":        len(workflow.Steps),
+			"schedule":     workflow.Schedule,
+			"retry_policy": workflow.RetryPolicy != nil,
+		}
+
+		if workflow.Timeout != "" {
+			workflowInfo["timeout"] = workflow.Timeout
+		}
+
+		workflows = append(workflows, workflowInfo)
+	}
+
+	return map[string]interface{}{
+		"workflows": workflows,
+		"count":     len(workflows),
+		"namespace": namespace,
+	}, nil
+}
+
+func (mts *MCPToolServer) getWorkflow(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Get the MCPTaskScheduler resource
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Find the workflow
+	for _, workflow := range taskScheduler.Spec.Workflows {
+		if workflow.Name == name {
+			// Convert to JSON-serializable format
+			workflowJSON, err := json.Marshal(workflow)
+			if err != nil {
+				return nil, fmt.Errorf("failed to serialize workflow: %w", err)
+			}
+
+			var result map[string]interface{}
+			if err := json.Unmarshal(workflowJSON, &result); err != nil {
+				return nil, fmt.Errorf("failed to deserialize workflow: %w", err)
+			}
+
+			result["namespace"] = namespace
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("workflow %s not found", name)
+}
+
+func (mts *MCPToolServer) executeWorkflow(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.workflowEngine == nil {
+		return nil, fmt.Errorf("workflow engine not configured")
+	}
+
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Get the workflow definition from CRD
+	workflowData, err := mts.getWorkflow(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow: %w", err)
+	}
+
+	// Convert back to WorkflowDefinition for execution
+	workflowJSON, err := json.Marshal(workflowData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize workflow data: %w", err)
+	}
+
+	var workflow crd.WorkflowDefinition
+	if err := json.Unmarshal(workflowJSON, &workflow); err != nil {
+		return nil, fmt.Errorf("failed to deserialize workflow: %w", err)
+	}
+
+	// Execute the workflow using workflow engine
+	execution, err := mts.workflowEngine.ExecuteWorkflow(ctx, &workflow, name, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute workflow: %w", err)
+	}
+
+	runID := execution.ID
+
+	mts.logger.Info("Executed workflow", "name", name, "runID", runID)
+
+	return map[string]interface{}{
+		"name":      name,
+		"run_id":    runID,
+		"status":    "started",
+		"message":   "Workflow execution started successfully",
+		"namespace": namespace,
+	}, nil
+}
+
+func (mts *MCPToolServer) pauseWorkflow(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.workflowEngine == nil {
+		return nil, fmt.Errorf("workflow engine not configured")
+	}
+
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Update the workflow in the CRD to set enabled=false
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Find and pause the workflow
+	for i, workflow := range taskScheduler.Spec.Workflows {
+		if workflow.Name == name {
+			taskScheduler.Spec.Workflows[i].Enabled = false
+			err = mts.k8sClient.Update(ctx, taskScheduler)
+			if err != nil {
+				return nil, fmt.Errorf("failed to pause workflow: %w", err)
+			}
+			mts.logger.Info("Paused workflow", "name", name)
+			break
+		}
+	}
+
+	mts.logger.Info("Paused workflow", "name", name)
+
+	return map[string]interface{}{
+		"name":      name,
+		"status":    "paused",
+		"message":   "Workflow paused successfully",
+		"namespace": namespace,
+	}, nil
+}
+
+func (mts *MCPToolServer) resumeWorkflow(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.workflowEngine == nil {
+		return nil, fmt.Errorf("workflow engine not configured")
+	}
+
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Update the workflow in the CRD to set enabled=true
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Find and resume the workflow
+	for i, workflow := range taskScheduler.Spec.Workflows {
+		if workflow.Name == name {
+			taskScheduler.Spec.Workflows[i].Enabled = true
+			err = mts.k8sClient.Update(ctx, taskScheduler)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resume workflow: %w", err)
+			}
+			mts.logger.Info("Resumed workflow", "name", name)
+			break
+		}
+	}
+
+	mts.logger.Info("Resumed workflow", "name", name)
+
+	return map[string]interface{}{
+		"name":      name,
+		"status":    "running",
+		"message":   "Workflow resumed successfully",
+		"namespace": namespace,
+	}, nil
+}
+
+func (mts *MCPToolServer) getWorkflowStatus(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	if mts.workflowEngine == nil {
+		return nil, fmt.Errorf("workflow engine not configured")
+	}
+
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	namespace := mts.namespace
+	if ns, ok := params["namespace"].(string); ok {
+		namespace = ns
+	}
+
+	// Get the MCPTaskScheduler resource to check status
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Find the workflow and get its current status
+	for _, workflow := range taskScheduler.Spec.Workflows {
+		if workflow.Name == name {
+			result := map[string]interface{}{
+				"name":      name,
+				"namespace": namespace,
+				"enabled":   workflow.Enabled,
+				"schedule":  workflow.Schedule,
+				"steps":     len(workflow.Steps),
+				"executions": []map[string]interface{}{},
+			}
+
+			// Get recent executions for this workflow
+			executions := make([]map[string]interface{}, 0)
+			for _, execution := range taskScheduler.Status.WorkflowExecutions {
+				if execution.WorkflowName == name {
+					execInfo := map[string]interface{}{
+						"id":        execution.ID,
+						"status":    string(execution.Phase),
+						"start_time": execution.StartTime.Format(time.RFC3339),
+					}
+					if execution.EndTime != nil {
+						execInfo["end_time"] = execution.EndTime.Format(time.RFC3339)
+					}
+					if execution.Message != "" {
+						execInfo["message"] = execution.Message
+					}
+					executions = append(executions, execInfo)
+				}
+			}
+			result["executions"] = executions
+
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("workflow %s not found", name)
 }

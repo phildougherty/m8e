@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/phildougherty/m8e/internal/crd"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ToolExecutorInterface defines the interface for executing tools
@@ -31,7 +30,7 @@ type StepExecutionResult struct {
 }
 
 type WorkflowEngine struct {
-	// toolExecutor   ToolExecutorInterface
+	toolExecutor   *ToolExecutor
 	templateEngine *TemplateEngine
 	logger         logr.Logger
 }
@@ -85,7 +84,7 @@ const (
 )
 
 type WorkflowExecutionContext struct {
-	WorkflowSpec      *crd.WorkflowSpec
+	WorkflowDefinition *crd.WorkflowDefinition
 	ExecutionTimeout  time.Duration
 	StepOutputs       map[string]interface{}
 	FailureThreshold  int
@@ -93,15 +92,15 @@ type WorkflowExecutionContext struct {
 	ContinueOnFailure bool
 }
 
-func NewWorkflowEngine(/* toolExecutor ToolExecutorInterface, */ logger logr.Logger) *WorkflowEngine {
+func NewWorkflowEngine(mcpProxyURL, mcpProxyAPIKey string, logger logr.Logger) *WorkflowEngine {
 	return &WorkflowEngine{
-		// toolExecutor:   toolExecutor,
+		toolExecutor:   NewToolExecutor(mcpProxyURL, mcpProxyAPIKey, logger),
 		templateEngine: NewTemplateEngine(logger),
 		logger:         logger,
 	}
 }
 
-func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowSpec *crd.WorkflowSpec, workflowName, workflowNamespace string) (*WorkflowExecution, error) {
+func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowDefinition *crd.WorkflowDefinition, workflowName, workflowNamespace string) (*WorkflowExecution, error) {
 	executionID := fmt.Sprintf("%s-%d", workflowName, time.Now().Unix())
 	
 	execution := &WorkflowExecution{
@@ -110,18 +109,23 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowSpec *crd
 		WorkflowNamespace: workflowNamespace,
 		StartTime:         time.Now(),
 		Status:            WorkflowExecutionStatusRunning,
-		Steps:             make([]StepExecution, 0, len(workflowSpec.Steps)),
+		Steps:             make([]StepExecution, 0, len(workflowDefinition.Steps)),
 		Context: &WorkflowExecutionContext{
-			WorkflowSpec:      workflowSpec,
+			WorkflowDefinition: workflowDefinition,
 			StepOutputs:       make(map[string]interface{}),
-			FailureThreshold:  len(workflowSpec.Steps),
+			FailureThreshold:  len(workflowDefinition.Steps),
 			ContinueOnFailure: false,
 		},
 	}
 
 	// Set execution timeout
-	if workflowSpec.Timeout != nil {
-		execution.Context.ExecutionTimeout = workflowSpec.Timeout.Duration
+	if workflowDefinition.Timeout != "" {
+		timeout, err := time.ParseDuration(workflowDefinition.Timeout)
+		if err != nil {
+			we.logger.Info("Invalid workflow timeout format, using default", "timeout", workflowDefinition.Timeout, "error", err)
+			timeout = 30 * time.Minute
+		}
+		execution.Context.ExecutionTimeout = timeout
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, execution.Context.ExecutionTimeout)
 		defer cancel()
@@ -130,10 +134,10 @@ func (we *WorkflowEngine) ExecuteWorkflow(ctx context.Context, workflowSpec *crd
 	we.logger.Info("Starting workflow execution", 
 		"executionID", executionID, 
 		"workflow", workflowName, 
-		"steps", len(workflowSpec.Steps))
+		"steps", len(workflowDefinition.Steps))
 
 	// Build dependency graph
-	dependencyGraph, err := we.buildDependencyGraph(workflowSpec.Steps)
+	dependencyGraph, err := we.buildDependencyGraph(workflowDefinition.Steps)
 	if err != nil {
 		execution.Status = WorkflowExecutionStatusFailed
 		execution.Error = fmt.Sprintf("Failed to build dependency graph: %v", err)
@@ -235,7 +239,7 @@ func (we *WorkflowEngine) buildDependencyGraph(steps []crd.WorkflowStep) ([][]st
 
 func (we *WorkflowEngine) executeStepsInOrder(ctx context.Context, execution *WorkflowExecution, dependencyGraph [][]string) error {
 	stepMap := make(map[string]*crd.WorkflowStep)
-	for _, step := range execution.Context.WorkflowSpec.Steps {
+	for _, step := range execution.Context.WorkflowDefinition.Steps {
 		stepCopy := step
 		stepMap[step.Name] = &stepCopy
 	}
@@ -377,7 +381,11 @@ func (we *WorkflowEngine) executeStep(ctx context.Context, execution *WorkflowEx
 
 	if step.RetryPolicy != nil {
 		maxRetries = int(step.RetryPolicy.MaxRetries)
-		retryDelay = step.RetryPolicy.RetryDelay.Duration
+		if step.RetryPolicy.RetryDelay != "" {
+			if delay, err := time.ParseDuration(step.RetryPolicy.RetryDelay); err == nil {
+				retryDelay = delay
+			}
+		}
 	}
 
 	var lastError error
@@ -392,10 +400,12 @@ func (we *WorkflowEngine) executeStep(ctx context.Context, execution *WorkflowEx
 
 		// Set step timeout
 		stepCtx := ctx
-		if step.Timeout != nil {
-			var cancel context.CancelFunc
-			stepCtx, cancel = context.WithTimeout(ctx, step.Timeout.Duration)
-			defer cancel()
+		if step.Timeout != "" {
+			if timeout, err := time.ParseDuration(step.Timeout); err == nil {
+				var cancel context.CancelFunc
+				stepCtx, cancel = context.WithTimeout(ctx, timeout)
+				defer cancel()
+			}
 		}
 
 		// Create step context
@@ -408,13 +418,14 @@ func (we *WorkflowEngine) executeStep(ctx context.Context, execution *WorkflowEx
 		}
 
 		// Execute the tool
-		// TODO: Fix ToolExecutor implementation
-		result := &StepExecutionResult{Status: "skipped", Message: "ToolExecutor not implemented"}
-		err := fmt.Errorf("ToolExecutor not implemented")
-		_ = stepCtx
-		_ = stepContext
-		_ = step
-		_ = renderedParams
+		var stepTimeout time.Duration
+		if step.Timeout != "" {
+			if timeout, err := time.ParseDuration(step.Timeout); err == nil {
+				stepTimeout = timeout
+			}
+		}
+
+		result, err := we.toolExecutor.ExecuteStepWithContext(stepCtx, stepContext, step.Tool, renderedParams, stepTimeout)
 
 		if err != nil {
 			lastError = err
@@ -455,19 +466,19 @@ func (we *WorkflowEngine) executeStep(ctx context.Context, execution *WorkflowEx
 
 func (we *WorkflowEngine) shouldSkipStep(step *crd.WorkflowStep, execution *WorkflowExecution) (bool, string) {
 	switch step.RunPolicy {
-	case crd.StepRunPolicyAlways:
+	case crd.WorkflowRunAlways:
 		return false, ""
-	case crd.StepRunPolicyOnSuccess:
+	case crd.WorkflowRunOnSuccess:
 		if execution.Context.FailureCount > 0 {
 			return true, "Previous steps have failures and run policy is OnSuccess"
 		}
 		return false, ""
-	case crd.StepRunPolicyOnFailure:
+	case crd.WorkflowRunOnFailure:
 		if execution.Context.FailureCount == 0 {
 			return true, "No previous failures and run policy is OnFailure"
 		}
 		return false, ""
-	case crd.StepRunPolicyOnCondition:
+	case crd.WorkflowRunOnCondition:
 		// Will be handled by condition evaluation
 		return false, ""
 	default:
@@ -476,6 +487,8 @@ func (we *WorkflowEngine) shouldSkipStep(step *crd.WorkflowStep, execution *Work
 }
 
 // GetExecutionSummary returns a summary of the workflow execution
+// TODO: Update this to use unified WorkflowExecution type from MCPTaskScheduler
+/*
 func (we *WorkflowEngine) GetExecutionSummary(execution *WorkflowExecution) *crd.WorkflowExecution {
 	summary := &crd.WorkflowExecution{
 		ID:        execution.ID,
@@ -510,9 +523,10 @@ func (we *WorkflowEngine) GetExecutionSummary(execution *WorkflowExecution) *crd
 
 	return summary
 }
+*/
 
 // ValidateWorkflowSpec validates a workflow specification
-func (we *WorkflowEngine) ValidateWorkflowSpec(spec *crd.WorkflowSpec) error {
+func (we *WorkflowEngine) ValidateWorkflowDefinition(spec *crd.WorkflowDefinition) error {
 	if spec.Schedule == "" {
 		return fmt.Errorf("schedule is required")
 	}

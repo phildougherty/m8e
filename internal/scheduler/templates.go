@@ -4,10 +4,8 @@ package scheduler
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/phildougherty/m8e/internal/crd"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type WorkflowTemplate struct {
@@ -16,7 +14,7 @@ type WorkflowTemplate struct {
 	Category    string                `json:"category"`
 	Tags        []string              `json:"tags"`
 	Parameters  []TemplateParameter   `json:"parameters"`
-	Spec        crd.WorkflowSpec      `json:"spec"`
+	Spec        crd.WorkflowDefinition `json:"spec"`
 }
 
 type TemplateParameter struct {
@@ -91,7 +89,7 @@ func (tr *TemplateRegistry) ListTemplatesByCategory(category string) []*Workflow
 	return templates
 }
 
-func (tr *TemplateRegistry) CreateWorkflowFromTemplate(templateName string, workflowName string, parameters map[string]interface{}) (*crd.WorkflowSpec, error) {
+func (tr *TemplateRegistry) CreateWorkflowFromTemplate(templateName string, workflowName string, parameters map[string]interface{}) (*crd.WorkflowDefinition, error) {
 	template, exists := tr.GetTemplate(templateName)
 	if !exists {
 		return nil, fmt.Errorf("template %q not found", templateName)
@@ -107,11 +105,10 @@ func (tr *TemplateRegistry) CreateWorkflowFromTemplate(templateName string, work
 	}
 
 	// Create a copy of the template spec
-	spec := &crd.WorkflowSpec{
+	spec := &crd.WorkflowDefinition{
 		Schedule:                   template.Spec.Schedule,
 		Timezone:                   template.Spec.Timezone,
 		Enabled:                    template.Spec.Enabled,
-		Suspend:                    template.Spec.Suspend,
 		Steps:                      make([]crd.WorkflowStep, len(template.Spec.Steps)),
 		RetryPolicy:                template.Spec.RetryPolicy,
 		Timeout:                    template.Spec.Timeout,
@@ -143,7 +140,7 @@ func (tr *TemplateRegistry) CreateWorkflowFromTemplate(templateName string, work
 	return spec, nil
 }
 
-func (tr *TemplateRegistry) applyParameterSubstitutions(spec *crd.WorkflowSpec, templateParams []TemplateParameter, userParams map[string]interface{}) error {
+func (tr *TemplateRegistry) applyParameterSubstitutions(spec *crd.WorkflowDefinition, templateParams []TemplateParameter, userParams map[string]interface{}) error {
 	// Create parameter map with defaults
 	paramMap := make(map[string]interface{})
 	
@@ -339,7 +336,7 @@ func createHealthMonitoringTemplate() *WorkflowTemplate {
 				Default:     80,
 			},
 		},
-		Spec: crd.WorkflowSpec{
+		Spec: crd.WorkflowDefinition{
 			Schedule: "0 */6 * * *",
 			Timezone: "UTC",
 			Enabled:  true,
@@ -347,7 +344,7 @@ func createHealthMonitoringTemplate() *WorkflowTemplate {
 				{
 					Name: "check-glucose",
 					Tool: "get_current_glucose",
-					Timeout: &metav1.Duration{Duration: 30 * time.Second},
+					Timeout: "30s",
 				},
 				{
 					Name: "analyze-trend",
@@ -359,7 +356,7 @@ func createHealthMonitoringTemplate() *WorkflowTemplate {
 						"low_threshold":   "{{.glucose_threshold_low}}",
 					},
 					DependsOn: []string{"check-glucose"},
-					Timeout:   &metav1.Duration{Duration: 60 * time.Second},
+					Timeout: "1m",
 				},
 				{
 					Name: "send-alert",
@@ -371,15 +368,16 @@ func createHealthMonitoringTemplate() *WorkflowTemplate {
 					},
 					Condition:   "{{ steps.analyze-trend.output.alert_needed }}",
 					DependsOn:   []string{"analyze-trend"},
-					Timeout:     &metav1.Duration{Duration: 30 * time.Second},
-					RunPolicy:   crd.StepRunPolicyOnCondition,
+					Timeout: "30s",
+					RunPolicy:   crd.WorkflowRunOnCondition,
 				},
 			},
-			RetryPolicy: &crd.RetryPolicy{
-				MaxRetries:    3,
-				RetryDelay:    metav1.Duration{Duration: 30 * time.Second},
-				BackoffPolicy: crd.BackoffPolicyLinear,
-			},
+			// TODO: Update RetryPolicy to use WorkflowRetryPolicy  
+			// RetryPolicy: &crd.WorkflowRetryPolicy{
+			//	MaxRetries: 3,
+			//	RetryDelay: "30s",
+			//	BackoffStrategy: crd.WorkflowBackoffLinear,
+			// },
 		},
 	}
 }
@@ -425,7 +423,7 @@ func createDataBackupTemplate() *WorkflowTemplate {
 				Default:     30,
 			},
 		},
-		Spec: crd.WorkflowSpec{
+		Spec: crd.WorkflowDefinition{
 			Schedule: "0 2 * * *",
 			Enabled:  true,
 			Steps: []crd.WorkflowStep{
@@ -438,7 +436,7 @@ func createDataBackupTemplate() *WorkflowTemplate {
 						"compression":   "gzip",
 						"exclude_patterns": []string{".git", "node_modules", "*.log"},
 					},
-					Timeout: &metav1.Duration{Duration: 30 * time.Minute},
+					Timeout: "30m",
 				},
 				{
 					Name: "upload-backup",
@@ -450,7 +448,7 @@ func createDataBackupTemplate() *WorkflowTemplate {
 						"key":       "{{ steps.create-backup.output.archive_name }}",
 					},
 					DependsOn: []string{"create-backup"},
-					Timeout:   &metav1.Duration{Duration: 15 * time.Minute},
+					Timeout: "15m",
 				},
 				{
 					Name: "cleanup-old-backups",
@@ -462,7 +460,7 @@ func createDataBackupTemplate() *WorkflowTemplate {
 						"retention_days": "{{.retention_days}}",
 					},
 					DependsOn: []string{"upload-backup"},
-					Timeout:   &metav1.Duration{Duration: 5 * time.Minute},
+					Timeout: "5m",
 				},
 				{
 					Name: "send-report",
@@ -513,7 +511,7 @@ func createReportGenerationTemplate() *WorkflowTemplate {
 				Required:    true,
 			},
 		},
-		Spec: crd.WorkflowSpec{
+		Spec: crd.WorkflowDefinition{
 			Schedule: "0 8 * * 1",
 			Enabled:  true,
 			Steps: []crd.WorkflowStep{
@@ -525,7 +523,7 @@ func createReportGenerationTemplate() *WorkflowTemplate {
 						"report_type": "{{.report_type}}",
 						"date_range": "{{ now | dateModify \"-7d\" | date \"2006-01-02\" }} to {{ now | date \"2006-01-02\" }}",
 					},
-					Timeout: &metav1.Duration{Duration: 10 * time.Minute},
+					Timeout: "10m",
 				},
 				{
 					Name: "generate-report",
@@ -537,7 +535,7 @@ func createReportGenerationTemplate() *WorkflowTemplate {
 						"title":       "{{.report_type | title}} Report - {{ now | date \"2006-01-02\" }}",
 					},
 					DependsOn: []string{"collect-data"},
-					Timeout:   &metav1.Duration{Duration: 5 * time.Minute},
+					Timeout: "5m",
 				},
 				{
 					Name: "distribute-report",
@@ -549,7 +547,7 @@ func createReportGenerationTemplate() *WorkflowTemplate {
 						"attachments": []string{"{{ steps.generate-report.output.file_path }}"},
 					},
 					DependsOn: []string{"generate-report"},
-					Timeout:   &metav1.Duration{Duration: 2 * time.Minute},
+					Timeout: "2m",
 				},
 			},
 		},
@@ -585,7 +583,7 @@ func createSystemMaintenanceTemplate() *WorkflowTemplate {
 				Default:     80,
 			},
 		},
-		Spec: crd.WorkflowSpec{
+		Spec: crd.WorkflowDefinition{
 			Schedule: "0 3 * * 0",
 			Enabled:  true,
 			Steps: []crd.WorkflowStep{
@@ -595,7 +593,7 @@ func createSystemMaintenanceTemplate() *WorkflowTemplate {
 					Parameters: map[string]interface{}{
 						"checks": []string{"disk", "memory", "cpu", "network"},
 					},
-					Timeout: &metav1.Duration{Duration: 2 * time.Minute},
+					Timeout: "2m",
 				},
 				{
 					Name: "cleanup-temp-files",
@@ -606,7 +604,7 @@ func createSystemMaintenanceTemplate() *WorkflowTemplate {
 						"pattern":      "*",
 					},
 					DependsOn: []string{"system-health-check"},
-					Timeout:   &metav1.Duration{Duration: 5 * time.Minute},
+					Timeout: "5m",
 				},
 				{
 					Name: "cleanup-logs",
@@ -617,7 +615,7 @@ func createSystemMaintenanceTemplate() *WorkflowTemplate {
 						"compress":     true,
 					},
 					DependsOn: []string{"cleanup-temp-files"},
-					Timeout:   &metav1.Duration{Duration: 3 * time.Minute},
+					Timeout: "3m",
 				},
 				{
 					Name: "check-disk-usage",
@@ -626,7 +624,7 @@ func createSystemMaintenanceTemplate() *WorkflowTemplate {
 						"threshold": "{{.disk_usage_threshold}}",
 					},
 					DependsOn: []string{"cleanup-logs"},
-					Timeout:   &metav1.Duration{Duration: 1 * time.Minute},
+					Timeout: "1m",
 				},
 				{
 					Name: "send-maintenance-report",
@@ -677,7 +675,7 @@ func createCodeQualityTemplate() *WorkflowTemplate {
 				Required:    true,
 			},
 		},
-		Spec: crd.WorkflowSpec{
+		Spec: crd.WorkflowDefinition{
 			Schedule: "0 1 * * *",
 			Enabled:  true,
 			Steps: []crd.WorkflowStep{
@@ -689,7 +687,7 @@ func createCodeQualityTemplate() *WorkflowTemplate {
 						"branch":     "{{.branch}}",
 						"depth":      1,
 					},
-					Timeout: &metav1.Duration{Duration: 5 * time.Minute},
+					Timeout: "5m",
 				},
 				{
 					Name: "run-linter",
@@ -700,7 +698,7 @@ func createCodeQualityTemplate() *WorkflowTemplate {
 					},
 					DependsOn:       []string{"checkout-code"},
 					ContinueOnError: true,
-					Timeout:         &metav1.Duration{Duration: 3 * time.Minute},
+					Timeout: "3m",
 				},
 				{
 					Name: "run-tests",
@@ -711,7 +709,7 @@ func createCodeQualityTemplate() *WorkflowTemplate {
 					},
 					DependsOn:       []string{"checkout-code"},
 					ContinueOnError: true,
-					Timeout:         &metav1.Duration{Duration: 10 * time.Minute},
+					Timeout: "10m",
 				},
 				{
 					Name: "security-scan",
@@ -722,7 +720,7 @@ func createCodeQualityTemplate() *WorkflowTemplate {
 					},
 					DependsOn:       []string{"checkout-code"},
 					ContinueOnError: true,
-					Timeout:         &metav1.Duration{Duration: 5 * time.Minute},
+					Timeout: "5m",
 				},
 				{
 					Name: "generate-quality-report",
@@ -734,7 +732,7 @@ func createCodeQualityTemplate() *WorkflowTemplate {
 						"format":           "markdown",
 					},
 					DependsOn: []string{"run-linter", "run-tests", "security-scan"},
-					Timeout:   &metav1.Duration{Duration: 2 * time.Minute},
+					Timeout: "2m",
 				},
 				{
 					Name: "send-quality-report",
@@ -779,7 +777,7 @@ func createDatabaseMaintenanceTemplate() *WorkflowTemplate {
 				Default:     30,
 			},
 		},
-		Spec: crd.WorkflowSpec{
+		Spec: crd.WorkflowDefinition{
 			Schedule: "0 2 * * 0",
 			Enabled:  true,
 			Steps: []crd.WorkflowStep{
@@ -790,7 +788,7 @@ func createDatabaseMaintenanceTemplate() *WorkflowTemplate {
 						"connection_string": "{{.database_url}}",
 						"checks":            []string{"connectivity", "disk_space", "connections", "slow_queries"},
 					},
-					Timeout: &metav1.Duration{Duration: 2 * time.Minute},
+					Timeout: "2m",
 				},
 				{
 					Name: "create-backup",
@@ -801,7 +799,7 @@ func createDatabaseMaintenanceTemplate() *WorkflowTemplate {
 						"compression":       true,
 					},
 					DependsOn: []string{"database-health-check"},
-					Timeout:   &metav1.Duration{Duration: 30 * time.Minute},
+					Timeout: "30m",
 				},
 				{
 					Name: "optimize-tables",
@@ -811,7 +809,7 @@ func createDatabaseMaintenanceTemplate() *WorkflowTemplate {
 						"operations":        []string{"analyze", "optimize", "repair"},
 					},
 					DependsOn: []string{"create-backup"},
-					Timeout:   &metav1.Duration{Duration: 15 * time.Minute},
+					Timeout: "15m",
 				},
 				{
 					Name: "cleanup-old-backups",
@@ -821,7 +819,7 @@ func createDatabaseMaintenanceTemplate() *WorkflowTemplate {
 						"backup_path":    "{{ steps.create-backup.output.backup_path }}",
 					},
 					DependsOn: []string{"optimize-tables"},
-					Timeout:   &metav1.Duration{Duration: 5 * time.Minute},
+					Timeout: "5m",
 				},
 				{
 					Name: "send-maintenance-report",

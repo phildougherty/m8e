@@ -275,28 +275,9 @@ func getToolboxResources(ctx context.Context, k8sClient client.Client, namespace
 }
 
 func getWorkflowResources(ctx context.Context, k8sClient client.Client, namespace, resourceName string) ([]ResourceInfo, error) {
-	var resources []ResourceInfo
-
-	if resourceName != "" {
-		// Get specific resource
-		var workflow crd.Workflow
-		key := client.ObjectKey{Name: resourceName, Namespace: namespace}
-		if err := k8sClient.Get(ctx, key, &workflow); err != nil {
-			return nil, err
-		}
-		resources = append(resources, convertWorkflowToResourceInfo(&workflow))
-	} else {
-		// List all resources
-		var workflowList crd.WorkflowList
-		if err := k8sClient.List(ctx, &workflowList, client.InNamespace(namespace)); err != nil {
-			return nil, err
-		}
-		for _, workflow := range workflowList.Items {
-			resources = append(resources, convertWorkflowToResourceInfo(&workflow))
-		}
-	}
-
-	return resources, nil
+	// TODO: Update to use MCPTaskScheduler workflow inspection instead of separate Workflow CRD
+	// Return empty for now since workflows are being migrated to unified Task Scheduler
+	return []ResourceInfo{}, nil
 }
 
 func getAllResources(ctx context.Context, k8sClient client.Client, namespace, resourceName string) ([]ResourceInfo, error) {
@@ -525,34 +506,8 @@ func convertToolboxToResourceInfo(toolbox *crd.MCPToolbox) ResourceInfo {
 	}
 }
 
-func convertWorkflowToResourceInfo(workflow *crd.Workflow) ResourceInfo {
-	age := time.Since(workflow.CreationTimestamp.Time).Truncate(time.Second).String()
-	
-	// Workflows don't have replicas, so show phase as ready status
-	ready := string(workflow.Status.Phase)
-
-	conditions := make([]ConditionInfo, len(workflow.Status.Conditions))
-	for i, condition := range workflow.Status.Conditions {
-		conditions[i] = ConditionInfo{
-			Type:    string(condition.Type),
-			Status:  string(condition.Status),
-			Reason:  condition.Reason,
-			Message: condition.Message,
-		}
-	}
-
-	return ResourceInfo{
-		Type:       "workflow",
-		Name:       workflow.Name,
-		Namespace:  workflow.Namespace,
-		Phase:      string(workflow.Status.Phase),
-		Age:        age,
-		Ready:      ready,
-		Status:     workflow.Status.Message,
-		Resource:   workflow,
-		Conditions: conditions,
-	}
-}
+// TODO: Remove this function when workflow inspection is updated for MCPTaskScheduler
+// convertWorkflowToResourceInfo is disabled - workflows migrated to Task Scheduler
 
 func displayResources(resources []ResourceInfo, outputFormat string, showConditions, showWide bool) error {
 	switch outputFormat {

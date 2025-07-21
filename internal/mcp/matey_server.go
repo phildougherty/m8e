@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,7 +15,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"k8s.io/apimachinery/pkg/types"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -590,25 +588,18 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 	case "get_cluster_state":
 		return m.getClusterState(ctx, arguments)
 	
-	// Workflow management
-	case "create_workflow":
-		return m.createWorkflow(ctx, arguments)
-	case "list_workflows":
-		return m.listWorkflows(ctx, arguments)
-	case "get_workflow":
-		return m.getWorkflow(ctx, arguments)
-	case "delete_workflow":
-		return m.deleteWorkflow(ctx, arguments)
-	case "execute_workflow":
-		return m.executeWorkflow(ctx, arguments)
-	case "workflow_logs":
-		return m.workflowLogs(ctx, arguments)
-	case "pause_workflow":
-		return m.pauseWorkflow(ctx, arguments)
-	case "resume_workflow":
-		return m.resumeWorkflow(ctx, arguments)
-	case "workflow_templates":
-		return m.workflowTemplates(ctx, arguments)
+	// Workflow management  
+	case "create_workflow", "list_workflows":
+		// TODO: Implement unified Task Scheduler workflow tools
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Workflow tools are being migrated to unified Task Scheduler. Use task scheduler workflow tools instead."}},
+			IsError: true,
+		}, fmt.Errorf("workflow tools not available - use task scheduler instead")
+	case "get_workflow", "delete_workflow", "execute_workflow", "workflow_logs", "pause_workflow", "resume_workflow", "workflow_templates":
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Workflow tools are being migrated to unified Task Scheduler. Use task scheduler workflow tools instead."}},
+			IsError: true,
+		}, fmt.Errorf("workflow tools not available - use task scheduler instead")
 	
 	// Service management
 	case "start_service":
@@ -997,6 +988,8 @@ func (m *MateyMCPServer) getClusterState(ctx context.Context, args map[string]in
 }
 
 // createWorkflow creates a workflow from provided configuration
+// TODO: Update to use MCPTaskScheduler workflow creation
+/*
 func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
 	name, ok := args["name"].(string)
 	if !ok || name == "" {
@@ -1104,6 +1097,7 @@ func (m *MateyMCPServer) createWorkflow(ctx context.Context, args map[string]int
 		"config_type": "workflow",
 	})
 }
+*/
 
 // runMateyCommand runs a matey command and returns the output (fallback for unsupported operations)
 func (m *MateyMCPServer) runMateyCommand(ctx context.Context, args ...string) (string, error) {
@@ -1118,7 +1112,8 @@ func (m *MateyMCPServer) useK8sClient() bool {
 }
 
 // Workflow management implementations
-
+// TODO: Update workflow tools to use unified MCPTaskScheduler instead of separate Workflow CRD
+/*
 // listWorkflows lists all workflows in the cluster
 func (m *MateyMCPServer) listWorkflows(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
 	// Try direct k8s client first
@@ -1631,6 +1626,7 @@ func (m *MateyMCPServer) workflowTemplates(ctx context.Context, args map[string]
 		Content: []Content{{Type: "text", Text: output}},
 	}, nil
 }
+*/
 
 // Service management implementations
 

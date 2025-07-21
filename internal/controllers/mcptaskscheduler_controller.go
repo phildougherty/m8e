@@ -26,6 +26,7 @@ import (
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
+	"github.com/phildougherty/m8e/internal/scheduler"
 )
 
 // MCPTaskSchedulerReconciler reconciles a MCPTaskScheduler object
@@ -39,6 +40,10 @@ type MCPTaskSchedulerReconciler struct {
 	eventWatchers     map[string]context.CancelFunc
 	watcherMutex      sync.RWMutex
 	disableEventWatch bool // For testing purposes
+	
+	// Workflow scheduling
+	workflowSchedulers map[string]*scheduler.WorkflowScheduler
+	schedulerMutex     sync.RWMutex
 }
 
 //+kubebuilder:rbac:groups=mcp.matey.ai,resources=mcptaskschedulers,verbs=get;list;watch;create;update;patch;delete
@@ -204,6 +209,12 @@ func (r *MCPTaskSchedulerReconciler) reconcileRunning(ctx context.Context, taskS
 		// Don't fail reconciliation for stats update errors
 	}
 
+	// Handle workflow scheduling
+	if err := r.reconcileWorkflows(ctx, taskScheduler); err != nil {
+		logger.Error(err, "Failed to reconcile workflows")
+		// Don't fail reconciliation for workflow errors
+	}
+	
 	// Handle auto-scaling if enabled
 	if taskScheduler.Spec.SchedulerConfig.AutoScaling.Enabled {
 		if err := r.handleAutoScaling(ctx, taskScheduler); err != nil {
@@ -271,6 +282,12 @@ func (r *MCPTaskSchedulerReconciler) reconcileTerminating(ctx context.Context, t
 		}
 	}
 
+	// Clean up workflow scheduler
+	if err := r.cleanupWorkflowScheduler(ctx, taskScheduler); err != nil {
+		logger.Error(err, "Failed to cleanup workflow scheduler")
+		// Don't fail termination for cleanup errors
+	}
+	
 	// Clean up any running jobs created by this scheduler
 	if err := r.cleanupJobs(ctx, taskScheduler); err != nil {
 		logger.Error(err, "Failed to cleanup jobs")
@@ -1152,6 +1169,148 @@ func (r *MCPTaskSchedulerReconciler) calculateDesiredConcurrency(taskScheduler *
 	}
 	
 	return desired
+}
+
+// reconcileWorkflows handles workflow scheduling and execution
+func (r *MCPTaskSchedulerReconciler) reconcileWorkflows(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) error {
+	logger := log.FromContext(ctx)
+	
+	// Initialize workflow schedulers map if not exists
+	r.schedulerMutex.Lock()
+	if r.workflowSchedulers == nil {
+		r.workflowSchedulers = make(map[string]*scheduler.WorkflowScheduler)
+	}
+	r.schedulerMutex.Unlock()
+	
+	schedulerKey := fmt.Sprintf("%s/%s", taskScheduler.Namespace, taskScheduler.Name)
+	
+	// Get or create workflow scheduler for this task scheduler
+	r.schedulerMutex.RLock()
+	workflowScheduler, exists := r.workflowSchedulers[schedulerKey]
+	r.schedulerMutex.RUnlock()
+	
+	if !exists {
+		// Create new workflow scheduler
+		cronEngine := scheduler.NewCronEngine(log.FromContext(ctx))
+		
+		// Get MCP proxy configuration
+		mcpProxyURL := "http://matey-proxy." + taskScheduler.Namespace + ".svc.cluster.local:9876"
+		mcpProxyAPIKey := ""
+		if taskScheduler.Spec.MCPProxyURL != "" {
+			mcpProxyURL = taskScheduler.Spec.MCPProxyURL
+		}
+		if taskScheduler.Spec.MCPProxyAPIKey != "" {
+			mcpProxyAPIKey = taskScheduler.Spec.MCPProxyAPIKey
+		}
+		
+		workflowEngine := scheduler.NewWorkflowEngine(mcpProxyURL, mcpProxyAPIKey, log.FromContext(ctx))
+		
+		workflowScheduler = scheduler.NewWorkflowScheduler(
+			cronEngine,
+			workflowEngine,
+			r.Client,
+			taskScheduler.Namespace,
+			log.FromContext(ctx),
+		)
+		
+		r.schedulerMutex.Lock()
+		r.workflowSchedulers[schedulerKey] = workflowScheduler
+		r.schedulerMutex.Unlock()
+		
+		logger.Info("Created workflow scheduler", "key", schedulerKey)
+	}
+	
+	// Start the workflow scheduler if not already started
+	if err := workflowScheduler.Start(); err != nil {
+		return fmt.Errorf("failed to start workflow scheduler: %w", err)
+	}
+	
+	// Schedule all workflows from the CRD
+	for i, workflow := range taskScheduler.Spec.Workflows {
+		if err := workflowScheduler.SyncWorkflow(&workflow); err != nil {
+			logger.Error(err, "Failed to schedule workflow", "workflow", workflow.Name, "index", i)
+			// Continue with other workflows
+		}
+	}
+	
+	// Update workflow execution status in CRD status
+	if err := r.updateWorkflowStatus(ctx, taskScheduler, workflowScheduler); err != nil {
+		logger.Error(err, "Failed to update workflow status")
+		// Don't fail reconciliation for status update errors
+	}
+	
+	return nil
+}
+
+// updateWorkflowStatus updates the workflow execution status in the MCPTaskScheduler status
+func (r *MCPTaskSchedulerReconciler) updateWorkflowStatus(ctx context.Context, taskScheduler *crd.MCPTaskScheduler, workflowScheduler *scheduler.WorkflowScheduler) error {
+	// Get current scheduled workflows and their status
+	scheduledWorkflows := workflowScheduler.ListScheduledWorkflows()
+	
+	// Convert scheduled workflows to execution status
+	executions := make([]crd.WorkflowExecution, 0)
+	for _, jobSpec := range scheduledWorkflows {
+		execution := crd.WorkflowExecution{
+			ID:           jobSpec.ID,
+			WorkflowName: jobSpec.Name, // Use Name field from JobSpec
+			StartTime:    time.Now(),   // This would need to be tracked separately
+			Phase:        crd.WorkflowPhasePending, // Default phase for scheduled workflows
+			Message:      "Workflow is scheduled and waiting for next execution",
+		}
+		if jobSpec.LastRun != nil {
+			execution.StartTime = *jobSpec.LastRun
+			execution.Phase = crd.WorkflowPhaseSucceeded // Assume success if completed
+			execution.EndTime = jobSpec.LastRun
+			if jobSpec.NextRun != nil {
+				duration := jobSpec.NextRun.Sub(*jobSpec.LastRun)
+				execution.Duration = &duration
+			}
+		}
+		executions = append(executions, execution)
+	}
+	
+	// Update the CRD status with workflow executions
+	taskScheduler.Status.WorkflowExecutions = executions
+	
+	// Update workflow statistics
+	var totalWorkflows, activeWorkflows, completedWorkflows, failedWorkflows int64
+	totalWorkflows = int64(len(taskScheduler.Spec.Workflows))
+	
+	for _, execution := range executions {
+		switch execution.Phase {
+		case crd.WorkflowPhaseRunning:
+			activeWorkflows++
+		case crd.WorkflowPhaseSucceeded:
+			completedWorkflows++
+		case crd.WorkflowPhaseFailed:
+			failedWorkflows++
+		}
+	}
+	
+	taskScheduler.Status.WorkflowStats = crd.WorkflowStatistics{
+		TotalWorkflows:     totalWorkflows,
+		RunningWorkflows:   activeWorkflows,
+		CompletedWorkflows: completedWorkflows,
+		FailedWorkflows:    failedWorkflows,
+		LastWorkflowTime:   time.Now().Format(time.RFC3339),
+	}
+	
+	return nil
+}
+
+// cleanupWorkflowScheduler cleans up workflow scheduler for a task scheduler
+func (r *MCPTaskSchedulerReconciler) cleanupWorkflowScheduler(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) error {
+	schedulerKey := fmt.Sprintf("%s/%s", taskScheduler.Namespace, taskScheduler.Name)
+	
+	r.schedulerMutex.Lock()
+	defer r.schedulerMutex.Unlock()
+	
+	if workflowScheduler, exists := r.workflowSchedulers[schedulerKey]; exists {
+		workflowScheduler.Stop()
+		delete(r.workflowSchedulers, schedulerKey)
+	}
+	
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
