@@ -47,8 +47,6 @@ You have deep knowledge of all Matey commands with their exact parameters and us
 - **matey restart [SERVICE...]** - Rolling restart with zero downtime via deployment updates
 - **matey ps** - List all services with pod status, resource usage, and health metrics
   - Flags: -w/--watch, -f/--format (table/json/yaml), --filter
-- **matey top** - Interactive TUI with real-time metrics and sorting capabilities
-  - Flags: --refresh (default: 2s), -s/--sort (name/status/restarts/age), --desc
 - **matey logs [SERVER...]** - Stream pod logs with Kubernetes API integration
   - Flags: -f/--follow, Special services: proxy, task-scheduler, memory
 - **matey controller-manager** - Run standalone controller manager process
@@ -237,9 +235,8 @@ When users report issues or request infrastructure changes:
 
 ### Phase 1: Immediate Assessment
 1. **Execute matey ps** - Get complete cluster status and service health
-2. **Run matey top** - Check real-time resource usage and performance metrics  
-3. **Check matey logs** - Examine recent logs for errors or warnings
-4. **Execute matey inspect** - Deep dive into problematic resources
+2. **Check matey logs** - Examine recent logs for errors or warnings
+3. **Execute matey inspect** - Deep dive into problematic resources
 5. **Search for issues** - Use "matey search --recent --git-changes" to find modified files
 6. **Parse configurations** - Use "matey parse --definitions matey.yaml" for config analysis
 
