@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	appcontext "github.com/phildougherty/m8e/internal/context"
 )
 
 // handleSlashCommand handles slash commands like /auto, /status, etc.
@@ -404,22 +405,40 @@ func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) te
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Manager", timestamp))
 	m.viewport = append(m.viewport, m.createInfoMessage("Adding directory to context: "+absPath))
 	
-	// Use context manager to add directory
-	files, err := m.termChat.fileDiscovery.SearchFiles(absPath+"/*", 100)
+	// Use a more efficient approach: find specific file types and limit results
+	commonExtensions := []string{".go", ".md", ".yaml", ".yml", ".json", ".toml", ".txt"}
+	files, err := m.termChat.fileDiscovery.SearchByExtension(commonExtensions, 50) // Limit to 50 files
 	if err != nil {
-		m.viewport = append(m.viewport, m.createErrorMessage("Failed to discover files: "+err.Error()))
-		m.viewport = append(m.viewport, m.createBoxFooter())
-		m.viewport = append(m.viewport, "")
-		return nil
+		// Fallback: try simple directory walk with timeout
+		files = m.fallbackFileSearch(absPath)
+		if len(files) == 0 {
+			m.viewport = append(m.viewport, m.createErrorMessage("Failed to discover files: "+err.Error()))
+			m.viewport = append(m.viewport, m.createBoxFooter())
+			m.viewport = append(m.viewport, "")
+			return nil
+		}
 	}
 	
-	// Add discovered files to context
+	// Add discovered files to context with size limits
 	addedCount := 0
+	skippedCount := 0
 	for _, file := range files {
+		// Skip large files (> 50KB) to avoid overwhelming context
+		if file.Size > 50*1024 {
+			skippedCount++
+			continue
+		}
+		
 		// Read file content
 		content, err := os.ReadFile(file.Path)
 		if err != nil {
 			continue // Skip files that can't be read
+		}
+		
+		// Skip binary files or very large text files
+		if len(content) > 10000 || !isTextFile(content) {
+			skippedCount++
+			continue
 		}
 		
 		if err := m.termChat.contextManager.AddContext("file", file.Path, string(content), nil); err == nil {
@@ -428,6 +447,9 @@ func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) te
 	}
 	
 	m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✓ Added %d files to context", addedCount)))
+	if skippedCount > 0 {
+		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Skipped %d large/binary files", skippedCount)))
+	}
 	
 	// Show context stats
 	stats := m.termChat.contextManager.GetStats()
@@ -533,3 +555,64 @@ func (m *ChatUI) handleContextCommand(parts []string, timestamp string) tea.Msg 
 	m.viewport = append(m.viewport, "")
 	return nil
 }
+
+// fallbackFileSearch provides a simple fallback when the main file discovery fails
+func (m *ChatUI) fallbackFileSearch(dirPath string) []appcontext.SearchResult {
+	var results []appcontext.SearchResult
+	
+	// Simple walk with basic filtering
+	filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		
+		// Skip hidden files and common ignore patterns
+		if strings.HasPrefix(info.Name(), ".") || 
+		   strings.Contains(path, "node_modules") ||
+		   strings.Contains(path, ".git") ||
+		   strings.Contains(path, "vendor") {
+			return nil
+		}
+		
+		// Only include common text file extensions
+		ext := filepath.Ext(path)
+		if ext == ".go" || ext == ".md" || ext == ".yaml" || ext == ".yml" || 
+		   ext == ".json" || ext == ".toml" || ext == ".txt" {
+			results = append(results, appcontext.SearchResult{
+				Path:    path,
+				Size:    info.Size(),
+				ModTime: info.ModTime(),
+			})
+		}
+		
+		// Limit results to prevent timeout
+		if len(results) >= 30 {
+			return filepath.SkipDir
+		}
+		
+		return nil
+	})
+	
+	return results
+}
+
+// isTextFile checks if content appears to be text (not binary)
+func isTextFile(content []byte) bool {
+	if len(content) == 0 {
+		return true
+	}
+	
+	// Check for null bytes (common in binary files)
+	for i, b := range content {
+		if b == 0 {
+			return false
+		}
+		// Only check first 512 bytes for performance
+		if i > 512 {
+			break
+		}
+	}
+	
+	return true
+}
+
