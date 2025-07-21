@@ -21,7 +21,7 @@ spec:
       serviceAccountName: matey-proxy
       containers:
       - name: mcp-proxy
-        image: matey:latest
+        image: mcp.robotrad.io/matey:latest
         imagePullPolicy: Always
         command: ["matey"]
         args: ["serve-proxy", "--port=9876", "--namespace=default"]

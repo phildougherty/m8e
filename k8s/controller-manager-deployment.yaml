@@ -24,7 +24,7 @@ spec:
       serviceAccountName: matey-controller-manager
       containers:
       - name: controller-manager
-        image: matey:latest
+        image: mcp.robotrad.io/matey:latest
         command:
         - /app/matey
         args:
