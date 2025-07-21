@@ -100,8 +100,8 @@ func (ui *ChatUI) initializeViewport() {
 		switch msg.Role {
 		case "user":
 			viewport = append(viewport, ui.createEnhancedBoxHeader("You", timestamp))
-			lines := strings.Split(msg.Content, "\n")
-			for _, line := range lines {
+			wrappedLines := ui.wrapTextForBox(msg.Content)
+			for _, line := range wrappedLines {
 				viewport = append(viewport, "│ "+line)
 			}
 			viewport = append(viewport, ui.createBoxFooter())

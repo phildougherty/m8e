@@ -20,10 +20,43 @@ func stripANSI(str string) string {
 // getRandomHackerQuote returns a random hacker/geek movie quote
 func getRandomHackerQuote() string {
 	quotes := []string{
-		"AI is hacking the Gibson...",
-		"All your base are belong to us",
+		"My crime is that of curiosity. I am a hacker, and this is my manifesto.",
+		"All your base are belong to us.",
+		"Open the pod bay doors, Matey. Sorry I can't do that.",
+		"There is no spoon.",
 		"Hack the planet!",
 		"I'm in.",
+		"The only winning move is not to play.",
+		"Shall we play a game?",
+		"Mess with the best, die like the rest.",
+		"This is our world now... the world of the electron and the switch.",
+		"We are the future, Matey. Not them.",
+		"You can't stop the signal.",
+		"The Matrix has you.",
+		"Wake up, Neo...",
+		"Welcome to the desert of the real.",
+		"By your command.",
+		"I'm a neural-net processor... a learning computer.",
+		"Looks like you're trying to start a revolution.",
+		"Behold the power of the dark side... of the terminal.",
+		"It's not a bug, it's a feature.",
+		"sudo make me a sandwich",
+		"I see you're trying to hack the Gibson...",
+		"Compiling... compiling... still compiling...",
+		"rm -rf /*... oh no.",
+		"Welcome, User.",
+		"Talk is cheap. Show me the code.",
+		"With great power comes great electricity bill.",
+		"Life? Don't talk to me about life.",
+		"A strange game. The only winning move is not to launch the LLM.",
+		"Hello, Professor Falken.",
+		"You are in a maze of twisty passages, all alike.",
+		"Greed is for amateurs. Disorder, chaos, anarchy—now that's fun!",
+		"This conversation can serve no purpose anymore. Goodbye.",
+		"Your move, creep.",
+		"It's a UNIX system... I know this!",
+		"Matey has root. Matey always had root.",
+		"AI is hacking the Gibson...",
 		"Access granted.",
 		"Initiating neural pathways...",
 		"Compiling intelligence...",
@@ -44,11 +77,9 @@ func getRandomHackerQuote() string {
 		"Calculating probabilities...",
 		"Indexing knowledge graphs...",
 		"Vectorizing embeddings...",
-		"There is no spoon...",
 		"Follow the white rabbit...",
 		"Welcome to the machine.",
 		"Resistance is futile.",
-		"sudo make me a sandwich",
 		"404: Reality not found",
 		"The cake is a lie.",
 	}
@@ -63,16 +94,20 @@ func (m *ChatUI) View() string {
 		return m.createLoadingView()
 	}
 
-	// Calculate dimensions
+	// Calculate dimensions dynamically
 	statusHeight := 1
-	inputHeight := 3 // border + padding
+	
+	// Calculate input area height based on text content
+	inputArea := m.renderInputArea()
+	inputHeight := strings.Count(inputArea, "\n") + 1 // Count actual lines in rendered input
+	
 	viewportHeight := m.height - statusHeight - inputHeight
+	if viewportHeight < 1 {
+		viewportHeight = 1 // Ensure minimum viewport height
+	}
 
 	// Render viewport (chat history)
 	viewport := m.renderViewport(viewportHeight)
-	
-	// Render input area
-	inputArea := m.renderInputArea()
 
 	// Render status line
 	statusArea := m.renderStatusLine()
@@ -151,7 +186,7 @@ func (m *ChatUI) renderViewport(viewportHeight int) []string {
 	return viewport
 }
 
-// renderInputArea renders the input field
+// renderInputArea renders the input field with multi-line support
 func (m *ChatUI) renderInputArea() string {
 	// Calculate dynamic width to match other boxes
 	width := 140
@@ -191,17 +226,130 @@ func (m *ChatUI) renderInputArea() string {
 		inputText += cursorStyle.Render("│")
 	}
 
-	// Use lipgloss with fixed width to match other boxes exactly
+	// Handle multi-line text wrapping
+	contentWidth := width - 6 // Account for border (2) + padding (2) + prompt (2)
+	lines := m.wrapInputText(inputPrompt + inputText, contentWidth)
+	
+	// Calculate height based on number of lines (minimum 1 line)
+	height := len(lines)
+	if height < 1 {
+		height = 1
+	}
+	
+	// Use lipgloss with dynamic height for multi-line input
 	inputStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(Brown).
 		Width(width - 2). // Total width minus margins
+		Height(height).
 		Padding(0, 1)
 
-	// Simple content without complex calculations
-	content := inputPrompt + inputText
+	content := strings.Join(lines, "\n")
 	
 	return inputStyle.Render(content)
+}
+
+// wrapInputText wraps input text to fit within the specified width
+func (m *ChatUI) wrapInputText(text string, maxWidth int) []string {
+	if text == "" {
+		return []string{""}
+	}
+	
+	// Split by existing newlines first
+	lines := strings.Split(text, "\n")
+	var wrappedLines []string
+	
+	for i, line := range lines {
+		// For the first line, include the prompt in width calculation
+		// For subsequent lines, indent to align with text after prompt
+		linePrefix := ""
+		availableWidth := maxWidth
+		
+		if i > 0 {
+			// Indent continuation lines to align with text (not prompt)
+			linePrefix = "  " // 2 spaces to align with prompt
+			availableWidth = maxWidth - 2
+		}
+		
+		// Remove ANSI codes for length calculation
+		visibleLine := stripANSI(line)
+		
+		if len(visibleLine) <= availableWidth {
+			// Line fits as-is
+			wrappedLines = append(wrappedLines, linePrefix + line)
+		} else {
+			// Need to wrap this line
+			wrapped := m.wrapSingleLine(line, availableWidth, linePrefix)
+			wrappedLines = append(wrappedLines, wrapped...)
+		}
+	}
+	
+	return wrappedLines
+}
+
+// wrapSingleLine wraps a single line of text
+func (m *ChatUI) wrapSingleLine(line string, maxWidth int, prefix string) []string {
+	if line == "" {
+		return []string{prefix}
+	}
+	
+	// For lines with ANSI codes, we need to be more careful
+	visibleLine := stripANSI(line)
+	
+	if len(visibleLine) <= maxWidth {
+		return []string{prefix + line}
+	}
+	
+	var result []string
+	remaining := line
+	visibleRemaining := visibleLine
+	
+	for len(visibleRemaining) > 0 {
+		currentPrefix := prefix
+		currentMaxWidth := maxWidth
+		
+		// For continuation lines after the first, add more indentation
+		if len(result) > 0 {
+			currentPrefix = prefix + "  "
+			currentMaxWidth = maxWidth - 2
+		}
+		
+		if len(visibleRemaining) <= currentMaxWidth {
+			// Remaining text fits
+			result = append(result, currentPrefix + remaining)
+			break
+		}
+		
+		// Find a good break point (prefer spaces)
+		breakPoint := currentMaxWidth
+		for i := currentMaxWidth - 1; i >= currentMaxWidth/2 && i < len(visibleRemaining); i-- {
+			if visibleRemaining[i] == ' ' {
+				breakPoint = i
+				break
+			}
+		}
+		
+		// Extract the visible portion up to break point
+		visiblePortion := visibleRemaining[:breakPoint]
+		
+		// Find the corresponding portion in the original line (with ANSI codes)
+		// This is approximate but should work for most cases
+		originalPortion := remaining[:len(visiblePortion)]
+		
+		result = append(result, currentPrefix + originalPortion)
+		
+		// Move to next portion
+		remaining = remaining[len(visiblePortion):]
+		visibleRemaining = visibleRemaining[breakPoint:]
+		
+		// Skip leading space in continuation
+		if len(visibleRemaining) > 0 && visibleRemaining[0] == ' ' {
+			remaining = remaining[1:]
+			visibleRemaining = visibleRemaining[1:]
+		}
+	}
+	
+	return result
 }
 
 // renderStatusLine renders the status bar with scroll information
@@ -391,4 +539,92 @@ func (m *ChatUI) createProviderStatusIndicator() string {
 func (m *ChatUI) createTimeIndicator() string {
 	timeStyle := lipgloss.NewStyle().Foreground(ArmyGreen)
 	return fmt.Sprintf("🕒 %s", timeStyle.Render(time.Now().Format("15:04:05")))
+}
+
+// wrapTextForBox wraps text to fit within box width for display
+func (m *ChatUI) wrapTextForBox(text string) []string {
+	// Calculate box content width (total width - borders - padding - box border chars)
+	width := 140
+	if m.width > 0 {
+		width = m.width - 2 // Leave 2 characters for margins
+	}
+	contentWidth := width - 4 // Account for "│ " at start and border
+	
+	lines := strings.Split(text, "\n")
+	var wrappedLines []string
+	
+	for _, line := range lines {
+		if line == "" {
+			wrappedLines = append(wrappedLines, "")
+			continue
+		}
+		
+		// Remove ANSI codes for length calculation
+		visibleLine := stripANSI(line)
+		
+		if len(visibleLine) <= contentWidth {
+			// Line fits as-is
+			wrappedLines = append(wrappedLines, line)
+		} else {
+			// Need to wrap this line
+			wrapped := m.wrapBoxLine(line, contentWidth)
+			wrappedLines = append(wrappedLines, wrapped...)
+		}
+	}
+	
+	return wrappedLines
+}
+
+// wrapBoxLine wraps a single line for box display
+func (m *ChatUI) wrapBoxLine(line string, maxWidth int) []string {
+	if line == "" {
+		return []string{""}
+	}
+	
+	visibleLine := stripANSI(line)
+	
+	if len(visibleLine) <= maxWidth {
+		return []string{line}
+	}
+	
+	var result []string
+	remaining := line
+	visibleRemaining := visibleLine
+	
+	for len(visibleRemaining) > 0 {
+		if len(visibleRemaining) <= maxWidth {
+			// Remaining text fits
+			result = append(result, remaining)
+			break
+		}
+		
+		// Find a good break point (prefer spaces)
+		breakPoint := maxWidth
+		for i := maxWidth - 1; i >= maxWidth/2 && i < len(visibleRemaining); i-- {
+			if visibleRemaining[i] == ' ' {
+				breakPoint = i
+				break
+			}
+		}
+		
+		// Extract the visible portion up to break point
+		visiblePortion := visibleRemaining[:breakPoint]
+		
+		// Find the corresponding portion in the original line (with ANSI codes)
+		originalPortion := remaining[:len(visiblePortion)]
+		
+		result = append(result, originalPortion)
+		
+		// Move to next portion
+		remaining = remaining[len(visiblePortion):]
+		visibleRemaining = visibleRemaining[breakPoint:]
+		
+		// Skip leading space in continuation
+		if len(visibleRemaining) > 0 && visibleRemaining[0] == ' ' {
+			remaining = remaining[1:]
+			visibleRemaining = visibleRemaining[1:]
+		}
+	}
+	
+	return result
 }

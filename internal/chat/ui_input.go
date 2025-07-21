@@ -50,6 +50,9 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		return m.handleEnterKey()
+		
+	case "shift+enter":
+		return m.handleShiftEnterKey()
 
 	case "backspace":
 		if m.cursor > 0 {
@@ -345,6 +348,15 @@ func (m *ChatUI) handleEnterKey() (tea.Model, tea.Cmd) {
 		return m, m.handleConfirmationChoice(choice)
 	}
 	
+	// Check for line continuation with backslash
+	if strings.HasSuffix(strings.TrimRight(m.input, " \t"), "\\") {
+		// Remove the trailing backslash and add a newline
+		trimmed := strings.TrimRight(m.input, " \t")
+		m.input = trimmed[:len(trimmed)-1] + "\n"
+		m.cursor = len(m.input)
+		return m, nil
+	}
+	
 	if strings.TrimSpace(m.input) != "" {
 		// Check for slash commands first
 		if strings.HasPrefix(strings.TrimSpace(m.input), "/") {
@@ -360,6 +372,14 @@ func (m *ChatUI) handleEnterKey() (tea.Model, tea.Cmd) {
 		m.cursor = 0
 		return m, cmd
 	}
+	return m, nil
+}
+
+// handleShiftEnterKey handles Shift+Enter for new lines
+func (m *ChatUI) handleShiftEnterKey() (tea.Model, tea.Cmd) {
+	// Add a newline at cursor position
+	m.input = m.input[:m.cursor] + "\n" + m.input[m.cursor:]
+	m.cursor++
 	return m, nil
 }
 
