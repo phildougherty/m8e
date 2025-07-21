@@ -158,7 +158,7 @@ func TestEnhancedTaskSchedulerIntegration(t *testing.T) {
 		require.NoError(t, err)
 		
 		// Verify enhanced configuration in ConfigMap
-		config := configMap.Data["config.yaml"]
+		config := configMap.Data["matey.yaml"]
 		assert.Contains(t, config, "event_triggers:")
 		assert.Contains(t, config, "enabled: true")
 		assert.Contains(t, config, "pod-failure-handler")
@@ -279,7 +279,7 @@ func TestEnhancedTaskSchedulerIntegration(t *testing.T) {
 		}, &configMap)
 		require.NoError(t, err)
 		
-		config := configMap.Data["config.yaml"]
+		config := configMap.Data["matey.yaml"]
 		assert.Contains(t, config, "pod-failure-handler")
 		assert.Contains(t, config, "incident-response-workflow")
 		assert.Contains(t, config, "deployment-rollback")
@@ -347,7 +347,7 @@ func TestEnhancedTaskSchedulerIntegration(t *testing.T) {
 		}, &configMap)
 		require.NoError(t, err)
 		
-		config := configMap.Data["config.yaml"]
+		config := configMap.Data["matey.yaml"]
 		assert.Contains(t, config, "conditional_dependencies:")
 		assert.Contains(t, config, "enabled: true")
 		assert.Contains(t, config, "default_strategy: fail-fast")
@@ -543,7 +543,7 @@ func TestAutoScalingIntegration(t *testing.T) {
 		}, &configMap)
 		require.NoError(t, err)
 		
-		config := configMap.Data["config.yaml"]
+		config := configMap.Data["matey.yaml"]
 		assert.Contains(t, config, "auto_scaling:")
 		assert.Contains(t, config, "enabled: true")
 		assert.Contains(t, config, "min_concurrent_tasks: 2")

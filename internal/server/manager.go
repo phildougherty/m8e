@@ -841,7 +841,7 @@ func (w *ResourcesWatcher) Stop() {
 			// Already closed or being closed
 		default:
 			close(w.stopCh) // Close the channel
-			w.stopCh = nil  // Mark as closed
+			// Don't set w.stopCh = nil to avoid race with goroutine
 		}
 	}
 	w.mu.Unlock() // Unlock before logging

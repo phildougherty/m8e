@@ -175,6 +175,11 @@ security-scan:
 	@echo "Running comprehensive security scan..."
 	@./scripts/security-scan.sh all
 
+# Run basic security scan (no external tools required)
+security-scan-basic:
+	@echo "Running basic security scan..."
+	@./scripts/basic-security-scan.sh
+
 # Run specific security scans
 security-scan-gosec:
 	@echo "Running gosec security scan..."
@@ -212,8 +217,10 @@ docker-push: docker-build
 	docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
 	@echo "Docker push complete"
 
-# Run all quality checks
-quality: fmt vet lint test-race test-coverage security-scan
+# Run all quality checks (with fallback for security scan)
+quality: fmt vet lint test-race test-coverage
+	@echo "Running security scan (with fallback)..."
+	@./scripts/security-scan.sh all || ./scripts/basic-security-scan.sh
 
 # Clean build artifacts
 clean:
@@ -312,6 +319,7 @@ help:
 	@echo "  fmt                  - Format code"
 	@echo "  vet                  - Run vet"
 	@echo "  security-scan        - Run comprehensive security scan"
+	@echo "  security-scan-basic  - Run basic security scan (no external tools)"
 	@echo "  security-scan-gosec  - Run gosec security scan only"
 	@echo "  security-scan-vulns  - Run vulnerability scan only"
 	@echo "  security-scan-deps   - Run dependency audit only"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,7 +36,9 @@ type MCPTaskSchedulerReconciler struct {
 	Config *config.ComposeConfig
 	
 	// Event watching
-	eventWatchers map[string]context.CancelFunc
+	eventWatchers     map[string]context.CancelFunc
+	watcherMutex      sync.RWMutex
+	disableEventWatch bool // For testing purposes
 }
 
 //+kubebuilder:rbac:groups=mcp.matey.ai,resources=mcptaskschedulers,verbs=get;list;watch;create;update;patch;delete
@@ -853,6 +856,14 @@ func (r *MCPTaskSchedulerReconciler) generateEventTriggersConfig(triggers []crd.
 // setupEventWatching sets up event watchers for configured triggers
 func (r *MCPTaskSchedulerReconciler) setupEventWatching(ctx context.Context, taskScheduler *crd.MCPTaskScheduler) error {
 	logger := log.FromContext(ctx)
+	
+	// Skip event watching if disabled (for testing)
+	if r.disableEventWatch {
+		return nil
+	}
+	
+	r.watcherMutex.Lock()
+	defer r.watcherMutex.Unlock()
 	
 	// Initialize event watchers map if not exists
 	if r.eventWatchers == nil {

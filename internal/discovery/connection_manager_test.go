@@ -273,12 +273,15 @@ func TestDynamicConnectionManager_ServiceDiscoveryCallbacks(t *testing.T) {
 
 	// Test OnServiceAdded callback
 	manager.OnServiceAdded(endpoint)
+	time.Sleep(50 * time.Millisecond) // Allow goroutines to start
 
 	// Test OnServiceModified callback
 	manager.OnServiceModified(endpoint)
+	time.Sleep(50 * time.Millisecond) // Allow operations to complete
 
 	// Test OnServiceDeleted callback
 	manager.OnServiceDeleted("test-service", "default")
+	time.Sleep(50 * time.Millisecond) // Allow cleanup to complete
 }
 
 func TestDynamicConnectionManager_StartStop(t *testing.T) {
@@ -295,6 +298,9 @@ func TestDynamicConnectionManager_StartStop(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected no error starting manager, got %v", err)
 	}
+
+	// Give a small delay to allow initialization goroutines to start
+	time.Sleep(50 * time.Millisecond)
 
 	// Test stopping the manager
 	manager.Stop()

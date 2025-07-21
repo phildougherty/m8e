@@ -86,9 +86,9 @@ Examples:
 			// Start server in goroutine
 			go func() {
 				logger.Info("Starting task scheduler MCP server")
-				logger.Info("Server address: " + server.Addr)
+				logger.Info("Server address: %s", server.Addr)
 				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					logger.Error("Failed to start server: " + err.Error())
+					logger.Error("Failed to start server: %v", err)
 					os.Exit(1)
 				}
 			}()
@@ -105,7 +105,7 @@ Examples:
 			defer cancel()
 			
 			if err := server.Shutdown(ctx); err != nil {
-				logger.Error("Failed to gracefully shutdown server: " + err.Error())
+				logger.Error("Failed to gracefully shutdown server: %v", err)
 				return err
 			}
 			

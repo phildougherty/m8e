@@ -467,14 +467,24 @@ func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) 
 
 // checkHTTPHealth performs an HTTP health check by testing MCP protocol response
 func (dcm *DynamicConnectionManager) checkHTTPHealth(conn *MCPConnection) bool {
-	dcm.logger.Info("DEBUG: Starting HTTP health check for %s", conn.Name)
+	// Safely read connection details under lock
+	conn.mu.RLock()
+	connName := conn.Name
+	var baseURL string
+	hasHTTPConnection := conn.HTTPConnection != nil
+	if hasHTTPConnection {
+		baseURL = conn.HTTPConnection.BaseURL
+	}
+	conn.mu.RUnlock()
 	
-	if conn.HTTPConnection == nil {
-		dcm.logger.Info("DEBUG: No HTTP connection available for %s", conn.Name)
+	dcm.logger.Info("DEBUG: Starting HTTP health check for %s", connName)
+	
+	if !hasHTTPConnection {
+		dcm.logger.Info("DEBUG: No HTTP connection available for %s", connName)
 		return false
 	}
 
-	dcm.logger.Info("DEBUG: HTTP connection available for %s - BaseURL: %s", conn.Name, conn.HTTPConnection.BaseURL)
+	dcm.logger.Info("DEBUG: HTTP connection available for %s - BaseURL: %s", connName, baseURL)
 
 	// Test actual MCP protocol response with an initialize request
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -495,41 +505,45 @@ func (dcm *DynamicConnectionManager) checkHTTPHealth(conn *MCPConnection) bool {
 		},
 	}
 
-	dcm.logger.Info("DEBUG: Sending HTTP health request for %s with request: %+v", conn.Name, request)
+	dcm.logger.Info("DEBUG: Sending HTTP health request for %s with request: %+v", connName, request)
 	response, err := dcm.sendHTTPHealthRequest(ctx, conn, request)
 	if err != nil {
-		dcm.logger.Info("DEBUG: HTTP health request failed for %s: %v", conn.Name, err)
+		dcm.logger.Info("DEBUG: HTTP health request failed for %s: %v", connName, err)
 		return false
 	}
 
 	// Check if response contains expected MCP structure
-	dcm.logger.Info("DEBUG: Checking HTTP response for %s: %+v", conn.Name, response)
+	dcm.logger.Info("DEBUG: Checking HTTP response for %s: %+v", connName, response)
 	
 	if response == nil {
-		dcm.logger.Info("DEBUG: HTTP health check failed for %s: nil response", conn.Name)
+		dcm.logger.Info("DEBUG: HTTP health check failed for %s: nil response", connName)
 		return false
 	}
 
 	// Check for valid MCP response structure
 	if _, hasResult := response["result"]; hasResult {
-		dcm.logger.Info("DEBUG: HTTP health check passed for %s - found result field", conn.Name)
+		dcm.logger.Info("DEBUG: HTTP health check passed for %s - found result field", connName)
 		return true
 	}
 
 	if _, hasError := response["error"]; hasError {
-		dcm.logger.Info("DEBUG: HTTP health check passed for %s - found error field (server responded with error, but MCP protocol works)", conn.Name)
+		dcm.logger.Info("DEBUG: HTTP health check passed for %s - found error field (server responded with error, but MCP protocol works)", connName)
 		return true // Server responded with MCP error, but protocol works
 	}
 
-	dcm.logger.Info("DEBUG: HTTP health check failed for %s: invalid MCP response structure - response: %+v", conn.Name, response)
+	dcm.logger.Info("DEBUG: HTTP health check failed for %s: invalid MCP response structure - response: %+v", connName, response)
 	return false
 }
 
 // sendHTTPHealthRequest sends a health check request to an HTTP MCP server
 func (dcm *DynamicConnectionManager) sendHTTPHealthRequest(ctx context.Context, conn *MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
+	conn.mu.RLock()
 	if conn == nil || conn.HTTPConnection == nil {
+		conn.mu.RUnlock()
 		return nil, fmt.Errorf("no HTTP connection available")
 	}
+	baseURL := conn.HTTPConnection.BaseURL
+	conn.mu.RUnlock()
 
 	// Marshal request
 	reqBytes, err := json.Marshal(request)
@@ -537,12 +551,9 @@ func (dcm *DynamicConnectionManager) sendHTTPHealthRequest(ctx context.Context, 
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
-	// Double-check connection is still valid (might be closed by another goroutine)
-	if conn.HTTPConnection == nil {
-		return nil, fmt.Errorf("HTTP connection was closed")
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", conn.HTTPConnection.BaseURL, bytes.NewBuffer(reqBytes))
+	// Create HTTP request using cached baseURL
+	// Don't access conn.HTTPConnection directly to avoid race conditions
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewBuffer(reqBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}

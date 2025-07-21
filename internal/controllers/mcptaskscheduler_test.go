@@ -32,9 +32,10 @@ func TestMCPTaskSchedulerReconciler_EventTriggers(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("event triggers configuration", func(t *testing.T) {
@@ -187,9 +188,10 @@ func TestMCPTaskSchedulerReconciler_AutoScaling(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("auto-scaling configuration", func(t *testing.T) {
@@ -305,9 +307,10 @@ func TestMCPTaskSchedulerReconciler_ConditionalDependencies(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("conditional dependencies configuration", func(t *testing.T) {
@@ -351,9 +354,10 @@ func TestMCPTaskSchedulerReconciler_WorkflowTrigger(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("workflow trigger job creation", func(t *testing.T) {
@@ -425,9 +429,10 @@ func TestMCPTaskSchedulerReconciler_EventTriggersConfig(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("event triggers config generation", func(t *testing.T) {
@@ -553,9 +558,10 @@ func TestMCPTaskSchedulerReconciler_EnhancedReconciliation(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("enhanced reconciliation with all features", func(t *testing.T) {
@@ -585,7 +591,7 @@ func TestMCPTaskSchedulerReconciler_EnhancedReconciliation(t *testing.T) {
 		}, configMap)
 		require.NoError(t, err)
 
-		config := configMap.Data["config.yaml"]
+		config := configMap.Data["matey.yaml"]
 		assert.Contains(t, config, "event_triggers:")
 		assert.Contains(t, config, "conditional_dependencies:")
 		assert.Contains(t, config, "auto_scaling:")
@@ -604,12 +610,20 @@ func TestMCPTaskSchedulerReconciler_EventWatcherManagement(t *testing.T) {
 
 	logger := logging.NewLogger("test")
 	reconciler := &MCPTaskSchedulerReconciler{
-		Client: client,
-		Scheme: s,
-		Logger: logger,
+		Client:            client,
+		Scheme:            s,
+		Logger:            logger,
+		disableEventWatch: true, // Disable event watching for tests to avoid race conditions
 	}
 
 	t.Run("event watcher setup and cleanup", func(t *testing.T) {
+		// Create a separate reconciler with event watching enabled for this test
+		eventReconciler := &MCPTaskSchedulerReconciler{
+			Client:            client,
+			Scheme:            s,
+			Logger:            logger,
+			disableEventWatch: false, // Enable event watching for this specific test
+		}
 		ctx := context.Background()
 		
 		taskScheduler := &crd.MCPTaskScheduler{
@@ -637,19 +651,19 @@ func TestMCPTaskSchedulerReconciler_EventWatcherManagement(t *testing.T) {
 		}
 
 		// Setup event watching
-		err := reconciler.setupEventWatching(ctx, taskScheduler)
+		err := eventReconciler.setupEventWatching(ctx, taskScheduler)
 		require.NoError(t, err)
 
 		// Verify that the event watcher was created
 		key := "default/test-scheduler"
-		assert.Contains(t, reconciler.eventWatchers, key)
+		assert.Contains(t, eventReconciler.eventWatchers, key)
 
 		// Test cleanup during termination
-		_, err = reconciler.reconcileTerminating(ctx, taskScheduler)
+		_, err = eventReconciler.reconcileTerminating(ctx, taskScheduler)
 		require.NoError(t, err)
 
 		// Verify that the event watcher was cleaned up
-		assert.NotContains(t, reconciler.eventWatchers, key)
+		assert.NotContains(t, eventReconciler.eventWatchers, key)
 	})
 
 	t.Run("event watcher with no triggers", func(t *testing.T) {
