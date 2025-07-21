@@ -372,8 +372,6 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			}
 		}
 		
-		fmt.Printf("DEBUG: Tool %s detected as native=%v\n", toolCall.Function.Name, isNative)
-		
 		if isNative {
 			// Execute native function
 			result, err = t.executeToolCall(toolCall, aiMsgIndex)
