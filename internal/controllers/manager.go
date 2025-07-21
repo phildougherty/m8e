@@ -21,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/phildougherty/m8e/internal/config"
-	"github.com/phildougherty/m8e/internal/controller"
 	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
 )
@@ -174,10 +173,15 @@ func setupControllers(mgr ctrl.Manager, logger *logging.Logger, cfg *config.Comp
 		return fmt.Errorf("failed to setup MCPTaskScheduler controller: %w", err)
 	}
 
-	// Setup MCPProxy controller
-	if err := (&controller.MCPProxyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	// Setup MCPProxy controller with enhanced features
+	if err := (&MCPProxyReconciler{
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		Logger:         logger,
+		MaxRetries:     3,
+		RetryDelay:     time.Second * 2,
+		CircuitBreaker: true,
+		HealthInterval: time.Second * 30,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup MCPProxy controller: %w", err)
 	}
