@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="matey.png" alt="Matey Logo" width="200">
+</div>
+
 # Matey (m8e)
 
 **Kubernetes-native MCP Server Orchestrator**
