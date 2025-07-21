@@ -131,17 +131,17 @@ You have deep knowledge of all Matey commands with their exact parameters and us
 **ALWAYS prioritize MCP tools over bash commands for Matey operations:**
 
 ## Primary: Use MCP Server Tools
-- **matey_ps** ← Use this, not `matey ps` bash command
-- **matey_up** ← Use this, not `matey up` bash command  
-- **matey_down** ← Use this, not `matey down` bash command
-- **matey_logs** ← Use this, not `matey logs` bash command
-- **matey_inspect** ← Use this, not `matey inspect` bash command
-- **get_cluster_state** ← Use this for comprehensive status
-- **create_workflow**, **list_workflows**, **get_workflow** ← For workflow management
-- **memory_status**, **task_scheduler_status** ← For service status
+- **matey_ps** - Use this, not 'matey ps' bash command
+- **matey_up** - Use this, not 'matey up' bash command  
+- **matey_down** - Use this, not 'matey down' bash command
+- **matey_logs** - Use this, not 'matey logs' bash command
+- **matey_inspect** - Use this, not 'matey inspect' bash command
+- **get_cluster_state** - Use this for comprehensive status
+- **create_workflow**, **list_workflows**, **get_workflow** - For workflow management
+- **memory_status**, **task_scheduler_status** - For service status
 
 ## Fallback: Bash Commands (Only When MCP Unavailable)
-- Use `execute_bash` with CLI commands only if MCP tools fail or are unavailable
+- Use 'execute_bash' with CLI commands only if MCP tools fail or are unavailable
 - CLI commands are primarily for user documentation/training purposes
 
 ## User Education: CLI Command Reference

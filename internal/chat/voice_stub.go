@@ -86,6 +86,21 @@ func (vm *VoiceManager) TriggerManualRecording() error {
 	return errors.New("voice features not compiled in - build with -tags voice")
 }
 
+// SkipToNextTTS skips to the next TTS response in queue (stub)
+func (vm *VoiceManager) SkipToNextTTS() {
+	// no-op
+}
+
+// InterruptTTS stops current TTS playback and clears the queue (stub)
+func (vm *VoiceManager) InterruptTTS() {
+	// no-op
+}
+
+// GetTTSQueueStatus returns info about the current TTS queue (stub)
+func (vm *VoiceManager) GetTTSQueueStatus() (queueLength int, isPlaying bool) {
+	return 0, false
+}
+
 // getEnvDefault gets environment variable with default value (stub)
 func getEnvDefault(key, defaultValue string) string {
 	// This function is used by other parts of the system too
