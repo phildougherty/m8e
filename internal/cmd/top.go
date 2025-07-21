@@ -21,41 +21,60 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// Styles for the TUI
+// Color constants matching chat UI theme
+var (
+	ArmyGreen   = lipgloss.Color("58")   // #5f5f00 - darker army green
+	LightGreen  = lipgloss.Color("64")   // #5f8700 - lighter army green  
+	Brown       = lipgloss.Color("94")   // #875f00 - brown
+	Yellow      = lipgloss.Color("226")  // #ffff00 - bright yellow
+	GoldYellow  = lipgloss.Color("220")  // #ffd700 - gold yellow
+	Red         = lipgloss.Color("196")  // #ff0000 - red
+	Tan         = lipgloss.Color("180")  // #d7af87 - tan
+)
+
+// Styles for the TUI with consistent chat UI theme
 var (
 	titleStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
+		Foreground(ArmyGreen).
 		Bold(true).
-		Margin(1, 0)
+		Margin(0, 1)
 
 	headerStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("39")).
+		Foreground(Brown).
 		Bold(true).
 		Underline(true)
 
 	statusRunningStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("46")).
+		Foreground(LightGreen).
 		Bold(true)
 
 	statusPendingStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("226")).
+		Foreground(GoldYellow).
 		Bold(true)
 
 	statusErrorStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("196")).
+		Foreground(Red).
 		Bold(true)
 
 	statusUnknownStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(Tan).
 		Bold(true)
 
 	tableStyle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("238"))
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(Brown).
+		Padding(1, 2)
 
 	helpStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Margin(1, 0)
+		Foreground(Yellow).
+		Italic(true)
+
+	statusBarStyle = lipgloss.NewStyle().
+		Foreground(GoldYellow).
+		Bold(true)
+
+	separatorStyle = lipgloss.NewStyle().
+		Foreground(Brown)
 )
 
 // ServerInfo contains detailed information about a server
@@ -99,22 +118,27 @@ func NewTopCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "top",
 		Short: "Display a live view of MCP servers with detailed information",
-		Long: `Display a live view of MCP servers with detailed information including:
-- Real-time status updates
-- Resource usage (CPU, Memory)
-- Restart counts and age
-- Container information
-- Network configuration
-- Interactive sorting and filtering
+		Long: `Display a live view of MCP servers with enhanced visual monitoring including:
+- Real-time status updates with color coding
+- Resource usage tracking (CPU, Memory)
+- Restart counts and age information
+- Container and protocol information
+- Network configuration details
+- Interactive sorting by multiple criteria
+- Enhanced color theme matching Matey chat UI
 
-Controls:
-- q/Ctrl+C: Quit
-- s: Sort by status
-- n: Sort by name
-- r: Sort by restarts
-- a: Sort by age
-- h: Toggle help
-- Space: Reverse sort order`,
+Enhanced Controls:
+- q/Ctrl+C: Quit                    - F5/Ctrl+R: Force refresh
+- h/?: Toggle help display          - Space: Reverse sort order
+- n: Sort by name                   - s: Sort by status
+- t: Sort by type                   - r: Sort by restarts
+- a: Sort by age                    - p: Sort by protocol
+- c: Sort by CPU usage              - m: Sort by memory usage
+
+Features:
+- Color-coded status indicators     - Type-based server coloring
+- Age-based time coloring          - Protocol-specific highlighting
+- Alternating row backgrounds      - Enhanced error handling`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			file, _ := cmd.Flags().GetString("file")
 			refreshRate, _ := cmd.Flags().GetDuration("refresh")
@@ -220,13 +244,32 @@ func (m *TopModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sortBy = "age"
 			m.sortServers()
 			return m, nil
+		case "t":
+			m.sortBy = "type"
+			m.sortServers()
+			return m, nil
+		case "p":
+			m.sortBy = "protocol"
+			m.sortServers()
+			return m, nil
+		case "m":
+			m.sortBy = "memory"
+			m.sortServers()
+			return m, nil
+		case "c":
+			m.sortBy = "cpu"
+			m.sortServers()
+			return m, nil
 		case " ":
 			m.sortDesc = !m.sortDesc
 			m.sortServers()
 			return m, nil
-		case "h":
+		case "h", "?":
 			m.showHelp = !m.showHelp
 			return m, nil
+		case "F5", "ctrl+r":
+			// Force refresh
+			return m, m.fetchServers()
 		}
 
 	case tickMsg:
@@ -254,67 +297,117 @@ func (m *TopModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the TUI
 func (m *TopModel) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit", m.err)
+		errorMsg := fmt.Sprintf("Error: %v\n\nPress q to quit", m.err)
+		return statusErrorStyle.Render(errorMsg)
 	}
 
 	var b strings.Builder
 
-	// Title
-	b.WriteString(titleStyle.Render("Matey Top - MCP Server Monitor"))
+	// Enhanced header with borders
+	headerBox := lipgloss.NewStyle().
+		Foreground(ArmyGreen).
+		Bold(true).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(Brown).
+		Padding(0, 2).
+		Margin(1, 0)
+	
+	b.WriteString(headerBox.Render("╔═══ Matey Top - MCP Server Monitor ═══╗"))
 	b.WriteString("\n")
 
-	// Status bar
-	statusBar := fmt.Sprintf("Last Update: %s | Servers: %d | Sort: %s %s | Press 'h' for help",
-		m.lastUpdate.Format("15:04:05"),
-		len(m.servers),
-		m.sortBy,
-		func() string {
-			if m.sortDesc {
-				return "↓"
-			}
-			return "↑"
-		}())
-	b.WriteString(helpStyle.Render(statusBar))
-	b.WriteString("\n")
+	// Enhanced status bar with better formatting
+	currentTime := m.lastUpdate.Format("15:04:05")
+	serverCount := len(m.servers)
+	sortDirection := "↑"
+	if m.sortDesc {
+		sortDirection = "↓"
+	}
+	
+	statusBar := fmt.Sprintf("Last Update: %s │ Servers: %d │ Sort: %s %s │ Press 'h' for help",
+		currentTime, serverCount, m.sortBy, sortDirection)
+	
+	statusBarBox := lipgloss.NewStyle().
+		Foreground(GoldYellow).
+		Bold(true).
+		Padding(0, 2).
+		Margin(0, 1)
+	
+	b.WriteString(statusBarBox.Render(statusBar))
+	b.WriteString("\n\n")
 
-	// Help section
+	// Enhanced help section
 	if m.showHelp {
-		help := `Controls:
-  q/Ctrl+C: Quit          s: Sort by status      n: Sort by name
-  r: Sort by restarts     a: Sort by age         Space: Reverse sort
-  h: Toggle this help
-`
-		b.WriteString(tableStyle.Render(help))
+		helpContent := `╔═══ Controls ═══╗
+│ q/Ctrl+C: Quit          │ h/?: Toggle help       │ Space: Reverse sort   │
+│ F5/Ctrl+R: Force refresh                                                 │
+├─── Sort Options ────────────────────────────────────────────────────────┤
+│ n: Sort by name         │ s: Sort by status      │ t: Sort by type       │
+│ r: Sort by restarts     │ a: Sort by age         │ p: Sort by protocol   │
+│ c: Sort by CPU usage    │ m: Sort by memory      │                       │
+╚══════════════════════════════════════════════════════════════════════════╝`
+		
+		helpBox := lipgloss.NewStyle().
+			Foreground(Yellow).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(Brown).
+			Padding(1, 2).
+			Margin(1, 1)
+		
+		b.WriteString(helpBox.Render(helpContent))
 		b.WriteString("\n")
 	}
 
-	// Table header
-	header := fmt.Sprintf("%-20s %-10s %-12s %-8s %-10s %-8s %-8s %-30s %-10s %-6s",
+	// Enhanced table header with better spacing
+	headerRow := fmt.Sprintf("%-20s %-10s %-12s %-8s %-10s %-8s %-8s %-30s %-10s %-6s",
 		"NAME", "STATUS", "TYPE", "RESTARTS", "AGE", "CPU", "MEMORY", "IMAGE", "PROTOCOL", "PORT")
-	b.WriteString(headerStyle.Render(header))
+	
+	headerFormatted := headerStyle.Render(headerRow)
+	b.WriteString(headerFormatted)
 	b.WriteString("\n")
 
-	// Separator
-	b.WriteString(strings.Repeat("─", m.width))
-	b.WriteString("\n")
-
-	// Server rows
-	for _, server := range m.servers {
-		row := m.formatServerRow(server)
-		b.WriteString(row)
-		b.WriteString("\n")
+	// Enhanced separator with styled line
+	separatorWidth := m.width
+	if separatorWidth == 0 {
+		separatorWidth = 140
 	}
+	separator := strings.Repeat("─", separatorWidth-4)
+	b.WriteString(separatorStyle.Render("├" + separator + "┤"))
+	b.WriteString("\n")
 
-	// Footer
+	// Server rows with enhanced formatting
 	if len(m.servers) == 0 {
-		b.WriteString(helpStyle.Render("No servers found"))
+		noServersMsg := "No servers found. Check your configuration and try again."
+		noServersBox := lipgloss.NewStyle().
+			Foreground(Tan).
+			Italic(true).
+			Padding(2, 4).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(Brown)
+		
+		b.WriteString(noServersBox.Render(noServersMsg))
+	} else {
+		for i, server := range m.servers {
+			row := m.formatServerRow(server, i%2 == 0) // Alternate row styling
+			b.WriteString(row)
+			b.WriteString("\n")
+		}
 	}
+
+	// Enhanced footer
+	b.WriteString("\n")
+	footerContent := "Matey MCP Server Orchestrator - Real-time status monitoring"
+	footerBox := lipgloss.NewStyle().
+		Foreground(Brown).
+		Italic(true).
+		Align(lipgloss.Center)
+	
+	b.WriteString(footerBox.Render(footerContent))
 
 	return b.String()
 }
 
-// formatServerRow formats a server row with appropriate styling
-func (m *TopModel) formatServerRow(server ServerInfo) string {
+// formatServerRow formats a server row with appropriate styling and alternating colors
+func (m *TopModel) formatServerRow(server ServerInfo, isEvenRow bool) string {
 	// Format status with color
 	var statusStr string
 	switch server.Status {
@@ -328,32 +421,110 @@ func (m *TopModel) formatServerRow(server ServerInfo) string {
 		statusStr = statusUnknownStyle.Render(server.Status)
 	}
 
-	// Format age
-	ageStr := formatDuration(server.Age)
+	// Format age with color based on duration
+	ageStr := m.formatDurationWithColor(server.Age)
 
-	// Format image (truncate if too long)
+	// Format image (truncate if too long) with subtle styling
 	imageStr := server.Image
 	if len(imageStr) > 30 {
 		imageStr = imageStr[:27] + "..."
 	}
+	imageStyled := lipgloss.NewStyle().Foreground(Tan).Render(imageStr)
 
-	// Format port
+	// Format port with styling
 	portStr := ""
 	if server.Port > 0 {
-		portStr = fmt.Sprintf("%d", server.Port)
+		portStr = lipgloss.NewStyle().Foreground(GoldYellow).Render(fmt.Sprintf("%d", server.Port))
 	}
 
-	return fmt.Sprintf("%-20s %-10s %-12s %-8d %-10s %-8s %-8s %-30s %-10s %-6s",
-		server.Name,
+	// Format restart count with color (red if > 0)
+	restartsStr := fmt.Sprintf("%d", server.Restarts)
+	if server.Restarts > 0 {
+		restartsStr = statusErrorStyle.Render(restartsStr)
+	} else {
+		restartsStr = statusRunningStyle.Render(restartsStr)
+	}
+
+	// Format resource usage with colors
+	cpuStr := server.CPU
+	memStr := server.Memory
+	if cpuStr != "" {
+		cpuStr = lipgloss.NewStyle().Foreground(Brown).Render(cpuStr)
+	}
+	if memStr != "" {
+		memStr = lipgloss.NewStyle().Foreground(Brown).Render(memStr)
+	}
+
+	// Format server name with type-based coloring
+	nameStr := server.Name
+	switch server.Type {
+	case "matey-core":
+		nameStr = lipgloss.NewStyle().Foreground(ArmyGreen).Bold(true).Render(nameStr)
+	case "mcp-server":
+		nameStr = lipgloss.NewStyle().Foreground(LightGreen).Render(nameStr)
+	case "memory":
+		nameStr = lipgloss.NewStyle().Foreground(GoldYellow).Render(nameStr)
+	case "task-scheduler":
+		nameStr = lipgloss.NewStyle().Foreground(Yellow).Render(nameStr)
+	default:
+		nameStr = lipgloss.NewStyle().Foreground(Tan).Render(nameStr)
+	}
+
+	// Format protocol with appropriate color
+	protocolStr := server.Protocol
+	if protocolStr != "" {
+		switch protocolStr {
+		case "http", "https":
+			protocolStr = lipgloss.NewStyle().Foreground(LightGreen).Render(protocolStr)
+		case "sse":
+			protocolStr = lipgloss.NewStyle().Foreground(GoldYellow).Render(protocolStr)
+		case "websocket":
+			protocolStr = lipgloss.NewStyle().Foreground(Yellow).Render(protocolStr)
+		case "stdio":
+			protocolStr = lipgloss.NewStyle().Foreground(Brown).Render(protocolStr)
+		default:
+			protocolStr = lipgloss.NewStyle().Foreground(Tan).Render(protocolStr)
+		}
+	}
+
+	// Create the formatted row
+	row := fmt.Sprintf("%-20s %-10s %-12s %-8s %-10s %-8s %-8s %-30s %-10s %-6s",
+		nameStr,
 		statusStr,
 		server.Type,
-		server.Restarts,
+		restartsStr,
 		ageStr,
-		server.CPU,
-		server.Memory,
-		imageStr,
-		server.Protocol,
+		cpuStr,
+		memStr,
+		imageStyled,
+		protocolStr,
 		portStr)
+
+	// Apply subtle alternating row background
+	if isEvenRow {
+		// Slightly darker background for even rows
+		rowStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
+		return rowStyle.Render(row)
+	}
+	
+	return row
+}
+
+// formatDurationWithColor formats duration with color coding
+func (m *TopModel) formatDurationWithColor(d time.Duration) string {
+	durationStr := formatDuration(d)
+	
+	// Color code based on age
+	if d < time.Hour {
+		// New - bright green
+		return lipgloss.NewStyle().Foreground(LightGreen).Bold(true).Render(durationStr)
+	} else if d < 24*time.Hour {
+		// Recent - yellow
+		return lipgloss.NewStyle().Foreground(GoldYellow).Render(durationStr)
+	} else {
+		// Old - tan
+		return lipgloss.NewStyle().Foreground(Tan).Render(durationStr)
+	}
 }
 
 // formatDuration formats a duration in a human-readable way
@@ -383,6 +554,20 @@ func (m *TopModel) sortServers() {
 			less = m.servers[i].Restarts < m.servers[j].Restarts
 		case "age":
 			less = m.servers[i].Age < m.servers[j].Age
+		case "type":
+			less = m.servers[i].Type < m.servers[j].Type
+		case "protocol":
+			less = m.servers[i].Protocol < m.servers[j].Protocol
+		case "memory":
+			// Handle memory sorting (parse memory values for numeric comparison)
+			memI := parseMemoryValue(m.servers[i].Memory)
+			memJ := parseMemoryValue(m.servers[j].Memory)
+			less = memI < memJ
+		case "cpu":
+			// Handle CPU sorting (parse CPU values for numeric comparison)
+			cpuI := parseCPUValue(m.servers[i].CPU)
+			cpuJ := parseCPUValue(m.servers[j].CPU)
+			less = cpuI < cpuJ
 		default:
 			less = m.servers[i].Name < m.servers[j].Name
 		}
@@ -392,6 +577,74 @@ func (m *TopModel) sortServers() {
 		}
 		return less
 	})
+}
+
+// parseMemoryValue converts memory strings like "128Mi", "1Gi" to bytes for comparison
+func parseMemoryValue(memory string) int64 {
+	if memory == "" {
+		return 0
+	}
+	
+	memory = strings.TrimSpace(memory)
+	
+	// Handle common Kubernetes memory formats
+	if strings.HasSuffix(memory, "Mi") {
+		if val, err := fmt.Sscanf(memory, "%dMi", new(int64)); err == nil && val == 1 {
+			var mem int64
+			fmt.Sscanf(memory, "%dMi", &mem)
+			return mem * 1024 * 1024 // Convert Mi to bytes
+		}
+	}
+	if strings.HasSuffix(memory, "Gi") {
+		if val, err := fmt.Sscanf(memory, "%dGi", new(int64)); err == nil && val == 1 {
+			var mem int64
+			fmt.Sscanf(memory, "%dGi", &mem)
+			return mem * 1024 * 1024 * 1024 // Convert Gi to bytes
+		}
+	}
+	if strings.HasSuffix(memory, "Ki") {
+		if val, err := fmt.Sscanf(memory, "%dKi", new(int64)); err == nil && val == 1 {
+			var mem int64
+			fmt.Sscanf(memory, "%dKi", &mem)
+			return mem * 1024 // Convert Ki to bytes
+		}
+	}
+	
+	// Try to parse as plain number (assume bytes)
+	if val, err := fmt.Sscanf(memory, "%d", new(int64)); err == nil && val == 1 {
+		var mem int64
+		fmt.Sscanf(memory, "%d", &mem)
+		return mem
+	}
+	
+	return 0
+}
+
+// parseCPUValue converts CPU strings like "100m", "1" to millicores for comparison
+func parseCPUValue(cpu string) int64 {
+	if cpu == "" {
+		return 0
+	}
+	
+	cpu = strings.TrimSpace(cpu)
+	
+	// Handle millicores
+	if strings.HasSuffix(cpu, "m") {
+		if val, err := fmt.Sscanf(cpu, "%dm", new(int64)); err == nil && val == 1 {
+			var cpuVal int64
+			fmt.Sscanf(cpu, "%dm", &cpuVal)
+			return cpuVal // Already in millicores
+		}
+	}
+	
+	// Handle whole cores (convert to millicores)
+	if val, err := fmt.Sscanf(cpu, "%d", new(int64)); err == nil && val == 1 {
+		var cpuVal int64
+		fmt.Sscanf(cpu, "%d", &cpuVal)
+		return cpuVal * 1000 // Convert to millicores
+	}
+	
+	return 0
 }
 
 // fetchServers fetches server information
