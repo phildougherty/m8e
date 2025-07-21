@@ -648,6 +648,20 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 	resultStr := fmt.Sprintf("%+v", result)
 	tokenCount := len(strings.Fields(resultStr)) // Simple word count as token estimate
 	
+	// Check if this is a file editing tool result with diff preview
+	if tc.isFileEditingTool(toolName) {
+		if resultMap, ok := result.(map[string]interface{}); ok {
+			if diffPreview, hasDiff := resultMap["diff_preview"].(string); hasDiff && diffPreview != "" {
+				// Show the visual diff for file editing tools
+				statusLine := fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
+					toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
+				
+				// Add the visual diff content
+				return fmt.Sprintf("\n%s\n\n%s", statusLine, diffPreview)
+			}
+		}
+	}
+	
 	// Claude Code style: just show the status line, no verbose output
 	statusLine := fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
 		toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
@@ -770,6 +784,7 @@ func (tc *TermChat) isNativeFunction(functionName string) bool {
 		"deploy_service", "scale_service", "restart_service", 
 		"get_logs", "get_metrics", "check_health",
 		"get_service_status", "create_backup",
+		"edit_file", "editfile", "edit-file", // Add file editing tools as native
 	}
 	
 	for _, nativeFunc := range nativeFunctions {

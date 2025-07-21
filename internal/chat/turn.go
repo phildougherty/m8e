@@ -363,7 +363,7 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		var err error
 		
 		// Check if this is a native function
-		nativeFunctions := []string{"execute_bash", "bash", "run_command", "deploy_service", "scale_service", "restart_service", "get_logs", "get_metrics", "check_health"}
+		nativeFunctions := []string{"execute_bash", "bash", "run_command", "deploy_service", "scale_service", "restart_service", "get_logs", "get_metrics", "check_health", "edit_file", "editfile", "edit-file"}
 		isNative := false
 		for _, nativeFunc := range nativeFunctions {
 			if toolCall.Function.Name == nativeFunc {

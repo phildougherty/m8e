@@ -104,6 +104,8 @@ func (tc *TermChat) ExecuteNativeToolCall(toolCall interface{}, index int) (inte
 		return tc.executeInfrastructureCommand(call.Function.Name, call.Function.Arguments)
 	case "get_logs", "get_metrics", "check_health", "get_service_status", "create_backup":
 		return tc.executeMonitoringCommand(call.Function.Name, call.Function.Arguments)
+	case "edit_file", "editfile", "edit-file":
+		return tc.executeEditFile(call.Function.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown native function: %s", call.Function.Name)
 	}
@@ -404,6 +406,110 @@ func (tc *TermChat) executeListMCPServers(argumentsJSON string) (*MCPServerListR
 		Status:  "success",
 	}
 
+	return result, nil
+}
+
+// executeEditFile executes file editing with visual diff support
+func (tc *TermChat) executeEditFile(argumentsJSON string) (interface{}, error) {
+	// Parse arguments - support both direct content and edits array format
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse edit_file arguments: %v", err)
+	}
+	
+	// Extract basic parameters
+	filePath, ok := args["path"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing required 'path' parameter")
+	}
+	
+	// Check for edits array (Claude Code style)
+	var diffContent strings.Builder
+	if edits, hasEdits := args["edits"].([]interface{}); hasEdits {
+		for i, edit := range edits {
+			editMap, ok := edit.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			
+			oldText, hasOld := editMap["oldText"].(string)
+			newText, hasNew := editMap["newText"].(string)
+			
+			if hasOld && hasNew {
+				if i > 0 {
+					diffContent.WriteString("\n\n")
+				}
+				diffContent.WriteString("------- SEARCH\n")
+				diffContent.WriteString(oldText)
+				diffContent.WriteString("\n=======\n")
+				diffContent.WriteString(newText) 
+				diffContent.WriteString("\n+++++++ REPLACE")
+			}
+		}
+	}
+	
+	// Fallback to direct content or diff_content
+	if diffContent.Len() == 0 {
+		if content, hasContent := args["content"].(string); hasContent {
+			// Simple content replacement - create search/replace for entire file
+			diffContent.WriteString("------- SEARCH\n")
+			// TODO: Read current file content for search part
+			diffContent.WriteString("\n=======\n")
+			diffContent.WriteString(content)
+			diffContent.WriteString("\n+++++++ REPLACE")
+		} else if diff, hasDiff := args["diff_content"].(string); hasDiff {
+			diffContent.WriteString(diff)
+		}
+	}
+	
+	if diffContent.Len() == 0 {
+		return nil, fmt.Errorf("no content, diff_content, or edits provided")
+	}
+	
+	// Create enhanced tools instance with visual diff enabled
+	config := mcp.EnhancedToolConfig{
+		EnableVisualDiff:  true,
+		EnablePreview:     true,
+		AutoApprove:       tc.approvalMode == YOLO, // Auto-approve in YOLO mode
+		MaxFileSize:       1024 * 1024, // 1MB
+		ContextTracking:   true,
+		BackupEnabled:     true,
+		ValidationEnabled: true,
+		DiffMode:          "unified",
+	}
+	
+	// Initialize enhanced tools (simplified for now)
+	enhancedTools := mcp.NewEnhancedTools(config, nil, nil, nil, nil, nil)
+	
+	// Create edit request
+	editRequest := mcp.EditFileRequest{
+		FilePath:    filePath,
+		DiffContent: diffContent.String(),
+		ShowPreview: true,
+		AutoApprove: config.AutoApprove,
+	}
+	
+	// Execute the edit with visual diff
+	ctx := context.Background()
+	response, err := enhancedTools.EditFile(ctx, editRequest)
+	if err != nil {
+		return nil, fmt.Errorf("edit failed: %v", err)
+	}
+	
+	// Return structured response that includes diff preview
+	result := map[string]interface{}{
+		"success":      response.Success,
+		"file_path":    response.FilePath,
+		"applied":      response.Applied,
+		"preview":      response.Preview,
+		"diff_preview": response.DiffPreview,
+		"backup":       response.Backup,
+	}
+	
+	if response.Error != "" {
+		result["error"] = response.Error
+	}
+	
 	return result, nil
 }
 
