@@ -1,0 +1,42 @@
+# Standard Workflow Runner - Contains all common tools for workflow execution
+FROM alpine:latest
+
+# Install common tools needed for workflow execution
+RUN apk add --no-cache \
+    bash \
+    curl \
+    wget \
+    jq \
+    git \
+    python3 \
+    py3-pip \
+    nodejs \
+    npm \
+    postgresql-client \
+    mysql-client \
+    redis \
+    openssh-client \
+    rsync \
+    tar \
+    gzip \
+    unzip \
+    ca-certificates \
+    tzdata
+
+# Install common Python packages using Alpine packages where available
+RUN apk add --no-cache \
+    py3-requests \
+    py3-yaml
+
+# Install additional packages that aren't available as Alpine packages
+RUN pip3 install --no-cache-dir --break-system-packages \
+    psycopg2-binary \
+    pymongo \
+    redis
+
+# Copy and install the workflow runner script
+COPY workflow-runner.sh /usr/local/bin/workflow-runner
+RUN chmod +x /usr/local/bin/workflow-runner
+
+# Set the entrypoint
+ENTRYPOINT ["/usr/local/bin/workflow-runner"]

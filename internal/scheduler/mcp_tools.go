@@ -16,12 +16,13 @@ import (
 
 // MCPToolServer provides MCP protocol tools for task scheduler management
 type MCPToolServer struct {
-	cronEngine     *CronEngine
-	workflowEngine *WorkflowEngine
+	cronEngine       *CronEngine
+	workflowEngine   *WorkflowEngine
+	workflowScheduler *WorkflowScheduler // NEW: Reference to WorkflowScheduler for sync
 	templateRegistry *TemplateRegistry
-	k8sClient      client.Client // NEW: Kubernetes client for CRD access
-	namespace      string        // NEW: Kubernetes namespace
-	logger         logr.Logger
+	k8sClient        client.Client // NEW: Kubernetes client for CRD access
+	namespace        string        // NEW: Kubernetes namespace
+	logger           logr.Logger
 }
 
 func NewMCPToolServer(cronEngine *CronEngine, workflowEngine *WorkflowEngine, logger logr.Logger) *MCPToolServer {
@@ -32,6 +33,11 @@ func NewMCPToolServer(cronEngine *CronEngine, workflowEngine *WorkflowEngine, lo
 		namespace:        "default", // Default namespace
 		logger:           logger,
 	}
+}
+
+// SetWorkflowScheduler sets the WorkflowScheduler reference for synchronization
+func (mts *MCPToolServer) SetWorkflowScheduler(scheduler *WorkflowScheduler) {
+	mts.workflowScheduler = scheduler
 }
 
 // SetK8sClient sets the Kubernetes client and namespace for CRD access
@@ -1119,6 +1125,15 @@ func (mts *MCPToolServer) createWorkflow(ctx context.Context, params map[string]
 	if err != nil {
 		return nil, fmt.Errorf("failed to update MCPTaskScheduler: %w", err)
 	}
+	
+	// Sync the new workflow to the WorkflowScheduler
+	if mts.workflowScheduler != nil && workflow.Schedule != "" {
+		if err := mts.workflowScheduler.SyncWorkflow(&workflow); err != nil {
+			mts.logger.Error(err, "Failed to sync workflow to scheduler", "workflow", name)
+		} else {
+			mts.logger.Info("Synced workflow to scheduler", "workflow", name, "schedule", workflow.Schedule)
+		}
+	}
 
 	mts.logger.Info("Created workflow", "name", name, "namespace", namespace)
 
@@ -1314,6 +1329,17 @@ func (mts *MCPToolServer) pauseWorkflow(ctx context.Context, params map[string]i
 			if err != nil {
 				return nil, fmt.Errorf("failed to pause workflow: %w", err)
 			}
+			
+			// Sync the paused workflow to the WorkflowScheduler
+			if mts.workflowScheduler != nil {
+				updatedWorkflow := taskScheduler.Spec.Workflows[i]
+				if err := mts.workflowScheduler.SyncWorkflow(&updatedWorkflow); err != nil {
+					mts.logger.Error(err, "Failed to sync paused workflow to scheduler", "workflow", name)
+				} else {
+					mts.logger.Info("Synced paused workflow to scheduler", "workflow", name)
+				}
+			}
+			
 			mts.logger.Info("Paused workflow", "name", name)
 			break
 		}
@@ -1362,6 +1388,17 @@ func (mts *MCPToolServer) resumeWorkflow(ctx context.Context, params map[string]
 			if err != nil {
 				return nil, fmt.Errorf("failed to resume workflow: %w", err)
 			}
+			
+			// Sync the resumed workflow to the WorkflowScheduler
+			if mts.workflowScheduler != nil {
+				updatedWorkflow := taskScheduler.Spec.Workflows[i]
+				if err := mts.workflowScheduler.SyncWorkflow(&updatedWorkflow); err != nil {
+					mts.logger.Error(err, "Failed to sync resumed workflow to scheduler", "workflow", name)
+				} else {
+					mts.logger.Info("Synced resumed workflow to scheduler", "workflow", name)
+				}
+			}
+			
 			mts.logger.Info("Resumed workflow", "name", name)
 			break
 		}

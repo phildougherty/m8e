@@ -67,35 +67,17 @@ func (kwe *K8sWorkflowExecutor) ExecuteWorkflowAsJob(ctx context.Context, workfl
 
 // createWorkflowTaskRequest converts a workflow definition to a TaskRequest
 func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.WorkflowDefinition, workflowName, executionID string) *task_scheduler.TaskRequest {
-	// Use the matey binary to execute the workflow
-	image := "mcp.robotrad.io/matey:latest"
+	// For now, create a simple workflow execution script that runs all steps
+	// In production, this could be enhanced to run steps separately or use init containers
 	
-	// Command to execute the workflow using matey's workflow engine
-	command := []string{"./matey"}
-	args := []string{
-		"scheduler-execute-workflow",
-		"--workflow-name", workflowName,
-		"--execution-id", executionID,
-		"--namespace", kwe.namespace,
-	}
+	// Determine appropriate container image and commands based on workflow steps
+	image, command, args := kwe.buildWorkflowExecution(workflowDef)
 
 	// Set environment variables for workflow execution
 	env := map[string]string{
 		"WORKFLOW_NAME":         workflowName,
 		"WORKFLOW_EXECUTION_ID": executionID,
 		"KUBERNETES_NAMESPACE":  kwe.namespace,
-		"LOG_LEVEL":            "info",
-	}
-
-	// Add proxy configuration if available
-	if kwe.config != nil && kwe.config.Servers != nil {
-		if proxyConfig, exists := kwe.config.Servers["matey-proxy"]; exists {
-			env["MCP_PROXY_URL"] = fmt.Sprintf("http://matey-proxy.%s.svc.cluster.local:%d", kwe.namespace, proxyConfig.HttpPort)
-			if proxyConfig.Authentication != nil {
-				// Would need to extract API key from authentication config
-				env["MCP_PROXY_API_KEY"] = "proxy-api-key" // Placeholder
-			}
-		}
 	}
 
 	// Set timeout from workflow definition
@@ -151,6 +133,193 @@ func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.Workf
 			"submittedAt":     time.Now().Format(time.RFC3339),
 		},
 	}
+}
+
+// buildWorkflowExecution creates the appropriate container image and command for executing the workflow
+func (kwe *K8sWorkflowExecutor) buildWorkflowExecution(workflowDef *crd.WorkflowDefinition) (string, []string, []string) {
+	// Use the standard workflow runner image for all workflows
+	// This image contains all common tools: bash, curl, wget, jq, git, python3, nodejs, etc.
+	
+	if len(workflowDef.Steps) == 0 {
+		return "mcp.robotrad.io/workflow-runner:latest", []string{}, []string{"echo 'No steps defined'"}
+	}
+	
+	// Build the complete workflow script
+	scriptCommands := kwe.buildShellScript(workflowDef)
+	
+	// The workflow-runner entrypoint expects the script as the first argument
+	return "mcp.robotrad.io/workflow-runner:latest", []string{}, []string{scriptCommands}
+}
+
+// buildShellScript creates a shell script that executes all workflow steps
+func (kwe *K8sWorkflowExecutor) buildShellScript(workflowDef *crd.WorkflowDefinition) string {
+	script := "#!/bin/bash\n"
+	script += "set -e\n" // Exit on error
+	script += fmt.Sprintf("echo 'Starting workflow: %s'\n", workflowDef.Name)
+	
+	for i, step := range workflowDef.Steps {
+		script += fmt.Sprintf("echo 'Step %d: %s'\n", i+1, step.Name)
+		
+		switch step.Tool {
+		case "echo":
+			message := "Hello World"
+			if msg, ok := step.Parameters["message"].(string); ok {
+				message = msg
+			}
+			script += fmt.Sprintf("echo '%s'\n", message)
+			
+		case "date":
+			format := ""
+			if fmt, ok := step.Parameters["format"].(string); ok {
+				format = fmt
+			}
+			if format != "" {
+				script += fmt.Sprintf("date '%s'\n", format)
+			} else {
+				script += "date\n"
+			}
+			
+		case "sleep":
+			duration := "1"
+			if dur, ok := step.Parameters["duration"].(string); ok {
+				duration = dur
+			}
+			script += fmt.Sprintf("sleep %s\n", duration)
+			
+		case "curl":
+			url := ""
+			method := "GET"
+			headers := ""
+			data := ""
+			
+			if u, ok := step.Parameters["url"].(string); ok {
+				url = u
+			}
+			if m, ok := step.Parameters["method"].(string); ok {
+				method = m
+			}
+			if h, ok := step.Parameters["headers"].(string); ok {
+				headers = h
+			}
+			if d, ok := step.Parameters["data"].(string); ok {
+				data = d
+			}
+			
+			if url != "" {
+				curlCmd := "curl -s"
+				if method != "GET" {
+					curlCmd += fmt.Sprintf(" -X %s", method)
+				}
+				if headers != "" {
+					curlCmd += fmt.Sprintf(" -H '%s'", headers)
+				}
+				if data != "" {
+					curlCmd += fmt.Sprintf(" -d '%s'", data)
+				}
+				curlCmd += fmt.Sprintf(" '%s'\n", url)
+				script += curlCmd
+			}
+			
+		case "wget":
+			url := ""
+			output := ""
+			if u, ok := step.Parameters["url"].(string); ok {
+				url = u
+			}
+			if o, ok := step.Parameters["output"].(string); ok {
+				output = o
+			}
+			if url != "" {
+				wgetCmd := "wget -q"
+				if output != "" {
+					wgetCmd += fmt.Sprintf(" -O '%s'", output)
+				}
+				wgetCmd += fmt.Sprintf(" '%s'\n", url)
+				script += wgetCmd
+			}
+			
+		case "python3", "python":
+			code := ""
+			file := ""
+			if c, ok := step.Parameters["code"].(string); ok {
+				code = c
+			}
+			if f, ok := step.Parameters["file"].(string); ok {
+				file = f
+			}
+			
+			if code != "" {
+				script += fmt.Sprintf("python3 -c '%s'\n", code)
+			} else if file != "" {
+				script += fmt.Sprintf("python3 '%s'\n", file)
+			}
+			
+		case "node", "nodejs":
+			code := ""
+			file := ""
+			if c, ok := step.Parameters["code"].(string); ok {
+				code = c
+			}
+			if f, ok := step.Parameters["file"].(string); ok {
+				file = f
+			}
+			
+			if code != "" {
+				script += fmt.Sprintf("node -e '%s'\n", code)
+			} else if file != "" {
+				script += fmt.Sprintf("node '%s'\n", file)
+			}
+			
+		case "jq":
+			filter := "."
+			input := ""
+			if f, ok := step.Parameters["filter"].(string); ok {
+				filter = f
+			}
+			if i, ok := step.Parameters["input"].(string); ok {
+				input = i
+			}
+			
+			if input != "" {
+				script += fmt.Sprintf("echo '%s' | jq '%s'\n", input, filter)
+			} else {
+				script += fmt.Sprintf("jq '%s'\n", filter)
+			}
+			
+		case "git":
+			command := ""
+			if cmd, ok := step.Parameters["command"].(string); ok {
+				command = cmd
+			}
+			if command != "" {
+				script += fmt.Sprintf("git %s\n", command)
+			}
+			
+		case "bash", "sh":
+			command := ""
+			if cmd, ok := step.Parameters["command"].(string); ok {
+				command = cmd
+			}
+			if command != "" {
+				script += fmt.Sprintf("%s\n", command)
+			}
+			
+		default:
+			// For unknown tools, try to execute them as commands
+			command := step.Tool
+			if cmd, ok := step.Parameters["command"].(string); ok {
+				command = cmd
+			} else if args, ok := step.Parameters["args"].(string); ok {
+				command = fmt.Sprintf("%s %s", step.Tool, args)
+			}
+			script += fmt.Sprintf("%s || echo 'Command failed: %s'\n", command, command)
+		}
+		
+		script += fmt.Sprintf("echo 'Step %d completed'\n", i+1)
+	}
+	
+	script += fmt.Sprintf("echo 'Workflow %s completed successfully'\n", workflowDef.Name)
+	return script
 }
 
 // GetWorkflowJobStatus gets the status of a workflow job

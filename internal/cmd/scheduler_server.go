@@ -112,6 +112,10 @@ Examples:
 				} else {
 					logger.Info("Workflow scheduler started successfully")
 				}
+				
+				// Connect the toolServer to the workflowScheduler for synchronization
+				toolServer.SetWorkflowScheduler(workflowScheduler)
+				logger.Info("Connected MCP tool server to workflow scheduler for live sync")
 			}
 			
 			// Create the MCP server
