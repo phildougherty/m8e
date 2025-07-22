@@ -21,13 +21,13 @@ func (m *ChatUI) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.termChat.voiceManager.isRecording {
 			m.viewport = append(m.viewport, "")
 			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Recording", time.Now().Format("15:04:05")))
-			m.viewport = append(m.viewport, m.createInfoMessage("🛑 Stopping recording early..."))
+			m.viewport = append(m.viewport, m.createInfoMessage("Stopping recording early..."))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		} else {
 			m.viewport = append(m.viewport, "")
 			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Recording", time.Now().Format("15:04:05")))
-			m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Recording... (auto-stops when you stop talking)"))
-			m.viewport = append(m.viewport, m.createInfoMessage("🗣️  Speak now! Press Ctrl+T again to stop early"))
+			m.viewport = append(m.viewport, m.createSuccessMessage("Recording... (auto-stops when you stop talking)"))
+			m.viewport = append(m.viewport, m.createInfoMessage("Speak now! Press Ctrl+T again to stop early"))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		}
 		
@@ -182,7 +182,7 @@ func (m *ChatUI) handlePaste() (tea.Model, tea.Cmd) {
 		if len(lines) > 1 {
 			m.viewport = append(m.viewport, "")
 			m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Paste", time.Now().Format("15:04:05")))
-			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✅ Pasted %d lines", len(lines))))
+			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("Pasted %d lines", len(lines))))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		} else {
 			// For single line, just show brief success
@@ -192,7 +192,7 @@ func (m *ChatUI) handlePaste() (tea.Model, tea.Cmd) {
 			if len(preview) > 50 {
 				preview = preview[:47] + "..."
 			}
-			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✅ Pasted: %s", preview)))
+			m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("Pasted: %s", preview)))
 			m.viewport = append(m.viewport, m.createBoxFooter())
 		}
 	}
@@ -457,14 +457,14 @@ func (m *ChatUI) handleConfirmationChoice(choice string) tea.Cmd {
 	switch choice {
 	case "y", "yes", "":
 		approved = true
-		feedbackMsg = "Function approved ✅"
+		feedbackMsg = "Function approved"
 	case "Y":
 		approved = true
 		m.termChat.approvalMode = YOLO
 		feedbackMsg = "Function approved and upgraded to YOLO mode "
 	case "n", "no":
 		approved = false
-		feedbackMsg = "Function cancelled ❌"
+		feedbackMsg = "Function cancelled"
 	case "a", "always":
 		approved = true
 		m.termChat.approvalMode = AUTO_EDIT
@@ -475,7 +475,7 @@ func (m *ChatUI) handleConfirmationChoice(choice string) tea.Cmd {
 		feedbackMsg = "Function approved and upgraded to YOLO mode "
 	default:
 		approved = false
-		feedbackMsg = "Invalid choice - Function cancelled ❌"
+		feedbackMsg = "Invalid choice - Function cancelled"
 	}
 	
 	// Add enhanced confirmation result to viewport
@@ -581,7 +581,7 @@ func (m *ChatUI) handleVoiceToggle() (tea.Model, tea.Cmd) {
 		
 		m.viewport = append(m.viewport, "")
 		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("System", time.Now().Format("15:04:05")))
-		m.viewport = append(m.viewport, m.createSuccessMessage("Voice mode ENABLED 🎤"))
+		m.viewport = append(m.viewport, m.createSuccessMessage("Voice mode ENABLED"))
 		m.viewport = append(m.viewport, m.createInfoMessage("Press Ctrl+T to start voice recording"))
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		m.viewport = append(m.viewport, "")
@@ -609,7 +609,7 @@ func (m *ChatUI) handlePushToTalk() (tea.Model, tea.Cmd) {
 	// Start recording for PTT
 	m.viewport = append(m.viewport, "")
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
-	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Push-to-Talk recording... (Ctrl+Space again to stop)"))
+	m.viewport = append(m.viewport, m.createInfoMessage("Push-to-Talk recording... (Ctrl+Space again to stop)"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	
 	// Trigger manual voice recording
@@ -626,7 +626,7 @@ func (m *ChatUI) handleManualVoiceTrigger() (tea.Model, tea.Cmd) {
 	
 	m.viewport = append(m.viewport, "")
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice", time.Now().Format("15:04:05")))
-	m.viewport = append(m.viewport, m.createInfoMessage("🎤 Voice activated manually - listening..."))
+	m.viewport = append(m.viewport, m.createInfoMessage("Voice activated manually - listening..."))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	
 	// Trigger manual voice recording (bypass wake word detection)
@@ -672,9 +672,9 @@ func (m *ChatUI) handleTTSSkip() (tea.Model, tea.Cmd) {
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Control", time.Now().Format("15:04:05")))
 	m.viewport = append(m.viewport, m.createSuccessMessage("⏭️  Skipped to next TTS response"))
 	if queueLength > 0 {
-		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("📋 %d responses remaining in queue", queueLength)))
+		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("%d responses remaining in queue", queueLength)))
 	} else if !isPlaying {
-		m.viewport = append(m.viewport, m.createInfoMessage("📋 Queue is empty"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Queue is empty"))
 	}
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
@@ -697,8 +697,8 @@ func (m *ChatUI) handleTTSInterrupt() (tea.Model, tea.Cmd) {
 	
 	m.viewport = append(m.viewport, "")
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Control", time.Now().Format("15:04:05")))
-	m.viewport = append(m.viewport, m.createSuccessMessage("🛑 TTS interrupted and queue cleared"))
-	m.viewport = append(m.viewport, m.createInfoMessage("🔇 All speech playback stopped"))
+	m.viewport = append(m.viewport, m.createSuccessMessage("TTS interrupted and queue cleared"))
+	m.viewport = append(m.viewport, m.createInfoMessage("All speech playback stopped"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
 	return m, nil
@@ -721,15 +721,15 @@ func (m *ChatUI) handleTTSQueueStatus() (tea.Model, tea.Cmd) {
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("TTS Queue Status", time.Now().Format("15:04:05")))
 	
 	if isPlaying {
-		m.viewport = append(m.viewport, m.createSuccessMessage("🔊 Currently playing TTS response"))
+		m.viewport = append(m.viewport, m.createSuccessMessage("Currently playing TTS response"))
 	} else {
-		m.viewport = append(m.viewport, m.createInfoMessage("🔇 No TTS currently playing"))
+		m.viewport = append(m.viewport, m.createInfoMessage("No TTS currently playing"))
 	}
 	
 	if queueLength > 0 {
-		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("📋 %d responses queued for playback", queueLength)))
+		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("%d responses queued for playback", queueLength)))
 	} else {
-		m.viewport = append(m.viewport, m.createInfoMessage("📋 Queue is empty"))
+		m.viewport = append(m.viewport, m.createInfoMessage("Queue is empty"))
 	}
 	
 	m.viewport = append(m.viewport, m.createInfoMessage("⌨️  Controls: Ctrl+N (skip), Ctrl+X (interrupt), Ctrl+Q (status)"))

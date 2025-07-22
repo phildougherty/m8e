@@ -98,8 +98,8 @@ func (m *ChatUI) handleAIResponseMessage(msg aiResponseMsg) (tea.Model, tea.Cmd)
 		var preservedLines []string
 		for i := m.aiResponseStartIdx; i < len(m.viewport); i++ {
 			line := m.viewport[i]
-			// Preserve function call display lines (contain → or ✓)
-			if strings.Contains(line, "→") || strings.Contains(line, "✓") || strings.Contains(line, "✗") {
+			// Preserve function call display lines (contain -> or +)
+			if strings.Contains(line, "->") || strings.Contains(line, "+") || strings.Contains(line, "x") {
 				preservedLines = append(preservedLines, line)
 			}
 		}
@@ -198,7 +198,7 @@ func (m *ChatUI) createEnhancedFunctionCallStart() string {
 
 func (m *ChatUI) createEnhancedFunctionCallEnd() string {
 	style := lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
-	return "│ " + style.Render("✓ ╰─ Call Complete ─╯")
+	return "│ " + style.Render("+ Call Complete")
 }
 
 func (m *ChatUI) createEnhancedFunctionInvoke(line string) string {
@@ -218,7 +218,7 @@ func (m *ChatUI) createEnhancedFunctionInvoke(line string) string {
 
 func (m *ChatUI) createEnhancedFunctionInvokeEnd() string {
 	style := lipgloss.NewStyle().Foreground(LightGreen)
-	return "│ " + style.Render("  ✓ Invocation complete")
+	return "│ " + style.Render("  + Invocation complete")
 }
 
 func (m *ChatUI) createEnhancedFunctionParameter(line string) string {
@@ -279,7 +279,7 @@ func (m *ChatUI) createEnhancedFunctionConfirmationBox(functionName, arguments s
 	
 	result.WriteString("│ " + optionStyle.Render("Options:"))
 	result.WriteString("\n")
-	result.WriteString("│   " + choiceStyle.Render("[y]") + " ✓ Proceed once")
+	result.WriteString("│   " + choiceStyle.Render("[y]") + " + Proceed once")
 	result.WriteString("\n")
 	result.WriteString("│   " + choiceStyle.Render("[n]") + " Cancel")
 	result.WriteString("\n")
@@ -371,7 +371,7 @@ func (m *ChatUI) handleVoiceTranscriptMessage(msg voiceTranscriptMsg) (tea.Model
 	if strings.HasPrefix(msg.transcript, "PROCESSING: ") {
 		m.viewport = append(m.viewport, "")
 		m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Processing", time.Now().Format("15:04:05")))
-		m.viewport = append(m.viewport, m.createInfoMessage("🔄 "+strings.TrimPrefix(msg.transcript, "PROCESSING: ")))
+		m.viewport = append(m.viewport, m.createInfoMessage(strings.TrimPrefix(msg.transcript, "PROCESSING: ")))
 		m.viewport = append(m.viewport, m.createBoxFooter())
 		return m, nil
 	}
@@ -379,8 +379,8 @@ func (m *ChatUI) handleVoiceTranscriptMessage(msg voiceTranscriptMsg) (tea.Model
 	// Show successful transcription
 	m.viewport = append(m.viewport, "")
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Voice Complete", time.Now().Format("15:04:05")))
-	m.viewport = append(m.viewport, m.createSuccessMessage("🎤 Transcribed: "+msg.transcript))
-	m.viewport = append(m.viewport, m.createInfoMessage("✅ Recording finished - processing as input"))
+	m.viewport = append(m.viewport, m.createSuccessMessage("Transcribed: "+msg.transcript))
+	m.viewport = append(m.viewport, m.createInfoMessage("Recording finished - processing as input"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 
 	// Process the voice transcript as user input

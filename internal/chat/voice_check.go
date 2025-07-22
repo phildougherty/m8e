@@ -12,11 +12,11 @@ import (
 func CheckVoiceSystem() string {
 	var report strings.Builder
 	
-	report.WriteString("🎤 Voice System Check\n")
+	report.WriteString("Voice System Check\n")
 	report.WriteString("====================\n\n")
 	
 	// Check environment variables
-	report.WriteString("📋 Environment Variables:\n")
+	report.WriteString("Environment Variables:\n")
 	config := NewVoiceConfig()
 	report.WriteString(fmt.Sprintf("  VOICE_ENABLED: %t\n", config.Enabled))
 	report.WriteString(fmt.Sprintf("  VOICE_WAKE_WORD: %s\n", config.WakeWord))
@@ -27,7 +27,7 @@ func CheckVoiceSystem() string {
 	report.WriteString("\n")
 	
 	// Check Whisper availability
-	report.WriteString("🗣️  Speech-to-Text (Whisper):\n")
+	report.WriteString("Speech-to-Text (Whisper):\n")
 	whisperCommands := []string{"whisper", "python3 -m whisper", "whisper-cpp"}
 	whisperFound := false
 	
@@ -37,45 +37,45 @@ func CheckVoiceSystem() string {
 		cmd.Args = append(cmd.Args, "--help")
 		
 		if err := cmd.Run(); err == nil {
-			report.WriteString(fmt.Sprintf("  ✅ %s: Available\n", cmdStr))
+			report.WriteString(fmt.Sprintf("  %s: Available\n", cmdStr))
 			whisperFound = true
 		} else {
-			report.WriteString(fmt.Sprintf("  ❌ %s: Not found\n", cmdStr))
+			report.WriteString(fmt.Sprintf("  %s: Not found\n", cmdStr))
 		}
 	}
 	
 	if !whisperFound {
-		report.WriteString("  💡 Install with: pipx install openai-whisper\n")
+		report.WriteString("  Install with: pipx install openai-whisper\n")
 	}
 	report.WriteString("\n")
 	
 	// Check audio tools
-	report.WriteString("🔊 Audio Playback:\n")
+	report.WriteString("Audio Playback:\n")
 	audioPlayers := []string{"mpg123", "aplay", "ffplay"}
 	
 	for _, player := range audioPlayers {
 		cmd := exec.Command("which", player)
 		if err := cmd.Run(); err == nil {
-			report.WriteString(fmt.Sprintf("  ✅ %s: Available\n", player))
+			report.WriteString(fmt.Sprintf("  %s: Available\n", player))
 		} else {
-			report.WriteString(fmt.Sprintf("  ❌ %s: Not found\n", player))
+			report.WriteString(fmt.Sprintf("  %s: Not found\n", player))
 		}
 	}
 	report.WriteString("\n")
 	
 	// Check TTS endpoint
-	report.WriteString("🎵 Text-to-Speech:\n")
+	report.WriteString("Text-to-Speech:\n")
 	if config.TTSEndpoint == "" {
-		report.WriteString("  ❌ TTS_ENDPOINT not set\n")
-		report.WriteString("  💡 Set with: export TTS_ENDPOINT=http://your-tts-server:8000/v1/audio/speech\n")
+		report.WriteString("  TTS_ENDPOINT not set\n")
+		report.WriteString("  Set with: export TTS_ENDPOINT=http://your-tts-server:8000/v1/audio/speech\n")
 	} else {
-		report.WriteString(fmt.Sprintf("  📡 TTS_ENDPOINT: %s\n", config.TTSEndpoint))
-		report.WriteString("  💡 Test manually with curl to verify TTS service is running\n")
+		report.WriteString(fmt.Sprintf("  TTS_ENDPOINT: %s\n", config.TTSEndpoint))
+		report.WriteString("  Test manually with curl to verify TTS service is running\n")
 	}
 	report.WriteString("\n")
 	
 	// System recommendations
-	report.WriteString("💡 Recommendations:\n")
+	report.WriteString("Recommendations:\n")
 	if !whisperFound {
 		report.WriteString("  • Install Whisper: pipx install openai-whisper\n")
 	}

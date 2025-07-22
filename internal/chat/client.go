@@ -81,7 +81,7 @@ func NewTermChat() *TermChat {
 	// Create styled MCP initialization message with army green theme
 	mcpStatus := "MCP orchestrator initialized"
 	if os.Getenv("MCP_API_KEY") != "" {
-		mcpStatus += " ✓"
+		mcpStatus += " +"
 	} else {
 		mcpStatus += " [no api key]"
 	}

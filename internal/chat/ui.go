@@ -87,7 +87,7 @@ func (ui *ChatUI) initializeViewport() {
 	viewport = append(viewport, bulletStyle.Render("• "+highlightStyle.Render("ESC")+" - Cancel current operation"))
 	viewport = append(viewport, "")
 	viewport = append(viewport, fmt.Sprintf("Current Mode: %s", ui.createModeIndicator()))
-	viewport = append(viewport, bulletStyle.Render("💡 "+highlightStyle.Render("Tip:")+" Use Ctrl+N to skip TTS, Ctrl+I to stop all audio"))
+	viewport = append(viewport, bulletStyle.Render(highlightStyle.Render("Tip:")+" Use Ctrl+N to skip TTS, Ctrl+I to stop all audio"))
 	viewport = append(viewport, "")
 	viewport = append(viewport, highlightStyle.Render("Ready to orchestrate your infrastructure! Just tell me what you want to build."))
 	viewport = append(viewport, "")
@@ -212,13 +212,13 @@ func (ui *ChatUI) createEnhancedBoxHeader(title, timestamp string) string {
 // createFunctionCallHeader creates a colorful function call header
 func (ui *ChatUI) createFunctionCallHeader() string {
 	style := lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-	return "│ " + style.Render("🔧 [Function Call Starting]")
+	return "│ " + style.Render("[Function Call Starting]")
 }
 
 // createFunctionCallFooter creates a colorful function call footer
 func (ui *ChatUI) createFunctionCallFooter() string {
 	style := lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
-	return "│ " + style.Render("✅ [Function Call Complete]")
+	return "│ " + style.Render("[Function Call Complete]")
 }
 
 // Run starts the chat UI

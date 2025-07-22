@@ -544,14 +544,14 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 			// Claude Code style - just show clean status line with color
 			var statusMsg string
 			if err != nil {
-				statusMsg = fmt.Sprintf("\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
+				statusMsg = fmt.Sprintf("\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
 				// Use our enhanced formatting for file editing tools
 				if tc.isFileEditingTool(toolCall.Function.Name) && result != nil {
 					duration := time.Millisecond * 50 // Placeholder duration
 					statusMsg = tc.formatToolResult(toolCall.Function.Name, "native", result, duration)
 				} else {
-					statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+					statusMsg = fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
 				}
 			}
 			uiProgram.Send(AiStreamMsg{Content: statusMsg + "\n"})
@@ -664,7 +664,7 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 		if resultMap, ok := result.(map[string]interface{}); ok {
 			if diffPreview, hasDiff := resultMap["diff_preview"].(string); hasDiff && diffPreview != "" {
 				// Show the visual diff for file editing tools
-				statusLine := fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
+				statusLine := fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
 					toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
 				
 				// Format the diff with enhanced visual display
@@ -690,7 +690,7 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 	}
 	
 	// Claude Code style: just show the status line, no verbose output
-	statusLine := fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
+	statusLine := fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
 		toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
 	
 	// Return just the status line - no verbose content for intermediate function calls
@@ -825,7 +825,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 		if r := recover(); r != nil {
 			// Send error to result channel
 			select {
-			case resultChan <- fmt.Sprintf("\n❌ Function call crashed: %v", r):
+			case resultChan <- fmt.Sprintf("\nFunction call crashed: %v", r):
 			default:
 			}
 		}
@@ -833,7 +833,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 	
 	if tc.mcpClient == nil && !tc.isNativeFunction(toolCall.Function.Name) {
 		select {
-		case resultChan <- "\n❌ MCP client not available":
+		case resultChan <- "\nMCP client not available":
 		default:
 		}
 		return
@@ -845,7 +845,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 		if !confirmed {
 			// User rejected - send rejection message
 			select {
-			case resultChan <- fmt.Sprintf("\n❌ Function call %s was rejected by user", toolCall.Function.Name):
+			case resultChan <- fmt.Sprintf("\nFunction call %s was rejected by user", toolCall.Function.Name):
 			default:
 			}
 			return
@@ -886,7 +886,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 		if serverName == "" {
 			duration := time.Since(startTime)
 			select {
-			case resultChan <- fmt.Sprintf("\n\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(no server found) | %v\x1b[0m", toolCall.Function.Name, duration.Truncate(time.Millisecond)):
+			case resultChan <- fmt.Sprintf("\n\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(no server found) | %v\x1b[0m", toolCall.Function.Name, duration.Truncate(time.Millisecond)):
 			default:
 			}
 			return
@@ -911,7 +911,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 	// Format result like Claude Code - only show the actual output
 	var resultContent string
 	if err != nil {
-		resultContent = fmt.Sprintf("\n\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v |\x1b[0m \x1b[31m%s\x1b[0m", 
+		resultContent = fmt.Sprintf("\n\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v |\x1b[0m \x1b[31m%s\x1b[0m", 
 			toolCall.Function.Name, serverName, duration.Truncate(time.Millisecond), err.Error())
 	} else {
 		// Parse and format the actual tool result

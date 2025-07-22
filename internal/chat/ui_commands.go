@@ -449,7 +449,7 @@ func (m *ChatUI) handleAddContextDirCommand(parts []string, timestamp string) te
 		}
 	}
 	
-	m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("✓ Added %d files to context", addedCount)))
+	m.viewport = append(m.viewport, m.createSuccessMessage(fmt.Sprintf("Added %d files to context", addedCount)))
 	if skippedCount > 0 {
 		m.viewport = append(m.viewport, m.createInfoMessage(fmt.Sprintf("Skipped %d large/binary files", skippedCount)))
 	}
@@ -512,7 +512,7 @@ func (m *ChatUI) handleContextClearCommand(timestamp string) tea.Msg {
 	}
 	
 	m.viewport = append(m.viewport, m.createEnhancedBoxHeader("Context Manager", timestamp))
-	m.viewport = append(m.viewport, m.createSuccessMessage("✓ Context cleared successfully"))
+	m.viewport = append(m.viewport, m.createSuccessMessage("Context cleared successfully"))
 	m.viewport = append(m.viewport, m.createBoxFooter())
 	m.viewport = append(m.viewport, "")
 	return nil

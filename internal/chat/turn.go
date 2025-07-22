@@ -132,7 +132,7 @@ func (t *ConversationTurn) processConversationFlow(ctx context.Context) error {
 		// Strict enforcement: don't exceed maxTurns even with pending operations
 		if t.currentTurn >= t.maxTurns {
 			if !t.silentMode {
-				fmt.Printf("\n\033[90m⚠ Reached maximum turns (%d). Stopping auto-continuation.\033[0m\n", t.maxTurns)
+				fmt.Printf("\n\033[90mReached maximum turns (%d). Stopping auto-continuation.\033[0m\n", t.maxTurns)
 			}
 			t.completed = true
 			break
@@ -171,7 +171,7 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 	
 	// Only print to terminal if not in silent mode
 	if !t.silentMode {
-		fmt.Printf("\n\033[1;32m✓ AI\033[0m \033[90m%s\033[0m", time.Now().Format("15:04:05"))
+		fmt.Printf("\n\033[1;32mAI\033[0m \033[90m%s\033[0m", time.Now().Format("15:04:05"))
 		if t.currentTurn > 1 {
 			fmt.Printf(" \033[90m(turn %d)\033[0m", t.currentTurn)
 		}
@@ -417,14 +417,14 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			// Enhanced formatting for file editing tools, Claude Code style for others
 			var statusMsg string
 			if err != nil {
-				statusMsg = fmt.Sprintf("\x1b[31m✗\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
+				statusMsg = fmt.Sprintf("\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
 				// Use enhanced formatting for file editing tools
 				if t.isFileEditingTool(toolCall.Function.Name) && result != nil {
 					duration := time.Millisecond * 50 // Placeholder duration
 					statusMsg = t.chat.formatToolResult(toolCall.Function.Name, "native", result, duration)
 				} else {
-					statusMsg = fmt.Sprintf("\x1b[32m✓\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+					statusMsg = fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
 				}
 			}
 			GetUIProgram().Send(aiStreamMsg{content: statusMsg})

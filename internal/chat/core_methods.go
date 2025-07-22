@@ -43,7 +43,7 @@ func (tc *TermChat) printMessage(msg TermChatMessage) {
 	
 	switch msg.Role {
 	case "user":
-		fmt.Printf("\n\033[1;34m❯ You\033[0m \033[90m%s\033[0m\n%s\n", timestamp, msg.Content)
+		fmt.Printf("\n\033[1;34m> You\033[0m \033[90m%s\033[0m\n%s\n", timestamp, msg.Content)
 	case "assistant":
 		// For AI messages, always render markdown and hide raw markdown from user
 		fmt.Printf("\n\033[1;32mAI\033[0m \033[90m%s\033[0m\n%s\n", timestamp, tc.renderMarkdown(msg.Content))

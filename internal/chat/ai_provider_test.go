@@ -420,8 +420,8 @@ func TestTermChat_FormatToolResult(t *testing.T) {
 				t.Errorf("Expected result to contain server name '%s'", tt.serverName)
 			}
 
-			// Should contain success indicator (✓)
-			if !strings.Contains(result, "✓") {
+			// Should contain success indicator (+)
+			if !strings.Contains(result, "+") {
 				t.Error("Expected result to contain success indicator")
 			}
 

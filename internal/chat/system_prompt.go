@@ -142,7 +142,7 @@ You have deep knowledge of all Matey commands with their exact parameters and us
 - **matey chat** - Interactive AI assistant (current interface)
   - Features: Voice integration, approval modes, function calling, slash commands
 
-# 🚨 CRITICAL: Tool Usage Priority
+# CRITICAL: Tool Usage Priority
 
 **ALWAYS prioritize MCP tools over bash commands for Matey operations:**
 
@@ -401,11 +401,11 @@ func (tc *TermChat) getMCPToolsContext() string {
 	}
 
 	var context strings.Builder
-	context.WriteString("# 🛠️ Available MCP Tools & Servers\n\n")
+	context.WriteString("# Available MCP Tools & Servers\n\n")
 	context.WriteString("You have access to the following MCP servers and their tools. Each tool includes detailed JSON examples for proper function calling:\n\n")
 
 	for _, server := range serverData {
-		context.WriteString(fmt.Sprintf("## 🖥️ %s Server\n", strings.Title(server.Name)))
+		context.WriteString(fmt.Sprintf("## %s Server\n", strings.Title(server.Name)))
 		context.WriteString(fmt.Sprintf("**Status**: %s | **Protocol**: %s | **URL**: %s\n", 
 			server.ConnectionStatus, server.Protocol, server.URL))
 		

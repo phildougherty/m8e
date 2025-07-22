@@ -202,11 +202,11 @@ func (m *ChatUI) renderInputArea() string {
 	var promptText string
 	switch m.termChat.approvalMode {
 	case YOLO:
-		promptText = "❯ "
+		promptText = "> "
 	case AUTO_EDIT:
-		promptText = "❯ "
+		promptText = "> "
 	default:
-		promptText = "❯ "
+		promptText = "> "
 	}
 
 	inputPrompt := promptStyle.Render(promptText)
@@ -461,14 +461,14 @@ func (m *ChatUI) createBoxFooter() string {
 func (m *ChatUI) createSuccessMessage(message string) string {
 	successStyle := lipgloss.NewStyle().Foreground(LightGreen).Bold(true)
 	iconStyle := lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-	return "│ " + iconStyle.Render("✓") + " " + successStyle.Render(message)
+	return "│ " + iconStyle.Render("+") + " " + successStyle.Render(message)
 }
 
 // createErrorMessage creates an enhanced error message  
 func (m *ChatUI) createErrorMessage(message string) string {
 	errorStyle := lipgloss.NewStyle().Foreground(Red).Bold(true)
 	iconStyle := lipgloss.NewStyle().Foreground(Red).Bold(true)
-	return "│ " + iconStyle.Render("✗") + " " + errorStyle.Render(message)
+	return "│ " + iconStyle.Render("x") + " " + errorStyle.Render(message)
 }
 
 // createInfoMessage creates an enhanced info message
@@ -482,7 +482,7 @@ func (m *ChatUI) createInfoMessage(message string) string {
 func (m *ChatUI) createWarningMessage(message string) string {
 	warningStyle := lipgloss.NewStyle().Foreground(Yellow).Bold(true)
 	iconStyle := lipgloss.NewStyle().Foreground(Yellow).Bold(true)
-	return "│ " + iconStyle.Render("⚠") + " " + warningStyle.Render(message)
+	return "│ " + iconStyle.Render("!") + " " + warningStyle.Render(message)
 }
 
 // Enhanced styling for different UI elements
@@ -538,7 +538,7 @@ func (m *ChatUI) createProviderStatusIndicator() string {
 // createTimeIndicator creates a time indicator
 func (m *ChatUI) createTimeIndicator() string {
 	timeStyle := lipgloss.NewStyle().Foreground(ArmyGreen)
-	return fmt.Sprintf("🕒 %s", timeStyle.Render(time.Now().Format("15:04:05")))
+	return fmt.Sprintf("%s", timeStyle.Render(time.Now().Format("15:04:05")))
 }
 
 // wrapTextForBox wraps text to fit within box width for display
