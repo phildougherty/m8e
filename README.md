@@ -127,6 +127,111 @@ auth:
         client_secret: ${GITHUB_CLIENT_SECRET}
 ```
 
+### Workspace Volumes - Multi-Step Data Sharing
+
+Matey automatically provides shared persistent storage for multi-step workflows, enabling sophisticated data processing pipelines:
+
+```yaml
+# Task Scheduler with workspace-enabled workflows
+apiVersion: mcp.matey.ai/v1
+kind: MCPTaskScheduler
+metadata:
+  name: data-processing
+spec:
+  workflows:
+  - name: data-pipeline
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    enabled: true
+    description: "ETL pipeline with shared workspace"
+    workspace:
+      enabled: true
+      size: "10Gi"              # 10GB shared storage
+      mountPath: "/workspace"   # Mount at /workspace
+      reclaimPolicy: "Delete"   # Auto-cleanup after completion
+    steps:
+    - name: extract-data
+      tool: curl
+      description: "Download source data"
+      parameters:
+        url: "https://api.example.com/data"
+        output: "/workspace/raw-data.json"
+        
+    - name: transform-data
+      tool: python3
+      description: "Process and clean data"
+      parameters:
+        code: |
+          import json, pandas as pd
+          # Read from workspace
+          with open('/workspace/raw-data.json') as f:
+              data = json.load(f)
+          # Process data
+          df = pd.DataFrame(data)
+          df_cleaned = df.dropna().reset_index(drop=True)
+          # Save to workspace for next step
+          df_cleaned.to_csv('/workspace/processed-data.csv', index=False)
+          print(f"Processed {len(df_cleaned)} records")
+          
+    - name: load-data
+      tool: bash
+      description: "Upload to database"
+      parameters:
+        command: |
+          echo "Loading processed data..."
+          # Data available from previous step
+          wc -l /workspace/processed-data.csv
+          # Upload to database (example)
+          curl -X POST -F "file=@/workspace/processed-data.csv" \
+               https://database.example.com/upload
+          echo "Data pipeline completed successfully!"
+
+  - name: build-artifacts
+    schedule: "*/30 * * * *"  # Every 30 minutes
+    enabled: true
+    description: "CI/CD build pipeline"
+    workspace:
+      size: "5Gi"
+      storageClass: "fast-ssd"  # Use SSD for build performance
+    steps:
+    - name: checkout-code
+      tool: git
+      parameters:
+        command: "clone https://github.com/user/project.git /workspace/src"
+        
+    - name: install-dependencies
+      tool: bash
+      parameters:
+        command: |
+          cd /workspace/src
+          npm install
+          pip install -r requirements.txt
+          
+    - name: run-tests
+      tool: bash
+      parameters:
+        command: |
+          cd /workspace/src
+          npm test
+          pytest tests/
+          echo "Tests passed!" > /workspace/test-results.txt
+          
+    - name: build-docker
+      tool: bash
+      parameters:
+        command: |
+          cd /workspace/src
+          docker build -t myapp:latest .
+          docker save myapp:latest > /workspace/myapp.tar
+          ls -lh /workspace/
+```
+
+**Key Benefits:**
+- **Automatic Management**: Multi-step workflows get workspace volumes by default
+- **Persistent Storage**: Data survives between steps, unlike ephemeral containers
+- **Performance**: Local filesystem speed with configurable storage classes
+- **Resource Efficiency**: Unique workspace per execution, automatic cleanup
+- **Flexible Configuration**: Customize size, mount path, and retention policy
+
 ## Core Features
 
 ### MCP Protocol Support
@@ -147,6 +252,8 @@ auth:
 - **Multi-provider AI support**: OpenAI, Claude, Ollama, OpenRouter
 - **Interactive chat interface**: `matey chat`
 - **Cron-based task scheduling** with workflow orchestration
+- **Workspace volumes**: Shared persistent storage between workflow steps
+- **Multi-step workflows**: Complex data processing pipelines with automatic workspace management
 - **PostgreSQL-backed persistence** for memory and state
 - **Tool ecosystem integration**
 

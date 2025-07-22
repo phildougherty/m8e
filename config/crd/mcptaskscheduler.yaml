@@ -183,6 +183,30 @@ spec:
                     timezone:
                       description: Timezone for the workflow schedule
                       type: string
+                    workspace:
+                      description: Workspace volume configuration for step data sharing
+                      properties:
+                        enabled:
+                          description: Enable workspace volume (default true for multi-step workflows)
+                          type: boolean
+                        size:
+                          description: Size of the workspace volume (default 1Gi)
+                          type: string
+                        storageClass:
+                          description: Storage class for the workspace volume
+                          type: string
+                        mountPath:
+                          description: Mount path within containers (default /workspace)
+                          type: string
+                        accessModes:
+                          description: Access modes for the volume
+                          items:
+                            type: string
+                          type: array
+                        reclaimPolicy:
+                          description: Volume reclaim policy (Delete or Retain)
+                          type: string
+                      type: object
                     steps:
                       description: Steps in the workflow
                       items:
@@ -276,6 +300,90 @@ spec:
               taskStats:
                 description: Task statistics
                 type: object
+              workflowStats:
+                description: Workflow statistics
+                type: object
+              workflowExecutions:
+                description: Workflow execution history (most recent 10 executions per workflow)
+                items:
+                  description: WorkflowExecution represents a single execution instance of a workflow
+                  properties:
+                    id:
+                      description: Execution ID (unique)
+                      type: string
+                    workflowName:
+                      description: Workflow name
+                      type: string
+                    startTime:
+                      description: Execution start time
+                      format: date-time
+                      type: string
+                    endTime:
+                      description: Execution end time (if completed)
+                      format: date-time
+                      type: string
+                    duration:
+                      description: Execution duration (if completed)
+                      format: int64
+                      type: integer
+                    phase:
+                      description: Current phase of the execution
+                      type: string
+                    message:
+                      description: Human-readable message describing current state
+                      type: string
+                    stepResults:
+                      additionalProperties:
+                        description: StepResult represents the result of a single workflow step execution
+                        properties:
+                          phase:
+                            description: Current phase of the step
+                            type: string
+                          output:
+                            description: Step output (if successful)
+                            type: object
+                          error:
+                            description: Error message (if failed)
+                            type: string
+                          duration:
+                            description: Step execution duration
+                            format: int64
+                            type: integer
+                          attempts:
+                            description: Number of attempts made
+                            format: int32
+                            type: integer
+                        required:
+                        - phase
+                        - attempts
+                        type: object
+                      description: Results from each step
+                      type: object
+                  required:
+                  - id
+                  - workflowName
+                  - startTime
+                  - phase
+                  type: object
+                type: array
+              connectionInfo:
+                description: Connection information
+                type: object
+              healthStatus:
+                description: Health status
+                type: string
+              serviceEndpoints:
+                description: Service endpoints
+                items:
+                  type: object
+                type: array
+              observedGeneration:
+                description: Observed generation
+                format: int64
+                type: integer
+              lastSuccessfulConfig:
+                description: Last successful configuration
+                type: string
             type: object
         type: object
     served: true
