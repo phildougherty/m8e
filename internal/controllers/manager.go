@@ -10,6 +10,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -61,6 +62,9 @@ func NewControllerManager(namespace string, cfg *config.ComposeConfig) (*Control
 	}
 	if err := networkingv1.AddToScheme(scheme); err != nil {
 		return nil, fmt.Errorf("failed to add networking v1 scheme: %w", err)
+	}
+	if err := policyv1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add policy v1 scheme: %w", err)
 	}
 	
 	// Add our CRDs

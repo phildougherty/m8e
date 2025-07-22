@@ -233,13 +233,18 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
-				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies"},
+				APIGroups: []string{"policy"},
+				Resources: []string{"poddisruptionbudgets"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcptoolboxes"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcptoolboxes/status"},
 				Verbs:     []string{"get", "update", "patch"},
 			},
 		},
