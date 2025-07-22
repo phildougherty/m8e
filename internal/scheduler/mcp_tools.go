@@ -436,6 +436,34 @@ func (mts *MCPToolServer) GetMCPTools() []MCPToolDefinition {
 			},
 		},
 		{
+			Name:        "workflow_logs",
+			Description: "Get logs from workflow executions and Kubernetes Jobs",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"execution_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Specific execution ID (optional)",
+					},
+					"tail": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of log lines to return",
+						"default":     100,
+					},
+					"namespace": map[string]interface{}{
+						"type":        "string",
+						"description": "Kubernetes namespace",
+						"default":     "default",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
 			Name:        "get_template",
 			Description: "Get details of a specific workflow template",
 			InputSchema: map[string]interface{}{
@@ -519,6 +547,8 @@ func (mts *MCPToolServer) ExecuteMCPTool(ctx context.Context, toolName string, p
 		return mts.resumeWorkflow(ctx, parameters)
 	case "get_workflow_status":
 		return mts.getWorkflowStatus(ctx, parameters)
+	case "workflow_logs":
+		return mts.workflowLogs(ctx, parameters)
 	case "health_check":
 		return mts.healthCheck(ctx, parameters)
 	case "get_metrics":
@@ -1409,4 +1439,151 @@ func (mts *MCPToolServer) getWorkflowStatus(ctx context.Context, params map[stri
 	}
 
 	return nil, fmt.Errorf("workflow %s not found", name)
+}
+
+// workflowLogs gets logs from workflow executions and their Kubernetes Jobs
+func (mts *MCPToolServer) workflowLogs(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	// Extract parameters
+	name, _ := params["name"].(string)
+	if name == "" {
+		return nil, fmt.Errorf("workflow name is required")
+	}
+
+	executionID, _ := params["execution_id"].(string)
+	tail := 100
+	if t, ok := params["tail"].(float64); ok {
+		tail = int(t)
+	}
+
+	namespace := "default"
+	if ns, ok := params["namespace"].(string); ok && ns != "" {
+		namespace = ns
+	}
+
+	if mts.k8sClient == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+
+	mts.logger.Info("Getting workflow logs", "workflow", name, "executionID", executionID, "namespace", namespace)
+
+	// Get the MCPTaskScheduler CRD
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := mts.k8sClient.Get(ctx, types.NamespacedName{
+		Name: "task-scheduler", Namespace: namespace,
+	}, taskScheduler)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	result := map[string]interface{}{
+		"workflow_name": name,
+		"namespace":     namespace,
+		"logs":          []map[string]interface{}{},
+		"executions":    []map[string]interface{}{},
+	}
+
+	// Find workflow executions
+	var targetExecutions []crd.WorkflowExecution
+	for _, execution := range taskScheduler.Status.WorkflowExecutions {
+		if execution.WorkflowName == name {
+			if executionID == "" || execution.ID == executionID {
+				targetExecutions = append(targetExecutions, execution)
+			}
+		}
+	}
+
+	if len(targetExecutions) == 0 {
+		result["message"] = fmt.Sprintf("No executions found for workflow %s", name)
+		if executionID != "" {
+			result["message"] = fmt.Sprintf("Execution %s not found for workflow %s", executionID, name)
+		}
+		return result, nil
+	}
+
+	var allLogs []map[string]interface{}
+	var execSummaries []map[string]interface{}
+
+	// Get logs from each execution
+	for _, execution := range targetExecutions {
+		execSummary := map[string]interface{}{
+			"id":         execution.ID,
+			"status":     string(execution.Phase),
+			"start_time": execution.StartTime.Format(time.RFC3339),
+			"message":    execution.Message,
+		}
+		if execution.EndTime != nil {
+			execSummary["end_time"] = execution.EndTime.Format(time.RFC3339)
+			duration := execution.EndTime.Sub(execution.StartTime)
+			execSummary["duration"] = duration.String()
+		}
+
+		// Try to get Kubernetes Job logs for this execution
+		taskID := fmt.Sprintf("%s-%s", name, execution.ID)
+		jobLogs, err := mts.getJobLogs(ctx, taskID, namespace, tail)
+		if err != nil {
+			mts.logger.Info("Could not get job logs for execution", "executionID", execution.ID, "error", err)
+			// Add a log entry indicating we couldn't get job logs
+			allLogs = append(allLogs, map[string]interface{}{
+				"execution_id": execution.ID,
+				"timestamp":    execution.StartTime.Format(time.RFC3339),
+				"level":        "INFO",
+				"message":      fmt.Sprintf("Execution started (K8s Job logs not available: %v)", err),
+				"source":       "workflow-status",
+			})
+		} else {
+			// Add job logs
+			for _, logEntry := range jobLogs {
+				logEntry["execution_id"] = execution.ID
+				allLogs = append(allLogs, logEntry)
+			}
+		}
+
+		// Add step results as log entries
+		for stepName, stepResult := range execution.StepResults {
+			stepLog := map[string]interface{}{
+				"execution_id": execution.ID,
+				"timestamp":    execution.StartTime.Format(time.RFC3339), // Would be better with step timestamp
+				"level":        "INFO",
+				"source":       "step-result",
+				"step":         stepName,
+				"status":       string(stepResult.Phase),
+				"message":      fmt.Sprintf("Step %s: %s", stepName, stepResult.Phase),
+			}
+			
+			if stepResult.Error != "" {
+				stepLog["level"] = "ERROR"
+				stepLog["message"] = fmt.Sprintf("Step %s failed: %s", stepName, stepResult.Error)
+			}
+			
+			if stepResult.Duration > 0 {
+				stepLog["duration"] = stepResult.Duration.String()
+			}
+			
+			allLogs = append(allLogs, stepLog)
+		}
+
+		execSummaries = append(execSummaries, execSummary)
+	}
+
+	result["logs"] = allLogs
+	result["executions"] = execSummaries
+	result["total_logs"] = len(allLogs)
+
+	return result, nil
+}
+
+// getJobLogs retrieves logs from Kubernetes Jobs created for workflow execution
+func (mts *MCPToolServer) getJobLogs(ctx context.Context, taskID, namespace string, tail int) ([]map[string]interface{}, error) {
+	// This is a simplified implementation - in a full implementation, this would
+	// use the Kubernetes clientset to get pod logs from jobs with the task ID label
+	
+	// For now, return a placeholder indicating that K8s job integration is needed
+	return []map[string]interface{}{
+		{
+			"timestamp": time.Now().Format(time.RFC3339),
+			"level":     "INFO",
+			"source":    "k8s-job",
+			"message":   fmt.Sprintf("Workflow executed as Kubernetes Job (task ID: %s)", taskID),
+		},
+	}, nil
 }

@@ -57,7 +57,7 @@ func NewToolExecutor(mcpProxyURL, mcpProxyAPIKey string, logger logr.Logger) *To
 	}
 }
 
-func (te *ToolExecutor) ExecuteTool(ctx context.Context, req *ToolExecutionRequest) (*ToolExecutionResult, error) {
+func (te *ToolExecutor) executeToolRequest(ctx context.Context, req *ToolExecutionRequest) (*ToolExecutionResult, error) {
 	startTime := time.Now()
 	
 	te.logger.Info("Executing MCP tool", "tool", req.Tool, "parameters", req.Parameters)
@@ -329,8 +329,8 @@ type StepContext struct {
 	PreviousOutputs   map[string]interface{}
 }
 
-// ExecuteStepWithContext executes a single step with full context
-func (te *ToolExecutor) ExecuteStepWithContext(ctx context.Context, stepCtx *StepContext, tool string, parameters map[string]interface{}, timeout time.Duration) (*ToolExecutionResult, error) {
+// ExecuteStepWithContextAndTimeout executes a single step with full context and timeout
+func (te *ToolExecutor) ExecuteStepWithContextAndTimeout(ctx context.Context, stepCtx *StepContext, tool string, parameters map[string]interface{}, timeout time.Duration) (*ToolExecutionResult, error) {
 	// Add context information to parameters
 	enhancedParams := make(map[string]interface{})
 	for k, v := range parameters {
@@ -349,7 +349,57 @@ func (te *ToolExecutor) ExecuteStepWithContext(ctx context.Context, stepCtx *Ste
 		Timeout:    timeout,
 	}
 
-	return te.ExecuteTool(ctx, req)
+	return te.executeToolRequest(ctx, req)
+}
+
+// ExecuteToolByName interface method (legacy compatibility)
+func (te *ToolExecutor) ExecuteTool(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
+	req := &ToolExecutionRequest{
+		Tool:       toolName,
+		Parameters: args,
+		Timeout:    5 * time.Minute, // Default timeout
+	}
+
+	result, err := te.executeToolRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("tool execution failed: %s", result.Error)
+	}
+
+	return result.Output, nil
+}
+
+// ExecuteStepWithContext executes a step and returns structured result
+func (te *ToolExecutor) ExecuteStepWithContext(ctx context.Context, stepContext *StepExecutionContext, toolName string, args map[string]interface{}) (*StepExecutionResult, error) {
+	// Create step context from execution context
+	stepCtx := &StepContext{
+		StepName: stepContext.StepName,
+		// Add other fields as needed
+	}
+
+	// Execute with context
+	result, err := te.ExecuteStepWithContextAndTimeout(ctx, stepCtx, toolName, args, 5*time.Minute)
+	if err != nil {
+		return &StepExecutionResult{
+			Status:   "Failed",
+			Message:  err.Error(),
+			Success:  false,
+			Error:    err,
+			Duration: 0,
+		}, nil
+	}
+
+	return &StepExecutionResult{
+		Status:   "Succeeded",
+		Message:  "Step completed successfully",
+		Success:  result.Success,
+		Output:   result.Output,
+		Duration: result.Duration,
+		Error:    nil,
+	}, nil
 }
 
 // HealthCheck verifies the MCP proxy is accessible

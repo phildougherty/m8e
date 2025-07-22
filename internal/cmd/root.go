@@ -45,6 +45,7 @@ func NewRootCommand(version string) *cobra.Command {
 	// Add service-specific commands
 	rootCmd.AddCommand(NewTaskSchedulerCommand())
 	rootCmd.AddCommand(NewSchedulerServerCommand()) // Built-in scheduler MCP server
+	rootCmd.AddCommand(schedulerExecuteWorkflowCmd) // Internal workflow execution command
 	rootCmd.AddCommand(NewMemoryCommand())
 	// TODO: Workflow commands migrated to Task Scheduler
 	// rootCmd.AddCommand(NewWorkflowCommand())

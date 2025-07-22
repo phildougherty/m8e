@@ -10,26 +10,38 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/crd"
 )
 
 // WorkflowScheduler integrates CronEngine with WorkflowEngine for scheduled workflow execution
 type WorkflowScheduler struct {
-	cronEngine     *CronEngine
-	workflowEngine *WorkflowEngine
-	k8sClient      client.Client
-	namespace      string
-	logger         logr.Logger
+	cronEngine      *CronEngine
+	workflowEngine  *WorkflowEngine
+	k8sExecutor     *K8sWorkflowExecutor  // NEW: K8s Job executor
+	k8sClient       client.Client
+	namespace       string
+	logger          logr.Logger
+	config          *config.ComposeConfig  // NEW: Configuration
 }
 
 // NewWorkflowScheduler creates a new workflow scheduler
-func NewWorkflowScheduler(cronEngine *CronEngine, workflowEngine *WorkflowEngine, k8sClient client.Client, namespace string, logger logr.Logger) *WorkflowScheduler {
+func NewWorkflowScheduler(cronEngine *CronEngine, workflowEngine *WorkflowEngine, k8sClient client.Client, namespace string, config *config.ComposeConfig, logger logr.Logger) *WorkflowScheduler {
+	// Create K8s workflow executor
+	k8sExecutor, err := NewK8sWorkflowExecutor(namespace, config, logger)
+	if err != nil {
+		logger.Error(err, "Failed to create K8s workflow executor, workflows will run in-process")
+		// Continue without K8s executor for backward compatibility
+	}
+
 	return &WorkflowScheduler{
-		cronEngine:     cronEngine,
-		workflowEngine: workflowEngine,
-		k8sClient:      k8sClient,
-		namespace:      namespace,
-		logger:         logger,
+		cronEngine:      cronEngine,
+		workflowEngine:  workflowEngine,
+		k8sExecutor:     k8sExecutor,
+		k8sClient:       k8sClient,
+		namespace:       namespace,
+		config:          config,
+		logger:          logger,
 	}
 }
 
@@ -90,15 +102,41 @@ func (ws *WorkflowScheduler) scheduleWorkflow(workflow *crd.WorkflowDefinition) 
 	handler := func(ctx context.Context, jobID string) error {
 		ws.logger.Info("Executing scheduled workflow", "workflow", workflow.Name, "jobID", jobID)
 		
-		// Execute the workflow using WorkflowEngine
-		execution, err := ws.workflowEngine.ExecuteWorkflow(ctx, workflow, workflow.Name, ws.namespace)
-		if err != nil {
-			ws.logger.Error(err, "Workflow execution failed", "workflow", workflow.Name)
-			return err
-		}
+		// Generate unique execution ID
+		executionID := fmt.Sprintf("%s-%d", workflow.Name, time.Now().Unix())
+		
+		// Use K8s Job executor if available, otherwise fall back to in-process execution
+		if ws.k8sExecutor != nil {
+			ws.logger.Info("Executing workflow as Kubernetes Job", "workflow", workflow.Name, "executionID", executionID)
+			
+			// Execute as Kubernetes Job
+			taskStatus, err := ws.k8sExecutor.ExecuteWorkflowAsJob(ctx, workflow, workflow.Name, executionID)
+			if err != nil {
+				ws.logger.Error(err, "Failed to execute workflow as Kubernetes Job", "workflow", workflow.Name)
+				return err
+			}
+			
+			ws.logger.Info("Workflow submitted as Kubernetes Job", 
+				"workflow", workflow.Name, 
+				"executionID", executionID,
+				"jobName", taskStatus.JobName,
+				"taskID", taskStatus.ID)
+			
+			// The Job will handle updating the status via the scheduler-execute-workflow command
+			return nil
+		} else {
+			ws.logger.Info("Executing workflow in-process (no K8s executor available)", "workflow", workflow.Name)
+			
+			// Fallback to in-process execution
+			execution, err := ws.workflowEngine.ExecuteWorkflow(ctx, workflow, workflow.Name, ws.namespace)
+			if err != nil {
+				ws.logger.Error(err, "Workflow execution failed", "workflow", workflow.Name)
+				return err
+			}
 
-		// Update the MCPTaskScheduler status with execution results
-		return ws.updateWorkflowExecutionStatus(ctx, execution)
+			// Update the MCPTaskScheduler status with execution results
+			return ws.updateWorkflowExecutionStatus(ctx, execution)
+		}
 	}
 
 	// Parse timezone if specified

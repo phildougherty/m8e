@@ -408,24 +408,12 @@ func (we *WorkflowEngine) executeStep(ctx context.Context, execution *WorkflowEx
 			}
 		}
 
-		// Create step context
-		stepContext := &StepContext{
-			WorkflowName:      execution.WorkflowName,
-			WorkflowNamespace: execution.WorkflowNamespace,
-			StepName:          step.Name,
-			Attempt:           attempt,
-			PreviousOutputs:   execution.Context.StepOutputs,
+		// Create step execution context
+		stepExecContext := &StepExecutionContext{
+			StepName: step.Name,
 		}
-
-		// Execute the tool
-		var stepTimeout time.Duration
-		if step.Timeout != "" {
-			if timeout, err := time.ParseDuration(step.Timeout); err == nil {
-				stepTimeout = timeout
-			}
-		}
-
-		result, err := we.toolExecutor.ExecuteStepWithContext(stepCtx, stepContext, step.Tool, renderedParams, stepTimeout)
+		
+		result, err := we.toolExecutor.ExecuteStepWithContext(stepCtx, stepExecContext, step.Tool, renderedParams)
 
 		if err != nil {
 			lastError = err

@@ -1210,6 +1210,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileWorkflows(ctx context.Context, tas
 			workflowEngine,
 			r.Client,
 			taskScheduler.Namespace,
+			r.Config,
 			log.FromContext(ctx),
 		)
 		

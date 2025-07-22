@@ -105,8 +105,8 @@ Examples:
 				toolServer.SetK8sClient(k8sClient, namespace)
 				logger.Info("Kubernetes client configured for workflow management")
 				
-				// Create and start workflow scheduler for automated workflow execution
-				workflowScheduler = scheduler.NewWorkflowScheduler(cronEngine, workflowEngine, k8sClient, namespace, logr.WithName("workflow-scheduler"))
+				// Create and start workflow scheduler for automated workflow execution with K8s Job execution
+				workflowScheduler = scheduler.NewWorkflowScheduler(cronEngine, workflowEngine, k8sClient, namespace, cfg, logr.WithName("workflow-scheduler"))
 				if err := workflowScheduler.Start(); err != nil {
 					logger.Error("Failed to start workflow scheduler: %v", err)
 				} else {
