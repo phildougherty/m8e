@@ -163,17 +163,34 @@ func (c *K8sComposer) Restart(serviceNames []string) error {
 	for _, serviceName := range serviceNames {
 		c.logger.Info("Restarting service: %s", serviceName)
 
-		// Stop the service
-		if err := c.stopSpecificServices([]string{serviceName}); err != nil {
-			c.logger.Warning("Warning during stop of %s: %v", serviceName, err)
-		}
+		// Use efficient rollout restart for system services
+		switch serviceName {
+		case "matey-proxy", "proxy":
+			if err := c.restartSystemService("matey-proxy"); err != nil {
+				return fmt.Errorf("failed to restart proxy: %w", err)
+			}
+		case "matey-mcp-server", "mcp-server":
+			if err := c.restartSystemService("matey-mcp-server"); err != nil {
+				return fmt.Errorf("failed to restart mcp-server: %w", err)
+			}
+		case "matey-controller-manager", "controller-manager":
+			if err := c.restartSystemService("matey-controller-manager"); err != nil {
+				return fmt.Errorf("failed to restart controller-manager: %w", err)
+			}
+		default:
+			// Use stop-start approach for other services (memory, task-scheduler, user servers)
+			// Stop the service
+			if err := c.stopSpecificServices([]string{serviceName}); err != nil {
+				c.logger.Warning("Warning during stop of %s: %v", serviceName, err)
+			}
 
-		// Wait for cleanup
-		time.Sleep(2 * time.Second)
+			// Wait for cleanup
+			time.Sleep(2 * time.Second)
 
-		// Start the service
-		if err := c.startSpecificServices([]string{serviceName}); err != nil {
-			return fmt.Errorf("failed to restart %s: %w", serviceName, err)
+			// Start the service
+			if err := c.startSpecificServices([]string{serviceName}); err != nil {
+				return fmt.Errorf("failed to restart %s: %w", serviceName, err)
+			}
 		}
 
 		c.logger.Info("Service restarted successfully: %s", serviceName)
@@ -492,6 +509,16 @@ func (c *K8sComposer) startSpecificServices(serviceNames []string) error {
 			if err := c.ensureControllerManagerRunning(); err != nil {
 				errors = append(errors, fmt.Sprintf("controller-manager: %v", err))
 			}
+		case "matey-proxy", "proxy":
+			c.logger.Info("Starting proxy service")
+			if err := c.startSystemService("matey-proxy"); err != nil {
+				errors = append(errors, fmt.Sprintf("matey-proxy: %v", err))
+			}
+		case "matey-mcp-server", "mcp-server":
+			c.logger.Info("Starting MCP server service")
+			if err := c.startSystemService("matey-mcp-server"); err != nil {
+				errors = append(errors, fmt.Sprintf("matey-mcp-server: %v", err))
+			}
 		default:
 			// Check if it's a configured server
 			if serverConfig, exists := c.config.Servers[serviceName]; exists {
@@ -579,6 +606,16 @@ func (c *K8sComposer) stopSpecificServices(serviceNames []string) error {
 					errors = append(errors, fmt.Sprintf("controller-manager: %v", err))
 				}
 				c.controllerManager = nil
+			}
+		case "matey-proxy", "proxy":
+			c.logger.Info("Stopping proxy service")
+			if err := c.stopSystemService("matey-proxy"); err != nil {
+				errors = append(errors, fmt.Sprintf("matey-proxy: %v", err))
+			}
+		case "matey-mcp-server", "mcp-server":
+			c.logger.Info("Stopping MCP server service")
+			if err := c.stopSystemService("matey-mcp-server"); err != nil {
+				errors = append(errors, fmt.Sprintf("matey-mcp-server: %v", err))
 			}
 		default:
 			// Check if it's an MCP server defined in config
@@ -1437,5 +1474,85 @@ func Validate(configFile string) error {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 	fmt.Println("Configuration is valid")
+	return nil
+}
+
+// startSystemService starts a system service by scaling its deployment to 1 replica
+func (c *K8sComposer) startSystemService(serviceName string) error {
+	ctx := context.Background()
+	
+	deployment := &appsv1.Deployment{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      serviceName,
+		Namespace: c.namespace,
+	}, deployment)
+	
+	if err != nil {
+		return fmt.Errorf("failed to get deployment %s: %w", serviceName, err)
+	}
+	
+	// Scale deployment to 1 replica
+	replicas := int32(1)
+	deployment.Spec.Replicas = &replicas
+	
+	if err := c.k8sClient.Update(ctx, deployment); err != nil {
+		return fmt.Errorf("failed to start system service %s: %w", serviceName, err)
+	}
+	
+	c.logger.Info("System service %s started successfully", serviceName)
+	return nil
+}
+
+// stopSystemService stops a system service by scaling its deployment to 0 replicas
+func (c *K8sComposer) stopSystemService(serviceName string) error {
+	ctx := context.Background()
+	
+	deployment := &appsv1.Deployment{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      serviceName,
+		Namespace: c.namespace,
+	}, deployment)
+	
+	if err != nil {
+		return fmt.Errorf("failed to get deployment %s: %w", serviceName, err)
+	}
+	
+	// Scale deployment to 0 replicas
+	replicas := int32(0)
+	deployment.Spec.Replicas = &replicas
+	
+	if err := c.k8sClient.Update(ctx, deployment); err != nil {
+		return fmt.Errorf("failed to stop system service %s: %w", serviceName, err)
+	}
+	
+	c.logger.Info("System service %s stopped successfully", serviceName)
+	return nil
+}
+
+// restartSystemService restarts a system service using Kubernetes deployment rollout
+func (c *K8sComposer) restartSystemService(serviceName string) error {
+	ctx := context.Background()
+	
+	deployment := &appsv1.Deployment{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      serviceName,
+		Namespace: c.namespace,
+	}, deployment)
+	
+	if err != nil {
+		return fmt.Errorf("failed to get deployment %s: %w", serviceName, err)
+	}
+	
+	// Add/update restart annotation to trigger rollout
+	if deployment.Spec.Template.ObjectMeta.Annotations == nil {
+		deployment.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+	}
+	deployment.Spec.Template.ObjectMeta.Annotations["kubectl.kubernetes.io/restartedAt"] = fmt.Sprintf("%d", time.Now().Unix())
+	
+	if err := c.k8sClient.Update(ctx, deployment); err != nil {
+		return fmt.Errorf("failed to restart system service %s: %w", serviceName, err)
+	}
+	
+	c.logger.Info("System service %s restart triggered successfully", serviceName)
 	return nil
 }
