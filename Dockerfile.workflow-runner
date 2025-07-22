@@ -34,9 +34,27 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pymongo \
     redis
 
-# Copy and install the workflow runner script
-COPY workflow-runner.sh /usr/local/bin/workflow-runner
-RUN chmod +x /usr/local/bin/workflow-runner
+# Create the workflow runner script directly in the Dockerfile
+RUN echo '#!/bin/bash' > /usr/local/bin/workflow-runner && \
+    echo 'set -e' >> /usr/local/bin/workflow-runner && \
+    echo '' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "=== Workflow Runner Starting ==="' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "Workflow: ${WORKFLOW_NAME:-unknown}"' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "Execution ID: ${WORKFLOW_EXECUTION_ID:-unknown}"' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "Steps: ${WORKFLOW_STEPS:-1}"' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "=== Executing Workflow Script ==="' >> /usr/local/bin/workflow-runner && \
+    echo 'echo' >> /usr/local/bin/workflow-runner && \
+    echo '' >> /usr/local/bin/workflow-runner && \
+    echo '# Execute the workflow script passed as argument' >> /usr/local/bin/workflow-runner && \
+    echo 'if [ -n "$1" ]; then' >> /usr/local/bin/workflow-runner && \
+    echo '    echo "$1" | bash' >> /usr/local/bin/workflow-runner && \
+    echo 'else' >> /usr/local/bin/workflow-runner && \
+    echo '    echo "No workflow script provided"' >> /usr/local/bin/workflow-runner && \
+    echo '    exit 1' >> /usr/local/bin/workflow-runner && \
+    echo 'fi' >> /usr/local/bin/workflow-runner && \
+    echo '' >> /usr/local/bin/workflow-runner && \
+    echo 'echo' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "=== Workflow Completed Successfully ==="' >> /usr/local/bin/workflow-runner
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/workflow-runner"]
