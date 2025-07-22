@@ -1881,11 +1881,356 @@ func (m *MateyMCPServer) workflowLogs(ctx context.Context, args map[string]inter
 		}, fmt.Errorf("name is required")
 	}
 	
-	// For now, return a placeholder - would need actual workflow logs API
+	// Get optional parameters
+	executionID, _ := args["execution_id"].(string)
+	step, _ := args["step"].(string)
+	tailLines, _ := args["tail"].(float64)
+	if tailLines == 0 {
+		tailLines = 10 // default to last 10 executions
+	}
+	
+	// Check if we can use Kubernetes client
+	if !m.useK8sClient() {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Kubernetes client not available. Cannot retrieve workflow execution history."}},
+			IsError: true,
+		}, fmt.Errorf("kubernetes client not available")
+	}
+	
+	return m.getWorkflowExecutionHistory(ctx, name, executionID, step, int(tailLines))
+}
+
+// getWorkflowExecutionHistory retrieves comprehensive workflow execution history from Kubernetes
+func (m *MateyMCPServer) getWorkflowExecutionHistory(ctx context.Context, workflowName, executionID, step string, tailLines int) (*ToolResult, error) {
+	// Get the MCPTaskScheduler to retrieve execution history
+	var taskScheduler crd.MCPTaskScheduler
+	taskSchedulerName := "task-scheduler"
+	
+	err := m.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      taskSchedulerName,
+		Namespace: m.namespace,
+	}, &taskScheduler)
+	
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting task scheduler '%s': %v", taskSchedulerName, err)}},
+			IsError: true,
+		}, err
+	}
+	
+	// Filter executions by workflow name
+	var matchingExecutions []crd.WorkflowExecution
+	for _, execution := range taskScheduler.Status.WorkflowExecutions {
+		if execution.WorkflowName == workflowName {
+			matchingExecutions = append(matchingExecutions, execution)
+		}
+	}
+	
+	if len(matchingExecutions) == 0 {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("No execution history found for workflow '%s'", workflowName)}},
+		}, nil
+	}
+	
+	// If specific execution ID requested, show detailed view
+	if executionID != "" {
+		for _, execution := range matchingExecutions {
+			if execution.ID == executionID {
+				return m.formatDetailedExecution(execution, step)
+			}
+		}
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Execution ID '%s' not found for workflow '%s'", executionID, workflowName)}},
+			IsError: true,
+		}, fmt.Errorf("execution not found")
+	}
+	
+	// Sort executions by start time (most recent first) and apply tail limit
+	executions := make([]crd.WorkflowExecution, len(matchingExecutions))
+	copy(executions, matchingExecutions)
+	
+	// Sort by start time (most recent first)
+	for i := 0; i < len(executions)-1; i++ {
+		for j := i + 1; j < len(executions); j++ {
+			if executions[j].StartTime.After(executions[i].StartTime) {
+				executions[i], executions[j] = executions[j], executions[i]
+			}
+		}
+	}
+	
+	// Apply tail limit
+	if tailLines > 0 && len(executions) > tailLines {
+		executions = executions[:tailLines]
+	}
+	
+	return m.formatExecutionHistory(executions, workflowName, &taskScheduler.Status)
+}
+
+// formatDetailedExecution formats detailed information for a single execution
+func (m *MateyMCPServer) formatDetailedExecution(execution crd.WorkflowExecution, specificStep string) (*ToolResult, error) {
+	var result strings.Builder
+	
+	result.WriteString(fmt.Sprintf("📊 **Workflow Execution Details**\n\n"))
+	result.WriteString(fmt.Sprintf("**Workflow**: %s\n", execution.WorkflowName))
+	result.WriteString(fmt.Sprintf("**Execution ID**: %s\n", execution.ID))
+	result.WriteString(fmt.Sprintf("**Status**: %s %s\n", m.getStatusIcon(string(execution.Phase)), execution.Phase))
+	result.WriteString(fmt.Sprintf("**Started**: %s\n", execution.StartTime.Format("2006-01-02 15:04:05 MST")))
+	
+	if execution.EndTime != nil {
+		result.WriteString(fmt.Sprintf("**Completed**: %s\n", execution.EndTime.Format("2006-01-02 15:04:05 MST")))
+		if execution.Duration != nil {
+			result.WriteString(fmt.Sprintf("**Duration**: %v\n", *execution.Duration))
+		}
+	} else if execution.Phase == "Running" {
+		duration := time.Since(execution.StartTime)
+		result.WriteString(fmt.Sprintf("**Running for**: %v\n", duration.Truncate(time.Second)))
+	}
+	
+	if execution.Message != "" {
+		result.WriteString(fmt.Sprintf("**Message**: %s\n", execution.Message))
+	}
+	
+	result.WriteString("\n**📝 Step Results:**\n")
+	if len(execution.StepResults) == 0 {
+		result.WriteString("  No step results available\n")
+	} else {
+		stepCount := 0
+		for stepName, stepResult := range execution.StepResults {
+			// If specific step requested, only show that step
+			if specificStep != "" && stepName != specificStep {
+				continue
+			}
+			
+			stepCount++
+			result.WriteString(fmt.Sprintf("\n  **%d. Step: %s** %s\n", stepCount, stepName, m.getStatusIcon(string(stepResult.Phase))))
+			result.WriteString(fmt.Sprintf("     Status: %s\n", stepResult.Phase))
+			result.WriteString(fmt.Sprintf("     Duration: %v\n", stepResult.Duration.Truncate(time.Millisecond)))
+			result.WriteString(fmt.Sprintf("     Attempts: %d\n", stepResult.Attempts))
+			
+			if stepResult.Output != nil {
+				outputText := m.formatStepOutput(stepResult.Output)
+				if len(outputText) > 200 {
+					outputText = outputText[:200] + "... (truncated)"
+				}
+				result.WriteString(fmt.Sprintf("     Output: %s\n", outputText))
+			}
+			
+			if stepResult.Error != "" {
+				result.WriteString(fmt.Sprintf("     Error: %s\n", stepResult.Error))
+			}
+		}
+		
+		if specificStep != "" && stepCount == 0 {
+			result.WriteString(fmt.Sprintf("  ❌ Step '%s' not found in this execution\n", specificStep))
+		}
+	}
+	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("Getting logs for workflow '%s' is not yet implemented. This requires connecting to the task scheduler's logging API.", name)}},
-		IsError: true,
-	}, fmt.Errorf("workflow logs not implemented")
+		Content: []Content{{Type: "text", Text: result.String()}},
+	}, nil
+}
+
+// formatExecutionHistory formats summary information for multiple executions with statistics
+func (m *MateyMCPServer) formatExecutionHistory(executions []crd.WorkflowExecution, workflowName string, status *crd.MCPTaskSchedulerStatus) (*ToolResult, error) {
+	var result strings.Builder
+	
+	result.WriteString(fmt.Sprintf("📊 **Workflow Execution History: %s**\n\n", workflowName))
+	
+	// Calculate workflow-specific statistics
+	workflowStats := m.calculateWorkflowStats(executions)
+	
+	result.WriteString("**📈 Workflow Statistics:**\n")
+	result.WriteString(fmt.Sprintf("  Total Executions: %d\n", workflowStats.Total))
+	result.WriteString(fmt.Sprintf("  ✅ Succeeded: %d\n", workflowStats.Succeeded))
+	result.WriteString(fmt.Sprintf("  ❌ Failed: %d\n", workflowStats.Failed))
+	result.WriteString(fmt.Sprintf("  🔄 Running: %d\n", workflowStats.Running))
+	result.WriteString(fmt.Sprintf("  ⏳ Pending: %d\n", workflowStats.Pending))
+	
+	if workflowStats.AvgDuration > 0 {
+		result.WriteString(fmt.Sprintf("  Average Duration: %v\n", workflowStats.AvgDuration.Truncate(time.Second)))
+	}
+	if workflowStats.LastExecution != nil {
+		result.WriteString(fmt.Sprintf("  Last Execution: %s\n", workflowStats.LastExecution.Format("2006-01-02 15:04:05")))
+	}
+	
+	result.WriteString("\n**📋 Recent Executions:**\n")
+	
+	if len(executions) == 0 {
+		result.WriteString("  No recent executions found\n")
+	} else {
+		for i, execution := range executions {
+			statusIcon := m.getStatusIcon(string(execution.Phase))
+			result.WriteString(fmt.Sprintf("\n  **%d. %s %s** (`%s`)\n", i+1, statusIcon, execution.Phase, execution.ID))
+			
+			result.WriteString(fmt.Sprintf("     📅 Started: %s", execution.StartTime.Format("2006-01-02 15:04:05")))
+			
+			if execution.EndTime != nil {
+				result.WriteString(fmt.Sprintf(" → %s", execution.EndTime.Format("15:04:05")))
+				if execution.Duration != nil {
+					result.WriteString(fmt.Sprintf(" ⏱️ %v", execution.Duration.Truncate(time.Second)))
+				}
+			} else if execution.Phase == "Running" {
+				runningTime := time.Since(execution.StartTime)
+				result.WriteString(fmt.Sprintf(" 🔄 Running for %v", runningTime.Truncate(time.Second)))
+			}
+			result.WriteString("\n")
+			
+			if execution.Message != "" {
+				result.WriteString(fmt.Sprintf("     💬 %s\n", execution.Message))
+			}
+			
+			// Step summary
+			if len(execution.StepResults) > 0 {
+				stepSummary := m.getStepSummary(execution.StepResults)
+				result.WriteString(fmt.Sprintf("     📝 Steps: %s\n", stepSummary))
+			}
+		}
+	}
+	
+	result.WriteString("\n**💡 Usage Tips:**\n")
+	result.WriteString("  • Use `workflow_logs` with `execution_id` to get detailed step information\n")
+	result.WriteString("  • Add `step` parameter to focus on a specific step\n")
+	result.WriteString("  • Use `tail` parameter to limit number of executions shown\n")
+	
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: result.String()}},
+	}, nil
+}
+
+// WorkflowStats represents calculated statistics for a specific workflow
+type WorkflowStats struct {
+	Total         int
+	Succeeded     int
+	Failed        int
+	Running       int
+	Pending       int
+	AvgDuration   time.Duration
+	LastExecution *time.Time
+}
+
+// calculateWorkflowStats calculates statistics for a specific workflow from its executions
+func (m *MateyMCPServer) calculateWorkflowStats(executions []crd.WorkflowExecution) WorkflowStats {
+	stats := WorkflowStats{
+		Total: len(executions),
+	}
+	
+	var totalDuration time.Duration
+	completedCount := 0
+	
+	for _, exec := range executions {
+		switch exec.Phase {
+		case "Succeeded":
+			stats.Succeeded++
+		case "Failed":
+			stats.Failed++
+		case "Running":
+			stats.Running++
+		case "Pending":
+			stats.Pending++
+		}
+		
+		// Track duration for completed workflows
+		if exec.Duration != nil {
+			totalDuration += *exec.Duration
+			completedCount++
+		}
+		
+		// Track most recent execution
+		if stats.LastExecution == nil || exec.StartTime.After(*stats.LastExecution) {
+			stats.LastExecution = &exec.StartTime
+		}
+	}
+	
+	// Calculate average duration
+	if completedCount > 0 {
+		stats.AvgDuration = totalDuration / time.Duration(completedCount)
+	}
+	
+	return stats
+}
+
+// getStatusIcon returns an emoji icon for the workflow/step phase
+func (m *MateyMCPServer) getStatusIcon(phase string) string {
+	switch phase {
+	case "Succeeded":
+		return "✅"
+	case "Failed":
+		return "❌"
+	case "Running":
+		return "🔄"
+	case "Pending":
+		return "⏳"
+	case "Cancelled":
+		return "⏹️"
+	case "Skipped":
+		return "⏭️"
+	case "Retrying":
+		return "🔄"
+	default:
+		return "📋"
+	}
+}
+
+// getStepSummary returns a summary of step results with counts and icons
+func (m *MateyMCPServer) getStepSummary(stepResults map[string]crd.StepResult) string {
+	if len(stepResults) == 0 {
+		return "No steps"
+	}
+	
+	counts := make(map[crd.StepPhase]int)
+	for _, result := range stepResults {
+		counts[result.Phase]++
+	}
+	
+	var parts []string
+	if count := counts["Succeeded"]; count > 0 {
+		parts = append(parts, fmt.Sprintf("✅%d", count))
+	}
+	if count := counts["Failed"]; count > 0 {
+		parts = append(parts, fmt.Sprintf("❌%d", count))
+	}
+	if count := counts["Running"]; count > 0 {
+		parts = append(parts, fmt.Sprintf("🔄%d", count))
+	}
+	if count := counts["Retrying"]; count > 0 {
+		parts = append(parts, fmt.Sprintf("🔄%d", count))
+	}
+	if count := counts["Pending"]; count > 0 {
+		parts = append(parts, fmt.Sprintf("⏳%d", count))
+	}
+	if count := counts["Skipped"]; count > 0 {
+		parts = append(parts, fmt.Sprintf("⏭️%d", count))
+	}
+	
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d steps", len(stepResults))
+	}
+	
+	return strings.Join(parts, " ")
+}
+
+// formatStepOutput formats step output for display
+func (m *MateyMCPServer) formatStepOutput(output interface{}) string {
+	if output == nil {
+		return "(no output)"
+	}
+	
+	switch v := output.(type) {
+	case string:
+		return v
+	case map[string]interface{}:
+		if jsonBytes, err := json.MarshalIndent(v, "", "  "); err == nil {
+			return string(jsonBytes)
+		}
+		return fmt.Sprintf("%+v", v)
+	case []interface{}:
+		if jsonBytes, err := json.MarshalIndent(v, "", "  "); err == nil {
+			return string(jsonBytes)
+		}
+		return fmt.Sprintf("%+v", v)
+	default:
+		return fmt.Sprintf("%+v", v)
+	}
 }
 
 // pauseWorkflow pauses a workflow
