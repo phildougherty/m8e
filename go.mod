@@ -7,10 +7,12 @@ toolchain go1.24.4
 
 require (
 	github.com/Masterminds/sprig/v3 v3.2.3
+	github.com/charmbracelet/bubbles v0.17.2-0.20240108170749-ec883029c8e6
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/go-git/go-git/v5 v5.11.0
 	github.com/go-logr/logr v1.4.2
 	github.com/gordonklaus/portaudio v0.0.0-20230709114228-aafa478834f5
 	github.com/gorilla/mux v1.8.0
@@ -18,6 +20,9 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/sahilm/fuzzy v0.1.1
+	github.com/sergi/go-diff v1.4.0
+	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/term v0.33.0
@@ -43,12 +48,8 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/catppuccin/go v0.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/charmbracelet/bubbles v0.17.2-0.20240108170749-ec883029c8e6 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
-	github.com/charmbracelet/huh v0.3.0 // indirect
-	github.com/charmbracelet/log v0.4.0 // indirect
 	github.com/charmbracelet/x/ansi v0.9.3 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
@@ -65,8 +66,6 @@ require (
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.5.0 // indirect
-	github.com/go-git/go-git/v5 v5.11.0 // indirect
-	github.com/go-logfmt/logfmt v0.6.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
@@ -107,11 +106,8 @@ require (
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/sahilm/fuzzy v0.1.1 // indirect
-	github.com/sergi/go-diff v1.3.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/skeema/knownhosts v1.2.1 // indirect
-	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82 // indirect
 	github.com/spf13/cast v1.3.1 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
@@ -121,7 +117,6 @@ require (
 	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	golang.org/x/crypto v0.39.0 // indirect
-	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/mod v0.25.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.27.0 // indirect
