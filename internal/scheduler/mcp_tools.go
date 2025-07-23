@@ -4,6 +4,9 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"fmt"
 	"time"
 
@@ -23,6 +26,8 @@ type MCPToolServer struct {
 	workflowStore    *WorkflowStore     // NEW: PostgreSQL workflow persistence
 	k8sClient        client.Client // NEW: Kubernetes client for CRD access
 	namespace        string        // NEW: Kubernetes namespace
+	mountManager     *PVCMountManager    // NEW: PVC mount manager for workspace access
+	cleanupManager   *WorkspaceCleanupManager // NEW: Workspace cleanup manager
 	logger           logr.Logger
 }
 
@@ -52,6 +57,16 @@ func (mts *MCPToolServer) SetK8sClient(client client.Client, namespace string) {
 	if namespace != "" {
 		mts.namespace = namespace
 	}
+}
+
+// SetMountManager sets the PVC mount manager for workspace access
+func (mts *MCPToolServer) SetMountManager(mountManager *PVCMountManager) {
+	mts.mountManager = mountManager
+}
+
+// SetCleanupManager sets the workspace cleanup manager
+func (mts *MCPToolServer) SetCleanupManager(cleanupManager *WorkspaceCleanupManager) {
+	mts.cleanupManager = cleanupManager
 }
 
 // MCPToolDefinition represents an MCP tool definition
@@ -489,6 +504,114 @@ func (mts *MCPToolServer) GetMCPTools() []MCPToolDefinition {
 				"required": []string{"name"},
 			},
 		},
+		// Workspace Access Tools
+		{
+			Name:        "mount_workspace",
+			Description: "Mount workspace PVC for a workflow execution to enable file access",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow execution ID",
+					},
+				},
+				"required": []string{"workflowName", "executionID"},
+			},
+		},
+		{
+			Name:        "list_workspace_files",
+			Description: "List files in a mounted workspace directory",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow execution ID",
+					},
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Relative path within workspace (default: root)",
+						"default":     "",
+					},
+					"recursive": map[string]interface{}{
+						"type":        "boolean",
+						"description": "List files recursively",
+						"default":     false,
+					},
+				},
+				"required": []string{"workflowName", "executionID"},
+			},
+		},
+		{
+			Name:        "read_workspace_file",
+			Description: "Read content of a file from a mounted workspace",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow execution ID",
+					},
+					"filePath": map[string]interface{}{
+						"type":        "string",
+						"description": "Relative path to file within workspace",
+					},
+					"maxSize": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum file size to read in bytes (default: 1MB)",
+						"default":     1048576,
+					},
+				},
+				"required": []string{"workflowName", "executionID", "filePath"},
+			},
+		},
+		{
+			Name:        "unmount_workspace",
+			Description: "Unmount a workspace PVC to free resources",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow name",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Workflow execution ID",
+					},
+				},
+				"required": []string{"workflowName", "executionID"},
+			},
+		},
+		{
+			Name:        "list_mounted_workspaces",
+			Description: "List all currently mounted workspaces",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "get_workspace_stats",
+			Description: "Get statistics about workspace PVCs and retention policies",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 		// System Monitoring
 		{
 			Name:        "health_check",
@@ -561,6 +684,33 @@ func (mts *MCPToolServer) ExecuteMCPTool(ctx context.Context, toolName string, p
 		return mts.getWorkflowStatus(ctx, parameters)
 	case "workflow_logs":
 		return mts.workflowLogs(ctx, parameters)
+	// Workspace Access Tools
+	case "mount_workspace":
+		workflowName, _ := parameters["workflowName"].(string)
+		executionID, _ := parameters["executionID"].(string)
+		return mts.mountWorkspace(workflowName, executionID)
+	case "list_workspace_files":
+		workflowName, _ := parameters["workflowName"].(string)
+		executionID, _ := parameters["executionID"].(string)
+		subPath, _ := parameters["subPath"].(string)
+		return mts.listWorkspaceFiles(workflowName, executionID, subPath)
+	case "read_workspace_file":
+		workflowName, _ := parameters["workflowName"].(string)
+		executionID, _ := parameters["executionID"].(string)
+		filePath, _ := parameters["filePath"].(string)
+		maxSize, _ := parameters["maxSize"].(int)
+		if maxSize == 0 {
+			maxSize = 1024 * 1024 // 1MB default
+		}
+		return mts.readWorkspaceFile(workflowName, executionID, filePath, maxSize)
+	case "unmount_workspace":
+		workflowName, _ := parameters["workflowName"].(string)
+		executionID, _ := parameters["executionID"].(string)
+		return mts.unmountWorkspace(workflowName, executionID)
+	case "list_mounted_workspaces":
+		return mts.listMountedWorkspaces()
+	case "get_workspace_stats":
+		return mts.getWorkspaceStats()
 	case "health_check":
 		return mts.healthCheck(ctx, parameters)
 	case "get_metrics":
@@ -1794,4 +1944,212 @@ func (mts *MCPToolServer) getJobLogs(ctx context.Context, taskID, namespace stri
 			"message":   fmt.Sprintf("Workflow executed as Kubernetes Job (task ID: %s)", taskID),
 		},
 	}, nil
+}
+
+// mountWorkspace mounts a workspace PVC for chat agent access
+func (mts *MCPToolServer) mountWorkspace(workflowName, executionID string) (map[string]interface{}, error) {
+	if mts.mountManager == nil {
+		return nil, fmt.Errorf("mount manager not configured")
+	}
+
+	mountPath, err := mts.mountManager.MountWorkspacePVC(workflowName, executionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to mount workspace: %w", err)
+	}
+
+	return map[string]interface{}{
+		"success":      true,
+		"workflowName": workflowName,
+		"executionID":  executionID,
+		"mountPath":    mountPath,
+		"message":      fmt.Sprintf("Workspace mounted at %s", mountPath),
+	}, nil
+}
+
+// listWorkspaceFiles lists files in a mounted workspace
+func (mts *MCPToolServer) listWorkspaceFiles(workflowName, executionID, subPath string) (map[string]interface{}, error) {
+	if mts.mountManager == nil {
+		return nil, fmt.Errorf("mount manager not configured")
+	}
+
+	// Check if workspace is mounted
+	mountPath, mounted := mts.mountManager.GetMountPath(workflowName, executionID)
+	if !mounted {
+		return nil, fmt.Errorf("workspace %s-%s is not mounted. Use mount_workspace first", workflowName, executionID)
+	}
+
+	// Update access time
+	mts.mountManager.UpdateAccessTime(workflowName, executionID)
+
+	// Build full path
+	fullPath := mountPath
+	if subPath != "" {
+		fullPath = filepath.Join(mountPath, subPath)
+	}
+
+	// Read directory contents
+	entries, err := os.ReadDir(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory %s: %w", fullPath, err)
+	}
+
+	files := make([]map[string]interface{}, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		file := map[string]interface{}{
+			"name":    entry.Name(),
+			"isDir":   entry.IsDir(),
+			"size":    info.Size(),
+			"modTime": info.ModTime().Format(time.RFC3339),
+			"mode":    info.Mode().String(),
+		}
+
+		if subPath != "" {
+			file["path"] = filepath.Join(subPath, entry.Name())
+		} else {
+			file["path"] = entry.Name()
+		}
+
+		files = append(files, file)
+	}
+
+	return map[string]interface{}{
+		"workflowName": workflowName,
+		"executionID":  executionID,
+		"path":         subPath,
+		"files":        files,
+		"totalFiles":   len(files),
+	}, nil
+}
+
+// readWorkspaceFile reads a file from a mounted workspace
+func (mts *MCPToolServer) readWorkspaceFile(workflowName, executionID, filePath string, maxSize int) (map[string]interface{}, error) {
+	if mts.mountManager == nil {
+		return nil, fmt.Errorf("mount manager not configured")
+	}
+
+	// Check if workspace is mounted
+	mountPath, mounted := mts.mountManager.GetMountPath(workflowName, executionID)
+	if !mounted {
+		return nil, fmt.Errorf("workspace %s-%s is not mounted. Use mount_workspace first", workflowName, executionID)
+	}
+
+	// Update access time
+	mts.mountManager.UpdateAccessTime(workflowName, executionID)
+
+	// Build full path and validate it's within the workspace
+	fullPath := filepath.Join(mountPath, filePath)
+	if !strings.HasPrefix(fullPath, mountPath) {
+		return nil, fmt.Errorf("file path %s is outside workspace", filePath)
+	}
+
+	// Get file info
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file %s: %w", filePath, err)
+	}
+
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory, not a file", filePath)
+	}
+
+	// Check file size limits
+	defaultMaxSize := 1024 * 1024 // 1MB default
+	if maxSize <= 0 {
+		maxSize = defaultMaxSize
+	}
+
+	if info.Size() > int64(maxSize) {
+		return map[string]interface{}{
+			"workflowName": workflowName,
+			"executionID":  executionID,
+			"filePath":     filePath,
+			"error":        fmt.Sprintf("File size %d bytes exceeds limit %d bytes", info.Size(), maxSize),
+			"size":         info.Size(),
+			"truncated":    true,
+		}, nil
+	}
+
+	// Read file contents
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+
+	return map[string]interface{}{
+		"workflowName": workflowName,
+		"executionID":  executionID,
+		"filePath":     filePath,
+		"content":      string(content),
+		"size":         len(content),
+		"modTime":      info.ModTime().Format(time.RFC3339),
+		"truncated":    false,
+	}, nil
+}
+
+// unmountWorkspace unmounts a workspace PVC
+func (mts *MCPToolServer) unmountWorkspace(workflowName, executionID string) (map[string]interface{}, error) {
+	if mts.mountManager == nil {
+		return nil, fmt.Errorf("mount manager not configured")
+	}
+
+	err := mts.mountManager.UnmountWorkspacePVC(workflowName, executionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmount workspace: %w", err)
+	}
+
+	return map[string]interface{}{
+		"success":      true,
+		"workflowName": workflowName,
+		"executionID":  executionID,
+		"message":      "Workspace unmounted successfully",
+	}, nil
+}
+
+// listMountedWorkspaces lists all currently mounted workspaces
+func (mts *MCPToolServer) listMountedWorkspaces() (map[string]interface{}, error) {
+	if mts.mountManager == nil {
+		return nil, fmt.Errorf("mount manager not configured")
+	}
+
+	mounts := mts.mountManager.ListMountedWorkspaces()
+
+	mountList := make([]map[string]interface{}, 0, len(mounts))
+	for _, mount := range mounts {
+		mountInfo := map[string]interface{}{
+			"workflowName": mount.WorkflowName,
+			"executionID":  mount.ExecutionID,
+			"pvcName":      mount.PVCName,
+			"mountPath":    mount.MountPath,
+			"mountedAt":    mount.MountedAt.Format(time.RFC3339),
+			"lastAccess":   mount.LastAccess.Format(time.RFC3339),
+			"accessCount":  mount.AccessCount,
+			"age":          time.Since(mount.MountedAt).String(),
+			"idle":         time.Since(mount.LastAccess).String(),
+		}
+		mountList = append(mountList, mountInfo)
+	}
+
+	return map[string]interface{}{
+		"mounts":      mountList,
+		"totalMounts": len(mountList),
+	}, nil
+}
+
+// getWorkspaceStats gets statistics about workspace PVCs and retention
+func (mts *MCPToolServer) getWorkspaceStats() (map[string]interface{}, error) {
+	if mts.cleanupManager == nil {
+		return nil, fmt.Errorf("cleanup manager not configured")
+	}
+
+	stats, err := mts.cleanupManager.GetWorkspaceStats()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace stats: %w", err)
+	}
+
+	return stats, nil
 }

@@ -3,6 +3,7 @@ package task_scheduler
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"strings"
 	"time"
@@ -553,8 +554,8 @@ func (jm *K8sJobManager) createJobSpec(ctx context.Context, task *TaskRequest) (
 				"app.kubernetes.io/name":       "task",
 				"app.kubernetes.io/component":  "task-execution",
 				"app.kubernetes.io/managed-by": "matey-task-scheduler",
-				"mcp.matey.ai/task-id":        task.ID,
-				"mcp.matey.ai/task-name":      task.Name,
+				"mcp.matey.ai/task-id":        shortenForK8sLabel(task.ID),
+				"mcp.matey.ai/task-name":      shortenForK8sLabel(task.Name),
 				"mcp.matey.ai/scheduler":      "task-scheduler", // Will be updated by controller
 			},
 			Annotations: map[string]string{
@@ -571,8 +572,8 @@ func (jm *K8sJobManager) createJobSpec(ctx context.Context, task *TaskRequest) (
 						"app.kubernetes.io/name":       "task",
 						"app.kubernetes.io/component":  "task-execution",
 						"app.kubernetes.io/managed-by": "matey-task-scheduler",
-						"mcp.matey.ai/task-id":        task.ID,
-						"mcp.matey.ai/task-name":      task.Name,
+						"mcp.matey.ai/task-id":        shortenForK8sLabel(task.ID),
+						"mcp.matey.ai/task-name":      shortenForK8sLabel(task.Name),
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -625,18 +626,41 @@ func (jm *K8sJobManager) createPVCForTask(ctx context.Context, pvcName string, c
 		k8sAccessModes[i] = corev1.PersistentVolumeAccessMode(mode)
 	}
 
+	// Extract workspace metadata from PVC name pattern (workspace-{workflow-name}-{execution-id})
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "workflow-workspace",
+		"app.kubernetes.io/component":  "storage",
+		"app.kubernetes.io/managed-by": "matey-task-scheduler",
+	}
+	
+	annotations := map[string]string{
+		"mcp.matey.ai/created-at": time.Now().Format(time.RFC3339),
+	}
+	
+	// Add workspace-specific labels if this is a workspace PVC
+	if strings.HasPrefix(pvcName, "workspace-") {
+		parts := strings.SplitN(pvcName, "-", 3)
+		if len(parts) >= 3 {
+			workflowName := parts[1]
+			executionID := parts[2]
+			
+			labels["mcp.matey.ai/workspace-type"] = "workflow"
+			labels["mcp.matey.ai/workflow-name"] = workflowName
+			labels["mcp.matey.ai/execution-id"] = executionID
+			labels["mcp.matey.ai/retention-policy"] = "workspace"
+			
+			// Add retention information to annotations
+			annotations["mcp.matey.ai/workspace-retention-days"] = "7" // Default
+			annotations["mcp.matey.ai/auto-delete"] = fmt.Sprintf("%t", config.AutoDelete)
+		}
+	}
+
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcName,
-			Namespace: jm.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "workflow-workspace",
-				"app.kubernetes.io/component":  "storage",
-				"app.kubernetes.io/managed-by": "matey-task-scheduler",
-			},
-			Annotations: map[string]string{
-				"mcp.matey.ai/created-at": time.Now().Format(time.RFC3339),
-			},
+			Name:        pvcName,
+			Namespace:   jm.namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: k8sAccessModes,
@@ -714,6 +738,16 @@ func parseResourceQuantity(quantity string) resource.Quantity {
 		return resource.MustParse("100m") // 100 milliCPU as default
 	}
 	return q
+}
+
+// shortenForK8sLabel ensures a string fits Kubernetes label requirements (63 chars max)
+func shortenForK8sLabel(s string) string {
+	if len(s) <= 63 {
+		return s
+	}
+	// Use first 55 chars + MD5 hash (8 chars) = 63 chars total
+	hash := fmt.Sprintf("%x", md5.Sum([]byte(s)))[:8]
+	return s[:55] + hash
 }
 
 // Statistics and monitoring methods

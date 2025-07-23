@@ -533,6 +533,15 @@ type WorkflowWorkspace struct {
 
 	// Volume reclaim policy (default: "Delete" - cleanup after workflow completes)
 	ReclaimPolicy WorkflowVolumeReclaimPolicy `json:"reclaimPolicy,omitempty"`
+
+	// Retain workspace after workflow completion for chat agent access (default: false)
+	RetainWorkspace bool `json:"retainWorkspace,omitempty"`
+
+	// Number of days to retain workspace before cleanup (default: 7)
+	WorkspaceRetentionDays int32 `json:"workspaceRetentionDays,omitempty"`
+
+	// Paths within workspace to preserve as artifacts (default: all files)
+	ArtifactPaths []string `json:"artifactPaths,omitempty"`
 }
 
 // WorkflowVolumeReclaimPolicy defines volume cleanup policies
@@ -1472,6 +1481,11 @@ func (in *WorkflowWorkspace) DeepCopyInto(out *WorkflowWorkspace) {
 	*out = *in
 	if in.AccessModes != nil {
 		in, out := &in.AccessModes, &out.AccessModes
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.ArtifactPaths != nil {
+		in, out := &in.ArtifactPaths, &out.ArtifactPaths
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

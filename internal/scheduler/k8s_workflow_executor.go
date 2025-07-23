@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"time"
 
@@ -88,6 +89,17 @@ func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.Workf
 		}
 	}
 
+	// Create shortened names for Kubernetes compliance (63 char limit)
+	shortExecutionID := executionID
+	if len(executionID) > 20 {
+		shortExecutionID = fmt.Sprintf("%x", md5.Sum([]byte(executionID)))[:8]
+	}
+	
+	shortWorkflowName := workflowName
+	if len(workflowName) > 20 {
+		shortWorkflowName = fmt.Sprintf("%x", md5.Sum([]byte(workflowName)))[:8]
+	}
+
 	// Set retry policy
 	retryConfig := task_scheduler.TaskRetryConfig{
 		MaxRetries:      3,
@@ -115,7 +127,7 @@ func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.Workf
 	// Configure workspace volumes if enabled
 	var volumes []task_scheduler.TaskVolumeConfig
 	if kwe.shouldEnableWorkspace(workflowDef) {
-		workspaceConfig := kwe.createWorkspaceVolume(workflowDef, workflowName, executionID)
+		workspaceConfig := kwe.createWorkspaceVolume(workflowDef, workflowName, executionID, shortWorkflowName, shortExecutionID)
 		volumes = append(volumes, workspaceConfig)
 
 		// Add workspace path to environment variables
@@ -125,8 +137,8 @@ func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.Workf
 	}
 
 	return &task_scheduler.TaskRequest{
-		ID:          fmt.Sprintf("%s-%s", workflowName, executionID),
-		Name:        fmt.Sprintf("workflow-%s", workflowName),
+		ID:          fmt.Sprintf("%s-%s", shortWorkflowName, shortExecutionID),
+		Name:        fmt.Sprintf("workflow-%s", shortWorkflowName),
 		Description: fmt.Sprintf("Workflow execution for %s (ID: %s)", workflowName, executionID),
 		Command:     command,
 		Args:        args,
@@ -392,7 +404,7 @@ func (kwe *K8sWorkflowExecutor) getWorkspaceMountPath(workflowDef *crd.WorkflowD
 }
 
 // createWorkspaceVolume creates a volume configuration for the workflow workspace
-func (kwe *K8sWorkflowExecutor) createWorkspaceVolume(workflowDef *crd.WorkflowDefinition, workflowName, executionID string) task_scheduler.TaskVolumeConfig {
+func (kwe *K8sWorkflowExecutor) createWorkspaceVolume(workflowDef *crd.WorkflowDefinition, workflowName, executionID, shortWorkflowName, shortExecutionID string) task_scheduler.TaskVolumeConfig {
 	// Get configuration with defaults
 	workspace := workflowDef.Workspace
 	if workspace == nil {
@@ -412,13 +424,20 @@ func (kwe *K8sWorkflowExecutor) createWorkspaceVolume(workflowDef *crd.WorkflowD
 		accessModes = []string{"ReadWriteOnce"}
 	}
 
-	// Create unique volume name for this workflow execution
-	volumeName := fmt.Sprintf("workspace-%s-%s", workflowName, executionID)
+	// Create unique volume name for this workflow execution (shortened to avoid K8s name limits)
+	// Note: shortWorkflowName and shortExecutionID are created in createWorkflowTaskRequest
+	volumeName := fmt.Sprintf("ws-%s-%s", shortWorkflowName, shortExecutionID)
 
-	// Use PVC for persistence between steps, with auto-cleanup
+	// Determine retention policy - use RetainWorkspace setting with ReclaimPolicy fallback
 	autoDelete := true
-	if workspace.ReclaimPolicy == crd.WorkflowVolumeReclaimRetain {
+	if workspace.RetainWorkspace || workspace.ReclaimPolicy == crd.WorkflowVolumeReclaimRetain {
 		autoDelete = false
+	}
+
+	// Set default retention period
+	retentionDays := workspace.WorkspaceRetentionDays
+	if retentionDays == 0 {
+		retentionDays = 7 // Default 7 days
 	}
 
 	return task_scheduler.TaskVolumeConfig{
