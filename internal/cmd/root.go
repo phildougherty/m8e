@@ -47,6 +47,7 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewSchedulerServerCommand()) // Built-in scheduler MCP server
 	rootCmd.AddCommand(schedulerExecuteWorkflowCmd) // Internal workflow execution command
 	rootCmd.AddCommand(NewMemoryCommand())
+	rootCmd.AddCommand(NewPostgresCommand()) // Built-in PostgreSQL service
 	// TODO: Workflow commands migrated to Task Scheduler
 	// rootCmd.AddCommand(NewWorkflowCommand())
 	rootCmd.AddCommand(NewInspectCommand())

@@ -34,14 +34,32 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pymongo \
     redis
 
+# Create MCP proxy helper function
+RUN echo 'mcp_call() {' > /usr/local/bin/mcp-helper && \
+    echo '    local server="$1"' >> /usr/local/bin/mcp-helper && \
+    echo '    local tool="$2"' >> /usr/local/bin/mcp-helper && \
+    echo '    local args="$3"' >> /usr/local/bin/mcp-helper && \
+    echo '    local proxy_url="${MCP_PROXY_URL:-http://matey-proxy.default.svc.cluster.local:9876}"' >> /usr/local/bin/mcp-helper && \
+    echo '    local api_key="${MCP_PROXY_API_KEY:-myapikey}"' >> /usr/local/bin/mcp-helper && \
+    echo '    curl -s -X POST "$proxy_url/mcp/$server" \' >> /usr/local/bin/mcp-helper && \
+    echo '        -H "Content-Type: application/json" \' >> /usr/local/bin/mcp-helper && \
+    echo '        -H "Authorization: Bearer $api_key" \' >> /usr/local/bin/mcp-helper && \
+    echo '        -d "{\"method\":\"tools/call\",\"params\":{\"name\":\"$tool\",\"arguments\":$args}}"' >> /usr/local/bin/mcp-helper && \
+    echo '}' >> /usr/local/bin/mcp-helper && \
+    chmod +x /usr/local/bin/mcp-helper
+
 # Create the workflow runner script directly in the Dockerfile
 RUN echo '#!/bin/bash' > /usr/local/bin/workflow-runner && \
     echo 'set -e' >> /usr/local/bin/workflow-runner && \
+    echo '' >> /usr/local/bin/workflow-runner && \
+    echo '# Source MCP helper functions' >> /usr/local/bin/workflow-runner && \
+    echo 'source /usr/local/bin/mcp-helper' >> /usr/local/bin/workflow-runner && \
     echo '' >> /usr/local/bin/workflow-runner && \
     echo 'echo "=== Workflow Runner Starting ==="' >> /usr/local/bin/workflow-runner && \
     echo 'echo "Workflow: ${WORKFLOW_NAME:-unknown}"' >> /usr/local/bin/workflow-runner && \
     echo 'echo "Execution ID: ${WORKFLOW_EXECUTION_ID:-unknown}"' >> /usr/local/bin/workflow-runner && \
     echo 'echo "Steps: ${WORKFLOW_STEPS:-1}"' >> /usr/local/bin/workflow-runner && \
+    echo 'echo "MCP Proxy: ${MCP_PROXY_URL:-http://matey-proxy.default.svc.cluster.local:9876}"' >> /usr/local/bin/workflow-runner && \
     echo 'echo "=== Executing Workflow Script ==="' >> /usr/local/bin/workflow-runner && \
     echo 'echo' >> /usr/local/bin/workflow-runner && \
     echo '' >> /usr/local/bin/workflow-runner && \
@@ -54,7 +72,8 @@ RUN echo '#!/bin/bash' > /usr/local/bin/workflow-runner && \
     echo 'fi' >> /usr/local/bin/workflow-runner && \
     echo '' >> /usr/local/bin/workflow-runner && \
     echo 'echo' >> /usr/local/bin/workflow-runner && \
-    echo 'echo "=== Workflow Completed Successfully ==="' >> /usr/local/bin/workflow-runner
+    echo 'echo "=== Workflow Completed Successfully ==="' >> /usr/local/bin/workflow-runner && \
+    chmod +x /usr/local/bin/workflow-runner
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/workflow-runner"]

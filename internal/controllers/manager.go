@@ -190,6 +190,15 @@ func setupControllers(mgr ctrl.Manager, logger *logging.Logger, cfg *config.Comp
 		return fmt.Errorf("failed to setup MCPProxy controller: %w", err)
 	}
 
+	// Setup MCPPostgres controller
+	if err := (&MCPPostgresReconciler{
+		Client: mgr.GetClient(),
+		Log:    logger.GetLogr(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to setup MCPPostgres controller: %w", err)
+	}
+
 	return nil
 }
 

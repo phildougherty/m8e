@@ -375,6 +375,12 @@ func (m *K8sManager) createTaskSchedulerResource() *crd.MCPTaskScheduler {
 			taskScheduler.Spec.OllamaModel = ts.OllamaModel
 		}
 
+		// Add database configuration - prefer PostgreSQL if enabled
+		if ts.PostgresEnabled && ts.DatabaseURL != "" {
+			taskScheduler.Spec.PostgresEnabled = ts.PostgresEnabled
+			taskScheduler.Spec.DatabaseURL = ts.DatabaseURL
+		}
+
 		// Add workspace configuration
 		if ts.Workspace != "" {
 			taskScheduler.Spec.Workspace = ts.Workspace

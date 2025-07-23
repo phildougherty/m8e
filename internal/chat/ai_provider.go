@@ -97,8 +97,13 @@ func (tc *TermChat) switchModelSilent(name string) error {
 		return fmt.Errorf("AI manager not initialized")
 	}
 	
-	// Try to switch model (this depends on the provider implementation)
-	// For now, just update the current model reference
+	// Use the AI manager to properly switch the model within the current provider
+	err := tc.aiManager.SwitchModel(name)
+	if err != nil {
+		return err
+	}
+	
+	// Update local reference
 	tc.currentModel = name
 	
 	return nil
@@ -230,12 +235,160 @@ func (tc *TermChat) getMCPFunctions() []ai.Function {
 				},
 			},
 		},
+		// File Management Tools
+		{
+			Name:        "edit_file",
+			Description: "Edit files with diff preview, backup capabilities, and visual approval workflow",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the file to edit",
+					},
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "New file content (for full replacement)",
+					},
+					"diff_content": map[string]interface{}{
+						"type":        "string",
+						"description": "Diff content in SEARCH/REPLACE format",
+					},
+					"create_file": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Create file if it doesn't exist",
+						"default":     false,
+					},
+					"show_preview": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Show preview before applying changes",
+						"default":     false,
+					},
+					"auto_approve": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Auto-approve changes without confirmation",
+						"default":     false,
+					},
+				},
+				"required": []string{"file_path"},
+			},
+		},
+		{
+			Name:        "read_file",
+			Description: "Read file contents with optional line range and context tracking",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the file to read",
+					},
+					"start_line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Starting line number (1-based)",
+					},
+					"end_line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Ending line number (inclusive)",
+					},
+					"include_context": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include context information",
+						"default":     false,
+					},
+					"track_in_context": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Track this file in context manager",
+						"default":     false,
+					},
+				},
+				"required": []string{"file_path"},
+			},
+		},
+		{
+			Name:        "search_files",
+			Description: "Search for files with intelligent fuzzy matching and content preview",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Search pattern or filename",
+					},
+					"extensions": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "File extensions to filter by",
+					},
+					"max_results": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of results",
+						"default":     50,
+					},
+					"include_content": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include content preview",
+						"default":     false,
+					},
+					"fuzzy_search": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Enable fuzzy matching",
+						"default":     true,
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "parse_code",
+			Description: "Parse code structure using tree-sitter for function/class definitions",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the code file to parse (required if content not provided)",
+					},
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "Code content to parse (required if file_path not provided)",
+					},
+					"query_types": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Types of definitions to extract (function, class, method, etc.)",
+					},
+					"include_body": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Include function/method body content",
+						"default":     false,
+					},
+				},
+				"required": []string{},
+			},
+		},
 	}
 	
-	// Add native functions to the discovered functions
-	functions = append(functions, nativeFunctions...)
+	// Add native functions FIRST (they take priority over external MCP tools)
+	// Then add discovered MCP functions that don't conflict
+	functionNames := make(map[string]bool)
+	finalFunctions := make([]ai.Function, 0)
 	
-	return functions
+	// First add all native functions (highest priority)
+	for _, nativeFn := range nativeFunctions {
+		finalFunctions = append(finalFunctions, nativeFn)
+		functionNames[nativeFn.Name] = true
+	}
+	
+	// Then add discovered MCP functions that don't conflict with native ones
+	for _, fn := range functions {
+		if !functionNames[fn.Name] {
+			finalFunctions = append(finalFunctions, fn)
+			functionNames[fn.Name] = true
+		}
+	}
+	
+	return finalFunctions
 }
 
 // getDiscoveredMCPFunctions gets real MCP functions from discovery system
@@ -251,11 +404,11 @@ func (tc *TermChat) getDiscoveredMCPFunctions() []ai.Function {
 		}
 		
 		for _, tool := range server.Tools {
-			// Type assert the input schema
+			// Type assert the input schema and clean it for compatibility
 			var parameters map[string]interface{}
 			if tool.InputSchema != nil {
 				if schemaMap, ok := tool.InputSchema.(map[string]interface{}); ok {
-					parameters = schemaMap
+					parameters = tc.cleanSchemaForCompatibility(schemaMap)
 				} else {
 					parameters = map[string]interface{}{
 						"type": "object",
@@ -279,6 +432,32 @@ func (tc *TermChat) getDiscoveredMCPFunctions() []ai.Function {
 	}
 	
 	return functions
+}
+
+// cleanSchemaForCompatibility removes oneOf/allOf/anyOf constructs that some AI models don't support
+func (tc *TermChat) cleanSchemaForCompatibility(schema map[string]interface{}) map[string]interface{} {
+	cleaned := make(map[string]interface{})
+	
+	// Copy all fields except the problematic ones
+	for key, value := range schema {
+		switch key {
+		case "oneOf", "allOf", "anyOf":
+			// Skip these fields as they cause issues with some AI models
+			continue
+		default:
+			cleaned[key] = value
+		}
+	}
+	
+	// Ensure we have basic schema structure
+	if cleaned["type"] == nil {
+		cleaned["type"] = "object"
+	}
+	if cleaned["properties"] == nil {
+		cleaned["properties"] = map[string]interface{}{}
+	}
+	
+	return cleaned
 }
 
 // discoverMCPServerFunctions discovers available functions from MCP servers
@@ -932,7 +1111,10 @@ func (tc *TermChat) isNativeFunction(functionName string) bool {
 		"deploy_service", "scale_service", "restart_service", 
 		"get_logs", "get_metrics", "check_health",
 		"get_service_status", "create_backup",
-		"edit_file", "editfile", "edit-file", // Add file editing tools as native
+		"edit_file", "editfile", "edit-file", // File editing tools as native
+		"read_file", "readfile", "read-file", // File reading tools as native
+		"search_files", "searchfiles", "search-files", // File search tools as native
+		"parse_code", "parsecode", "parse-code", // Code parsing tools as native
 	}
 	
 	for _, nativeFunc := range nativeFunctions {

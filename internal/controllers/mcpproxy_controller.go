@@ -512,20 +512,11 @@ func (r *MCPProxyReconciler) getProxyArgsWithConfig(mcpProxy *crd.MCPProxy) []st
 	args := []string{
 		"--port", fmt.Sprintf("%d", r.getPort(mcpProxy)),
 		"--namespace", mcpProxy.Namespace,
-		"--config-file", "/etc/matey/config.yaml", // Mount point for ConfigMap
+		"--file", "/etc/matey/config.yaml", // Mount point for ConfigMap
 	}
 	
 	if mcpProxy.Spec.Auth != nil && mcpProxy.Spec.Auth.APIKey != "" {
 		args = append(args, "--api-key", mcpProxy.Spec.Auth.APIKey)
-	}
-	
-	// Add reliability configuration
-	args = append(args, "--max-retries", fmt.Sprintf("%d", r.MaxRetries))
-	args = append(args, "--retry-delay", r.RetryDelay.String())
-	args = append(args, "--health-interval", r.HealthInterval.String())
-	
-	if r.CircuitBreaker {
-		args = append(args, "--circuit-breaker")
 	}
 	
 	return args

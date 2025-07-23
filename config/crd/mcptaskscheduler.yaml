@@ -42,8 +42,14 @@ spec:
             description: MCPTaskSchedulerSpec defines the desired state of MCPTaskScheduler
             properties:
               databasePath:
-                description: Database path for task storage
+                description: Database path for task storage (SQLite)
                 type: string
+              databaseURL:
+                description: Database connection URL (PostgreSQL)
+                type: string
+              postgresEnabled:
+                description: Enable PostgreSQL database instead of SQLite
+                type: boolean
               host:
                 description: Host interface
                 type: string

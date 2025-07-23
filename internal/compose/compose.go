@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +22,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/phildougherty/m8e/internal/config"
-	"github.com/phildougherty/m8e/internal/container"
 	"github.com/phildougherty/m8e/internal/controllers"
 	"github.com/phildougherty/m8e/internal/crd"
 	"github.com/phildougherty/m8e/internal/logging"
@@ -270,10 +270,11 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 		}
 		
 		serverStatus := c.getMCPServerStatus(serverName)
+		serviceType := c.getServiceType(serverName)
 		status.Services[serverName] = &ServiceStatus{
 			Name:   serverName,
 			Status: serverStatus,
-			Type:   "mcp-server",
+			Type:   serviceType,
 		}
 	}
 
@@ -336,16 +337,47 @@ func (c *K8sComposer) getSystemServiceStatus(deploymentName string) string {
 	return "unknown"
 }
 
-// getMCPServerStatus gets the status of an MCP server via MCPServer CRD with deployment fallback
+// getMCPServerStatus gets the status of an MCP server via CRDs with deployment fallback
 func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 	ctx := context.Background()
 	
 	// Always use our k8sClient to ensure consistent scheme
 	clientToUse := c.k8sClient
 	
-	// Get the deployment for this server first (most accurate real-time status)
-	deployment := &appsv1.Deployment{}
+	// Check for MCPPostgres CRD first - if it exists, use its status
+	mcpPostgres := &crd.MCPPostgres{}
 	err := clientToUse.Get(ctx, client.ObjectKey{
+		Name:      serverName,
+		Namespace: c.namespace,
+	}, mcpPostgres)
+	
+	if err == nil {
+		// MCPPostgres CRD exists - use CRD status (most accurate for database services)
+		switch mcpPostgres.Status.Phase {
+		case crd.PostgresPhaseRunning:
+			return "running"
+		case crd.PostgresPhasePending:
+			return "pending"
+		case crd.PostgresPhaseCreating:
+			return "creating"
+		case crd.PostgresPhaseUpdating:
+			return "updating"
+		case crd.PostgresPhaseDegraded:
+			return "degraded"
+		case crd.PostgresPhaseTerminating:
+			return "terminating"
+		case crd.PostgresPhaseFailed:
+			return "failed"
+		case "":
+			return "stopped"
+		default:
+			return "unknown"
+		}
+	}
+	
+	// Get the deployment for this server (most accurate real-time status for regular services)
+	deployment := &appsv1.Deployment{}
+	err = clientToUse.Get(ctx, client.ObjectKey{
 		Name:      serverName,
 		Namespace: c.namespace,
 	}, deployment)
@@ -451,6 +483,25 @@ func (c *K8sComposer) getMCPServerStatus(serverName string) string {
 	}
 	
 	return "starting"
+}
+
+// getServiceType determines the service type based on the resource type
+func (c *K8sComposer) getServiceType(serverName string) string {
+	ctx := context.Background()
+	
+	// Check if it's an MCPPostgres resource
+	mcpPostgres := &crd.MCPPostgres{}
+	err := c.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      serverName,
+		Namespace: c.namespace,
+	}, mcpPostgres)
+	
+	if err == nil {
+		return "database"
+	}
+	
+	// Default to mcp-server for other services
+	return "mcp-server"
 }
 
 // startAllEnabledServices starts all services that are enabled in config
@@ -1414,37 +1465,18 @@ func List(configFile string) error {
 	return nil
 }
 
-// Logs returns logs from services
+// Logs returns logs from services using kubectl logs on pods
 func Logs(configFile string, serviceNames []string, follow bool) error {
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
 	namespace := "default"
-
-	// Create Kubernetes runtime for logs
-	runtime, err := container.NewKubernetesRuntime(namespace)
-	if err != nil {
-		return fmt.Errorf("failed to create kubernetes runtime: %w", err)
-	}
-
-	// If no service names specified, show logs from all defined services
+	
+	// If no service names specified, get all services from status
 	if len(serviceNames) == 0 {
-		for name := range cfg.Servers {
-			serviceNames = append(serviceNames, name)
+		status, err := Status(configFile)
+		if err != nil {
+			return fmt.Errorf("failed to get service status: %w", err)
 		}
-	}
-
-	// Handle special service names
-	for i, name := range serviceNames {
-		switch name {
-		case "proxy":
-			serviceNames[i] = "matey-proxy"
-		case "task-scheduler":
-			serviceNames[i] = "matey-task-scheduler"
-		case "memory":
-			serviceNames[i] = "matey-memory"
+		for name := range status.Services {
+			serviceNames = append(serviceNames, name)
 		}
 	}
 
@@ -1454,7 +1486,7 @@ func Logs(configFile string, serviceNames []string, follow bool) error {
 			fmt.Printf("=== Logs for %s ===\n", serviceName)
 		}
 		
-		err := runtime.ShowContainerLogs(serviceName, follow)
+		err := showServiceLogs(serviceName, namespace, follow)
 		if err != nil {
 			fmt.Printf("Error getting logs for %s: %v\n", serviceName, err)
 		}
@@ -1465,6 +1497,69 @@ func Logs(configFile string, serviceNames []string, follow bool) error {
 	}
 
 	return nil
+}
+
+// showServiceLogs shows logs for a service by finding its pods and calling kubectl logs
+func showServiceLogs(serviceName, namespace string, follow bool) error {
+	// Use kubectl to get logs from pods
+	followFlag := ""
+	if follow {
+		followFlag = "-f "
+	}
+	
+	// Try by instance label first (most common pattern for CRD-managed services)
+	cmd := fmt.Sprintf("kubectl logs %s-l app.kubernetes.io/instance=%s -n %s --tail=100", followFlag, serviceName, namespace)
+	if err := executeCommand(cmd); err != nil {
+		// Try by legacy app label (for older deployments)
+		cmd = fmt.Sprintf("kubectl logs %s-l app=%s -n %s --tail=100", followFlag, serviceName, namespace)
+		if err := executeCommand(cmd); err != nil {
+			// Handle special service name mappings for system services
+			deploymentName := getDeploymentName(serviceName)
+			if deploymentName != serviceName {
+				cmd = fmt.Sprintf("kubectl logs %s-l app.kubernetes.io/instance=%s -n %s --tail=100", followFlag, deploymentName, namespace)
+				if err := executeCommand(cmd); err != nil {
+					cmd = fmt.Sprintf("kubectl logs %s-l app=%s -n %s --tail=100", followFlag, deploymentName, namespace)
+					return executeCommand(cmd)
+				}
+			} else {
+				return fmt.Errorf("no pods found for service %s", serviceName)
+			}
+		}
+	}
+	
+	return nil
+}
+
+// getDeploymentName maps service names to deployment names
+func getDeploymentName(serviceName string) string {
+	switch serviceName {
+	case "proxy":
+		return "matey-proxy"
+	case "memory":
+		return "matey-memory"
+	case "task-scheduler":
+		return "matey-task-scheduler"
+	case "controller-manager":
+		return "matey-controller-manager"
+	default:
+		return serviceName
+	}
+}
+
+// executeCommand executes a shell command and prints output
+func executeCommand(cmd string) error {
+	// For simplicity, we'll use os/exec to run kubectl directly
+	// In production, you might want to use the Kubernetes Go client
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty command")
+	}
+	
+	cmdObj := exec.Command(parts[0], parts[1:]...)
+	cmdObj.Stdout = os.Stdout
+	cmdObj.Stderr = os.Stderr
+	
+	return cmdObj.Run()
 }
 
 // Validate validates the configuration

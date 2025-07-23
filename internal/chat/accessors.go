@@ -108,6 +108,12 @@ func (tc *TermChat) ExecuteNativeToolCall(toolCall interface{}, index int) (inte
 	case "edit_file", "editfile", "edit-file":
 		fmt.Printf("DEBUG: Executing INTERNAL edit_file function\n")
 		return tc.executeEditFile(call.Function.Arguments)
+	case "read_file", "readfile", "read-file":
+		return tc.executeReadFile(call.Function.Arguments)
+	case "search_files", "searchfiles", "search-files":
+		return tc.executeSearchFiles(call.Function.Arguments)
+	case "parse_code", "parsecode", "parse-code":
+		return tc.executeParseCode(call.Function.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown native function: %s", call.Function.Name)
 	}
@@ -566,5 +572,229 @@ func (tc *TermChat) executeEditFile(argumentsJSON string) (interface{}, error) {
 	}
 	
 	return result, nil
+}
+
+// executeReadFile executes the read_file native function
+func (tc *TermChat) executeReadFile(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse read_file arguments: %v", err)
+	}
+
+	// Extract file path
+	filePath, ok := args["file_path"].(string)
+	if !ok || filePath == "" {
+		return nil, fmt.Errorf("file_path is required")
+	}
+
+	// Create read request
+	readRequest := mcp.ReadFileRequest{
+		FilePath:         filePath,
+		IncludeContext:   getBoolArg(args, "include_context", false),
+		TrackInContext:   getBoolArg(args, "track_in_context", false),
+	}
+
+	// Handle line range
+	if startLine, ok := args["start_line"].(float64); ok {
+		readRequest.StartLine = int(startLine)
+	}
+	if endLine, ok := args["end_line"].(float64); ok {
+		readRequest.EndLine = int(endLine)
+	}
+
+	// Create enhanced tools instance
+	config := mcp.EnhancedToolConfig{
+		EnableVisualDiff:  tc.approvalMode == YOLO,
+		EnablePreview:     true,
+		AutoApprove:       tc.approvalMode == YOLO,
+		MaxFileSize:       1024 * 1024,
+		ContextTracking:   true,
+		BackupEnabled:     true,
+		ValidationEnabled: true,
+	}
+
+	fileEditor := edit.NewFileEditor(edit.EditorConfig{
+		MaxBackups:    10,
+		K8sIntegrated: false,
+	})
+
+	enhancedTools := mcp.NewEnhancedTools(config, fileEditor, nil, nil, nil, nil)
+
+	// Execute the read
+	ctx := context.Background()
+	response, err := enhancedTools.ReadFile(ctx, readRequest)
+	if err != nil {
+		return nil, fmt.Errorf("read failed: %v", err)
+	}
+
+	// Return response
+	result := map[string]interface{}{
+		"success":    response.Success,
+		"file_path":  response.FilePath,
+		"content":    response.Content,
+		"language":   response.Language,
+		"line_count": response.LineCount,
+		"size":       response.Size,
+	}
+
+	if response.Context != "" {
+		result["context"] = response.Context
+	}
+	if response.Error != "" {
+		result["error"] = response.Error
+	}
+
+	return result, nil
+}
+
+// executeSearchFiles executes the search_files native function
+func (tc *TermChat) executeSearchFiles(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse search_files arguments: %v", err)
+	}
+
+	// Extract query
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+
+	// Create search request
+	searchRequest := mcp.SearchFilesRequest{
+		Query:          query,
+		MaxResults:     getIntArg(args, "max_results", 50),
+		IncludeContent: getBoolArg(args, "include_content", false),
+		FuzzySearch:    getBoolArg(args, "fuzzy_search", true),
+	}
+
+	// Handle extensions array
+	if extensions, ok := args["extensions"].([]interface{}); ok {
+		for _, ext := range extensions {
+			if extStr, ok := ext.(string); ok {
+				searchRequest.Extensions = append(searchRequest.Extensions, extStr)
+			}
+		}
+	}
+
+	// Create enhanced tools instance
+	config := mcp.EnhancedToolConfig{
+		EnableVisualDiff:  false,
+		EnablePreview:     true,
+		MaxFileSize:       1024 * 1024,
+		ContextTracking:   false,
+	}
+
+	fileEditor := edit.NewFileEditor(edit.EditorConfig{
+		MaxBackups:    10,
+		K8sIntegrated: false,
+	})
+
+	enhancedTools := mcp.NewEnhancedTools(config, fileEditor, nil, nil, nil, nil)
+
+	// Execute the search
+	ctx := context.Background()
+	response, err := enhancedTools.SearchFiles(ctx, searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("search failed: %v", err)
+	}
+
+	// Return response
+	result := map[string]interface{}{
+		"success": response.Success,
+		"query":   response.Query,
+		"results": response.Results,
+		"count":   response.Count,
+	}
+
+	if response.Error != "" {
+		result["error"] = response.Error
+	}
+
+	return result, nil
+}
+
+// executeParseCode executes the parse_code native function
+func (tc *TermChat) executeParseCode(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse parse_code arguments: %v", err)
+	}
+
+	// Create parse request
+	parseRequest := mcp.ParseCodeRequest{
+		IncludeBody: getBoolArg(args, "include_body", false),
+	}
+
+	// Handle file_path or content
+	if filePath, ok := args["file_path"].(string); ok && filePath != "" {
+		parseRequest.FilePath = filePath
+	} else if content, ok := args["content"].(string); ok && content != "" {
+		parseRequest.Content = content
+	} else {
+		return nil, fmt.Errorf("either file_path or content is required")
+	}
+
+	// Handle query_types array
+	if queryTypes, ok := args["query_types"].([]interface{}); ok {
+		for _, qType := range queryTypes {
+			if qTypeStr, ok := qType.(string); ok {
+				parseRequest.QueryTypes = append(parseRequest.QueryTypes, qTypeStr)
+			}
+		}
+	}
+
+	// Create enhanced tools instance
+	config := mcp.EnhancedToolConfig{
+		EnableVisualDiff: false,
+		EnablePreview:    true,
+		MaxFileSize:      1024 * 1024,
+	}
+
+	fileEditor := edit.NewFileEditor(edit.EditorConfig{
+		MaxBackups:    10,
+		K8sIntegrated: false,
+	})
+
+	enhancedTools := mcp.NewEnhancedTools(config, fileEditor, nil, nil, nil, nil)
+
+	// Execute the parse
+	ctx := context.Background()
+	response, err := enhancedTools.ParseCode(ctx, parseRequest)
+	if err != nil {
+		return nil, fmt.Errorf("parse failed: %v", err)
+	}
+
+	// Return response
+	result := map[string]interface{}{
+		"success":     response.Success,
+		"file_path":   response.FilePath,
+		"language":    response.Language,
+		"definitions": response.Definitions,
+	}
+
+	if response.Structure != nil {
+		result["structure"] = response.Structure
+	}
+	if response.Error != "" {
+		result["error"] = response.Error
+	}
+
+	return result, nil
+}
+
+// Helper functions
+func getBoolArg(args map[string]interface{}, key string, defaultValue bool) bool {
+	if val, ok := args[key].(bool); ok {
+		return val
+	}
+	return defaultValue
+}
+
+func getIntArg(args map[string]interface{}, key string, defaultValue int) int {
+	if val, ok := args[key].(float64); ok {
+		return int(val)
+	}
+	return defaultValue
 }
 

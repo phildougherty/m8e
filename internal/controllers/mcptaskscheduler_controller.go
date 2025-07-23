@@ -483,10 +483,19 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		{Name: "MCP_CRON_SERVER_ADDRESS", Value: taskScheduler.Spec.Host},
 		{Name: "MCP_CRON_SERVER_TRANSPORT", Value: "sse"},
 		{Name: "MCP_CRON_LOGGING_LEVEL", Value: taskScheduler.Spec.LogLevel},
-		{Name: "MCP_CRON_DATABASE_PATH", Value: taskScheduler.Spec.DatabasePath},
-		{Name: "MCP_CRON_DATABASE_ENABLED", Value: "true"},
 		{Name: "KUBERNETES_MODE", Value: "true"},
 		{Name: "NAMESPACE", Value: taskScheduler.Namespace},
+	}
+
+	// Add database configuration - prefer PostgreSQL over SQLite
+	if taskScheduler.Spec.PostgresEnabled && taskScheduler.Spec.DatabaseURL != "" {
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_DATABASE_URL", Value: taskScheduler.Spec.DatabaseURL})
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_POSTGRES_ENABLED", Value: "true"})
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_DATABASE_ENABLED", Value: "true"})
+	} else {
+		// Fallback to SQLite
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_DATABASE_PATH", Value: taskScheduler.Spec.DatabasePath})
+		env = append(env, corev1.EnvVar{Name: "MCP_CRON_DATABASE_ENABLED", Value: "true"})
 	}
 
 	// Add custom environment variables

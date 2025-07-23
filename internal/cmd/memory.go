@@ -77,7 +77,7 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 		cfg.Memory.Host = "0.0.0.0"
 	}
 	if cfg.Memory.DatabaseURL == "" {
-		cfg.Memory.DatabaseURL = "postgresql://postgres:password@memory-postgres:5432/memory_graph?sslmode=disable"
+		cfg.Memory.DatabaseURL = "postgresql://postgres:password@matey-postgres:5432/memory_graph?sslmode=disable"
 	}
 	if !cfg.Memory.PostgresEnabled {
 		cfg.Memory.PostgresEnabled = true
@@ -152,29 +152,7 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 			OptionalAuth:  false,
 			AllowAPIKey:   &allowAPIKey,
 		},
-		DependsOn: []string{"postgres-memory"},
-	}
-
-	// Add postgres-memory to servers config too
-	cfg.Servers["postgres-memory"] = config.ServerConfig{
-		Image:       "postgres:15-alpine",
-		ReadOnly:    false,
-		Privileged:  true, // Postgres needs root access to initialize database
-		Env: map[string]string{
-			"POSTGRES_DB":       cfg.Memory.PostgresDB,
-			"POSTGRES_USER":     cfg.Memory.PostgresUser,
-			"POSTGRES_PASSWORD": cfg.Memory.PostgresPassword,
-		},
-		Volumes:       cfg.Memory.Volumes,
-		Networks:      []string{"mcp-net"},
-		RestartPolicy: "unless-stopped",
-		HealthCheck: &config.HealthCheck{
-			Test:        []string{"CMD-SHELL", "pg_isready -U postgres"},
-			Interval:    "10s",
-			Timeout:     "5s",
-			Retries:     constants.DefaultRetryCount,
-			StartPeriod: "30s",
-		},
+		DependsOn: []string{"matey-postgres"},
 	}
 
 	fmt.Printf("Memory server enabled in both built-in config and servers list (port: %d).\n", cfg.Memory.Port)

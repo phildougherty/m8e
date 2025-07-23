@@ -98,6 +98,14 @@ func enableTaskScheduler(configFile string, cfg *config.ComposeConfig) error {
 	if cfg.TaskScheduler.Host == "" {
 		cfg.TaskScheduler.Host = "0.0.0.0"
 	}
+	// Enable PostgreSQL by default
+	if !cfg.TaskScheduler.PostgresEnabled {
+		cfg.TaskScheduler.PostgresEnabled = true
+	}
+	if cfg.TaskScheduler.DatabaseURL == "" {
+		cfg.TaskScheduler.DatabaseURL = "postgresql://postgres:password@matey-postgres:5432/matey?sslmode=disable"
+	}
+	// Keep SQLite as fallback
 	if cfg.TaskScheduler.DatabasePath == "" {
 		cfg.TaskScheduler.DatabasePath = "/data/task-scheduler.db"
 	}
@@ -140,6 +148,8 @@ func enableTaskScheduler(configFile string, cfg *config.ComposeConfig) error {
 		Env: map[string]string{
 			"NODE_ENV":           "production",
 			"DATABASE_PATH":      cfg.TaskScheduler.DatabasePath,
+			"DATABASE_URL":       cfg.TaskScheduler.DatabaseURL,
+			"POSTGRES_ENABLED":   fmt.Sprintf("%t", cfg.TaskScheduler.PostgresEnabled),
 			"MCP_PROXY_URL":      cfg.TaskScheduler.MCPProxyURL,
 			"MCP_PROXY_API_KEY":  cfg.TaskScheduler.MCPProxyAPIKey,
 			"OPENROUTER_API_KEY": cfg.TaskScheduler.OpenRouterAPIKey,
@@ -154,6 +164,7 @@ func enableTaskScheduler(configFile string, cfg *config.ComposeConfig) error {
 			OptionalAuth:  false,
 			AllowAPIKey:   &[]bool{true}[0],
 		},
+		DependsOn: []string{"matey-postgres"},
 		Volumes: cfg.TaskScheduler.Volumes,
 	}
 

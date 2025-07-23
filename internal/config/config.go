@@ -482,7 +482,9 @@ type TaskScheduler struct {
 	Enabled          bool              `yaml:"enabled"`
 	Port             int               `yaml:"port"`
 	Host             string            `yaml:"host"`
-	DatabasePath     string            `yaml:"database_path"`
+	DatabasePath     string            `yaml:"database_path"`     // SQLite database path (legacy)
+	DatabaseURL      string            `yaml:"database_url"`      // PostgreSQL connection string
+	PostgresEnabled  bool              `yaml:"postgres_enabled"`  // Use PostgreSQL instead of SQLite
 	LogLevel         string            `yaml:"log_level"`
 	OpenRouterAPIKey string            `yaml:"openrouter_api_key"`
 	OpenRouterModel  string            `yaml:"openrouter_model"`

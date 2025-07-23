@@ -31,7 +31,7 @@ func NewInstallCommand() *cobra.Command {
 		Long: `Install Matey Custom Resource Definitions (CRDs) and required Kubernetes resources.
 
 This command must be run before using 'matey up' for the first time to install
-the necessary CRDs (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy, MCPToolbox, Workflow) and RBAC resources into the cluster.
+the necessary CRDs (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy, MCPToolbox, MCPPostgres, Workflow) and RBAC resources into the cluster.
 
 Examples:
   matey install                    # Install all CRDs and resources
@@ -57,6 +57,7 @@ func installCRDs(dryRun bool) error {
 		fmt.Println("✓ MCPMemory CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ MCPTaskScheduler CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ MCPProxy CRD (mcp.matey.ai/v1)")
+		fmt.Println("✓ MCPPostgres CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ ServiceAccount: matey-controller")
 		fmt.Println("✓ ClusterRole: matey-controller")
 		fmt.Println("✓ ClusterRoleBinding: matey-controller")
@@ -162,6 +163,7 @@ func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
 		"mcptaskscheduler.yaml",
 		"mcpproxy.yaml",
 		"mcptoolbox.yaml",
+		"mcppostgres.yaml",
 	}
 
 	for _, fileName := range crdFileNames {
@@ -239,12 +241,12 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcptoolboxes"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcptoolboxes", "mcppostgres"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcptoolboxes/status"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcptoolboxes/status", "mcppostgres/status"},
 				Verbs:     []string{"get", "update", "patch"},
 			},
 		},

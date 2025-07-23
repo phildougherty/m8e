@@ -49,6 +49,8 @@ type MCPTaskSchedulerSpec struct {
 	Port         int32  `json:"port,omitempty"`
 	Host         string `json:"host,omitempty"`
 	DatabasePath string `json:"databasePath,omitempty"`
+	DatabaseURL  string `json:"databaseURL,omitempty"`
+	PostgresEnabled bool `json:"postgresEnabled,omitempty"`
 	LogLevel     string `json:"logLevel,omitempty"`
 
 	// AI/LLM integration

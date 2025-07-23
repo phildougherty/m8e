@@ -585,7 +585,7 @@ func (jm *K8sJobManager) createJobSpec(ctx context.Context, task *TaskRequest) (
 							Args:            task.Args,
 							Env:             env,
 							Resources:       resources,
-							ImagePullPolicy: corev1.PullIfNotPresent,
+							ImagePullPolicy: corev1.PullAlways,
 							VolumeMounts:    volumeMounts,
 						},
 					},

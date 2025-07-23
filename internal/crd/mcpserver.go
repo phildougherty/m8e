@@ -474,6 +474,8 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&MCPProxyList{},
 		&MCPToolbox{},
 		&MCPToolboxList{},
+		&MCPPostgres{},
+		&MCPPostgresList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil

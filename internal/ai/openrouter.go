@@ -155,7 +155,8 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			errorMsg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
-			// API error occurred
+			// API error occurred - log for debugging
+			fmt.Printf("DEBUG: OpenRouter API error for model %s: %s\n", options.Model, errorMsg)
 			responseChan <- StreamResponse{
 				Error: NewProviderError(p.Name(), errorMsg, "http_error"),
 			}
@@ -204,6 +205,7 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 				}
 				
 				if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+					fmt.Printf("DEBUG: Failed to parse JSON for model %s: %s\n", options.Model, data)
 					continue // Skip malformed JSON
 				}
 				
@@ -275,15 +277,21 @@ func (p *OpenRouterProvider) SupportedModels() []string {
 	// Return popular models as fallback
 	return []string{
 		"anthropic/claude-3.5-sonnet",
-		"anthropic/claude-3.5-haiku",
+		"anthropic/claude-3.5-haiku", 
 		"anthropic/claude-3-opus",
+		"anthropic/claude-3.5-sonnet-20241022",
 		"openai/gpt-4-turbo",
 		"openai/gpt-4",
+		"openai/gpt-4o",
+		"openai/gpt-4o-mini",
 		"openai/gpt-3.5-turbo",
+		"moonshotai/kimi-k2",
+		"google/gemini-2.5-flash",
+		"google/gemini-2.5-pro", 
 		"meta-llama/llama-3-70b-instruct",
 		"meta-llama/llama-3-8b-instruct",
 		"mistralai/mistral-7b-instruct",
-		"google/gemini-pro",
+		"x-ai/grok-4",
 		"cohere/command-r-plus",
 	}
 }
