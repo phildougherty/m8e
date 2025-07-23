@@ -175,16 +175,13 @@ You have deep knowledge of all Matey commands with their exact parameters and us
 5. **Default Reclaim**: Delete (auto-cleanup, change to Retain for persistent data)
 
 ### Essential Workspace Configuration
-```yaml
-workflow:
-  workspace:
-    enabled: true                    # Auto-enabled for multi-step workflows
-    size: "10Gi"                    # Customize based on data requirements
-    mount_path: "/shared"           # Default: /workspace
-    storage_class: "fast-ssd"       # Optional: performance tier
-    access_modes: ["ReadWriteOnce"] # RWO for single-node, RWX for multi-node
-    reclaim_policy: "Retain"        # Delete (cleanup) vs Retain (persist)
-```
+**workflow.workspace fields:**
+- enabled: true (auto-enabled for multi-step workflows)
+- size: "10Gi" (customize based on data requirements)
+- mount_path: "/shared" (default: /workspace)
+- storage_class: "fast-ssd" (optional: performance tier)
+- access_modes: ["ReadWriteOnce"] (RWO for single-node, RWX for multi-node)
+- reclaim_policy: "Retain" (Delete=cleanup vs Retain=persist)
 
 ### Data Access Patterns
 - **Environment Variable**: WORKFLOW_WORKSPACE_PATH contains mount path
@@ -192,285 +189,220 @@ workflow:
 - **File Persistence**: All files in workspace survive between steps
 - **Artifact Retrieval**: Access completed workflow data via volume inspection
 
-## Real Working Examples (Copy-Paste Ready JSON)
+## Working JSON Examples for Function Calls
 
-### 1. Simple Single-Step Task (No Workspace)
-```json
+**CRITICAL: These are properly formatted JSON for MCP function calls - copy exactly as shown:**
+
+### Example 1: Single-Step Task (No Workspace)
+Function Name: create_workflow
+JSON Arguments:
 {
-  "function": "create_workflow",
-  "arguments": {
-    "name": "daily-health-check",
-    "schedule": "0 8 * * *",
-    "description": "Daily comprehensive health check",
+  "name": "daily-health-check",
+  "schedule": "0 8 * * *",
+  "description": "Daily comprehensive health check",
+  "enabled": true,
+  "timeout": "10m",
+  "retry_policy": {
+    "max_retries": 2,
+    "retry_delay": "5m",
+    "backoff_strategy": "Linear"
+  },
+  "steps": [
+    {
+      "name": "health-check",
+      "tool": "health_check",
+      "parameters": {
+        "services": ["all"],
+        "detailed": true
+      },
+      "timeout": "5m"
+    }
+  ]
+}
+
+### Example 2: Multi-Step with Auto Workspace
+Function Name: create_workflow
+JSON Arguments:
+{
+  "name": "health-monitoring",
+  "schedule": "*/15 * * * *",
+  "timezone": "UTC",
+  "enabled": true,
+  "description": "Monitor system health with analysis",
+  "parameters": {
+    "alert_threshold": 80,
+    "notification_channel": "alerts"
+  },
+  "steps": [
+    {
+      "name": "check-system",
+      "tool": "health_check",
+      "parameters": {
+        "services": ["proxy", "memory", "scheduler"],
+        "include_metrics": true
+      },
+      "timeout": "30s"
+    },
+    {
+      "name": "analyze-results",
+      "tool": "ai_analyze",
+      "parameters": {
+        "data": "{{steps.check-system.output}}",
+        "prompt": "Analyze health metrics and identify issues"
+      },
+      "depends_on": ["check-system"]
+    },
+    {
+      "name": "send-alerts",
+      "tool": "send_notification",
+      "parameters": {
+        "channel": "{{parameters.notification_channel}}",
+        "message": "{{steps.analyze-results.output}}"
+      },
+      "condition": "{{steps.analyze-results.issues_found}}",
+      "run_policy": "OnCondition"
+    }
+  ]
+}
+
+### Example 3: Custom Workspace Configuration
+Function Name: create_workflow
+JSON Arguments:
+{
+  "name": "data-backup-pipeline",
+  "schedule": "0 2 * * *",
+  "timezone": "America/New_York",
+  "enabled": true,
+  "description": "Comprehensive data backup with validation",
+  "concurrency_policy": "Forbid",
+  "timeout": "2h",
+  "parameters": {
+    "backup_location": "s3://backups",
+    "retention_days": 30,
+    "compression": true
+  },
+  "retry_policy": {
+    "max_retries": 2,
+    "retry_delay": "10m",
+    "backoff_strategy": "Linear"
+  },
+  "workspace": {
     "enabled": true,
-    "timeout": "10m",
-    "retry_policy": {
-      "max_retries": 2,
-      "retry_delay": "5m",
-      "backoff_strategy": "Linear"
+    "size": "10Gi",
+    "mount_path": "/shared",
+    "storage_class": "fast-ssd",
+    "access_modes": ["ReadWriteOnce"],
+    "reclaim_policy": "Delete"
+  },
+  "steps": [
+    {
+      "name": "pre-backup-validation",
+      "tool": "validate_services",
+      "parameters": {
+        "services": ["memory", "task-scheduler"],
+        "health_check": true
+      },
+      "timeout": "5m"
     },
-    "steps": [
-      {
-        "name": "health-check",
-        "tool": "health_check",
-        "parameters": {
-          "services": ["all"],
-          "detailed": true
-        },
-        "timeout": "5m"
-      }
-    ]
-  }
+    {
+      "name": "backup-memory-db",
+      "tool": "backup_database",
+      "parameters": {
+        "service": "memory",
+        "destination": "{{parameters.backup_location}}/memory",
+        "compression": "{{parameters.compression}}"
+      },
+      "depends_on": ["pre-backup-validation"],
+      "retry_policy": {
+        "max_retries": 3,
+        "retry_delay": "2m",
+        "backoff_strategy": "Exponential"
+      },
+      "timeout": "45m"
+    }
+  ]
 }
-```
 
-### 2. Multi-Step Workflow with Auto Workspace
-```json
+### Example 4: Event-Triggered Workflow
+Function Name: create_workflow
+JSON Arguments:
 {
-  "function": "create_workflow", 
-  "arguments": {
-    "name": "health-monitoring",
-    "schedule": "*/15 * * * *",
-    "timezone": "UTC",
-    "enabled": true,
-    "description": "Monitor system health with analysis",
-    "parameters": {
-      "alert_threshold": 80,
-      "notification_channel": "alerts"
-    },
-    "steps": [
-      {
-        "name": "check-system",
-        "tool": "health_check",
-        "parameters": {
-          "services": ["proxy", "memory", "scheduler"],
-          "include_metrics": true
-        },
-        "timeout": "30s"
-      },
-      {
-        "name": "analyze-results",
-        "tool": "ai_analyze",
-        "parameters": {
-          "data": "{{steps.check-system.output}}",
-          "prompt": "Analyze health metrics and identify issues"
-        },
-        "depends_on": ["check-system"]
-      },
-      {
-        "name": "send-alerts",
-        "tool": "send_notification",
-        "parameters": {
-          "channel": "{{parameters.notification_channel}}",
-          "message": "{{steps.analyze-results.output}}"
-        },
-        "condition": "{{steps.analyze-results.issues_found}}",
-        "run_policy": "OnCondition"
+  "name": "incident-response",
+  "enabled": true,
+  "description": "Automated incident response",
+  "manual_execution": true,
+  "parameters": {
+    "escalation_timeout": "30m",
+    "auto_remediation": false
+  },
+  "steps": [
+    {
+      "name": "assess-incident",
+      "tool": "analyze_system_state",
+      "parameters": {
+        "comprehensive": true,
+        "include_logs": true
       }
-    ]
-  }
+    },
+    {
+      "name": "ai-diagnosis",
+      "tool": "ai_analyze",
+      "parameters": {
+        "data": "{{steps.assess-incident.output}}",
+        "prompt": "Diagnose the incident and suggest remediation steps"
+      }
+    },
+    {
+      "name": "escalate-to-human",
+      "tool": "create_incident_ticket",
+      "parameters": {
+        "severity": "{{steps.ai-diagnosis.severity}}",
+        "description": "{{steps.ai-diagnosis.summary}}",
+        "assignee": "on-call-engineer"
+      },
+      "depends_on": ["ai-diagnosis"],
+      "run_policy": "OnFailure"
+    }
+  ]
 }
-```
 
-### 3. Complex Workflow with Custom Workspace
-```json
+### Example 5: Event Triggers
+Function Name: configure_event_triggers
+JSON Arguments:
 {
-  "function": "create_workflow",
-  "arguments": {
-    "name": "data-backup-pipeline", 
-    "schedule": "0 2 * * *",
-    "timezone": "America/New_York",
-    "enabled": true,
-    "description": "Comprehensive data backup with validation",
-    "concurrency_policy": "Forbid",
-    "timeout": "2h",
-    "parameters": {
-      "backup_location": "s3://backups",
-      "retention_days": 30,
-      "compression": true
-    },
-    "retry_policy": {
-      "max_retries": 2,
-      "retry_delay": "10m",
-      "backoff_strategy": "Linear"
-    },
-    "workspace": {
-      "enabled": true,
-      "size": "10Gi",
-      "mount_path": "/shared",
-      "storage_class": "fast-ssd",
-      "access_modes": ["ReadWriteOnce"],
-      "reclaim_policy": "Delete"
-    },
-    "steps": [
-      {
-        "name": "pre-backup-validation",
-        "tool": "validate_services",
-        "parameters": {
-          "services": ["memory", "task-scheduler"],
-          "health_check": true
-        },
-        "timeout": "5m"
-      },
-      {
-        "name": "backup-memory-db",
-        "tool": "backup_database",
-        "parameters": {
-          "service": "memory",
-          "destination": "{{parameters.backup_location}}/memory",
-          "compression": "{{parameters.compression}}"
-        },
-        "depends_on": ["pre-backup-validation"],
-        "retry_policy": {
-          "max_retries": 3,
-          "retry_delay": "2m",
-          "backoff_strategy": "Exponential"
-        },
-        "timeout": "45m"
-      },
-      {
-        "name": "verify-backups",
-        "tool": "verify_backup_integrity",
-        "parameters": {
-          "backup_paths": ["{{steps.backup-memory-db.output.path}}"]
-        },
-        "depends_on": ["backup-memory-db"],
-        "timeout": "15m"
+  "triggers": [
+    {
+      "name": "pod-failure-trigger",
+      "type": "k8s-event",
+      "workflow": "incident-response",
+      "cooldown_duration": "10m",
+      "kubernetes_event": {
+        "kind": "Pod",
+        "reason": "Failed",
+        "namespace": "default",
+        "label_selector": "app=critical"
       }
-    ]
-  }
-}
-```
-
-### 4. Event-Triggered Workflow (No Schedule)
-```json
-{
-  "function": "create_workflow",
-  "arguments": {
-    "name": "incident-response",
-    "enabled": true,
-    "description": "Automated incident response",
-    "manual_execution": true,
-    "parameters": {
-      "escalation_timeout": "30m",
-      "auto_remediation": false
     },
-    "steps": [
-      {
-        "name": "assess-incident",
-        "tool": "analyze_system_state",
-        "parameters": {
-          "comprehensive": true,
-          "include_logs": true
-        }
-      },
-      {
-        "name": "ai-diagnosis",
-        "tool": "ai_analyze",
-        "parameters": {
-          "data": "{{steps.assess-incident.output}}",
-          "prompt": "Diagnose the incident and suggest remediation steps"
-        }
-      },
-      {
-        "name": "attempt-auto-remediation",
-        "tool": "execute_remediation",
-        "parameters": {
-          "actions": "{{steps.ai-diagnosis.remediation_steps}}",
-          "safe_mode": true
-        },
-        "condition": "{{parameters.auto_remediation}}",
-        "depends_on": ["ai-diagnosis"]
-      },
-      {
-        "name": "escalate-to-human",
-        "tool": "create_incident_ticket",
-        "parameters": {
-          "severity": "{{steps.ai-diagnosis.severity}}",
-          "description": "{{steps.ai-diagnosis.summary}}",
-          "assignee": "on-call-engineer"
-        },
-        "depends_on": ["ai-diagnosis"],
-        "run_policy": "OnFailure"
+    {
+      "name": "webhook-deployment",
+      "type": "webhook",
+      "workflow": "deployment-pipeline",
+      "cooldown_duration": "5m",
+      "webhook": {
+        "endpoint": "/webhooks/deploy",
+        "method": "POST",
+        "authentication": "bearer-token"
       }
-    ]
-  }
+    }
+  ]
 }
-```
 
-### 5. Event Triggers Configuration (Task Scheduler Level)
-```json
-{
-  "function": "configure_event_triggers",
-  "arguments": {
-    "triggers": [
-      {
-        "name": "pod-failure-trigger",
-        "type": "k8s-event",
-        "workflow": "incident-response",
-        "cooldown_duration": "10m",
-        "kubernetes_event": {
-          "kind": "Pod",
-          "reason": "Failed",
-          "namespace": "default",
-          "label_selector": "app=critical"
-        },
-        "conditions": [
-          {
-            "field": "reason",
-            "operator": "equals",
-            "value": "Failed"
-          }
-        ]
-      },
-      {
-        "name": "webhook-deployment",
-        "type": "webhook",
-        "workflow": "deployment-pipeline",
-        "cooldown_duration": "5m",
-        "webhook": {
-          "endpoint": "/webhooks/deploy",
-          "method": "POST",
-          "authentication": "bearer-token",
-          "headers": {
-            "X-GitHub-Event": "push"
-          }
-        },
-        "conditions": [
-          {
-            "field": "ref",
-            "operator": "equals",
-            "value": "refs/heads/main"
-          }
-        ]
-      },
-      {
-        "name": "file-change-trigger",
-        "type": "file-watch",
-        "workflow": "data-processing",
-        "cooldown_duration": "30m",
-        "file_watch": {
-          "path": "/data/input",
-          "pattern": "*.csv",
-          "events": ["create", "modify"],
-          "recursive": true
-        }
-      }
-    ]
-  }
-}
-```
-
-**Key Features Demonstrated:**
-- Single vs multi-step workflows
-- Automatic workspace enablement (>1 step)
-- Custom workspace configuration
-- Step dependencies and conditional execution
-- Variable substitution ({{steps.name.output}}, {{parameters.name}})
-- Retry policies (Linear, Exponential)
-- Event triggers (Kubernetes events, webhooks, file watching)
-- Run policies (Always, OnCondition, OnFailure)
-- Timeout and concurrency control
+**Key Patterns:**
+- Single step = no workspace, Multi-step = auto workspace
+- Variable substitution: {{steps.name.output}}, {{parameters.name}}
+- Dependencies: depends_on array, condition fields, run_policy values
+- Workspace: size, mount_path, storage_class, access_modes, reclaim_policy
+- Triggers: k8s-event, webhook, file-watch with cooldown_duration
 
 ## CRITICAL: Workflow Creation Best Practices
 
