@@ -4,6 +4,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -24,6 +25,11 @@ type WorkflowScheduler struct {
 	namespace       string
 	logger          logr.Logger
 	config          *config.ComposeConfig  // NEW: Configuration
+	workflowStore   *WorkflowStore        // NEW: PostgreSQL workflow persistence
+	watchContext    context.Context       // NEW: Context for watch operations
+	watchCancel     context.CancelFunc    // NEW: Cancel function for watch
+	watchMutex      sync.RWMutex          // NEW: Mutex for watch operations
+	enableDeletionSync bool               // NEW: Whether to delete workflows from PostgreSQL when removed from CRD
 }
 
 // NewWorkflowScheduler creates a new workflow scheduler
@@ -46,6 +52,17 @@ func NewWorkflowScheduler(cronEngine *CronEngine, workflowEngine *WorkflowEngine
 	}
 }
 
+// SetWorkflowStore sets the workflow store for PostgreSQL persistence and CRD sync
+func (ws *WorkflowScheduler) SetWorkflowStore(store *WorkflowStore) {
+	ws.workflowStore = store
+}
+
+// EnableDeletionSync enables deletion sync with safety checks to prevent accidental mass deletion
+func (ws *WorkflowScheduler) EnableDeletionSync() {
+	ws.enableDeletionSync = true
+	ws.logger.Info("Deletion sync enabled with safety checks")
+}
+
 // Start starts the workflow scheduler
 func (ws *WorkflowScheduler) Start() error {
 	ws.logger.Info("Starting workflow scheduler")
@@ -53,13 +70,39 @@ func (ws *WorkflowScheduler) Start() error {
 	// Start the cron engine
 	ws.cronEngine.Start()
 	
+	// Create watch context
+	ws.watchContext, ws.watchCancel = context.WithCancel(context.Background())
+	
+	// First sync PostgreSQL workflows to CRD on startup (if workflow store is available)
+	if ws.workflowStore != nil {
+		if err := ws.syncWorkflowsFromPostgreSQLToCRD(); err != nil {
+			ws.logger.Error(err, "Failed to sync workflows from PostgreSQL to CRD on startup")
+			// Continue - this is not a fatal error
+		}
+	}
+	
 	// Load and schedule workflows from MCPTaskScheduler CRD
-	return ws.syncWorkflowsFromCRD()
+	if err := ws.syncWorkflowsFromCRD(); err != nil {
+		return err
+	}
+	
+	// Start watching for CRD changes if k8s client is available
+	if ws.k8sClient != nil {
+		go ws.watchCRDChanges()
+	}
+	
+	return nil
 }
 
 // Stop stops the workflow scheduler
 func (ws *WorkflowScheduler) Stop() {
 	ws.logger.Info("Stopping workflow scheduler")
+	
+	// Cancel the watch context to stop watching CRD changes
+	if ws.watchCancel != nil {
+		ws.watchCancel()
+	}
+	
 	ws.cronEngine.Stop()
 }
 
@@ -78,6 +121,14 @@ func (ws *WorkflowScheduler) syncWorkflowsFromCRD() error {
 	}, taskScheduler)
 	if err != nil {
 		return fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+
+	// Sync CRD workflows to PostgreSQL if workflow store is available
+	if ws.workflowStore != nil {
+		ws.logger.Info("Syncing CRD workflows to PostgreSQL", "count", len(taskScheduler.Spec.Workflows))
+		if err := ws.syncWorkflowsToPostgreSQL(taskScheduler.Spec.Workflows); err != nil {
+			ws.logger.Error(err, "Failed to sync workflows to PostgreSQL")
+		}
 	}
 
 	// Schedule each workflow that has a schedule
@@ -423,3 +474,188 @@ func (ws *WorkflowScheduler) RemoveWorkflow(workflowName string) error {
 func (ws *WorkflowScheduler) ListScheduledWorkflows() []*JobSpec {
 	return ws.cronEngine.ListJobs()
 }
+
+// watchCRDChanges periodically checks for changes to the MCPTaskScheduler CRD and syncs workflows to PostgreSQL
+func (ws *WorkflowScheduler) watchCRDChanges() {
+	ws.logger.Info("Starting CRD polling for workflow synchronization (checking every 30 seconds)")
+	
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	var lastResourceVersion string
+	
+	for {
+		select {
+		case <-ws.watchContext.Done():
+			ws.logger.Info("CRD polling stopped")
+			return
+		case <-ticker.C:
+			if err := ws.checkCRDChanges(&lastResourceVersion); err != nil {
+				ws.logger.Error(err, "Failed to check CRD changes")
+			}
+		}
+	}
+}
+
+// checkCRDChanges checks if the MCPTaskScheduler CRD has changed and syncs if necessary
+func (ws *WorkflowScheduler) checkCRDChanges(lastResourceVersion *string) error {
+	ws.watchMutex.Lock()
+	defer ws.watchMutex.Unlock()
+	
+	// Get the current MCPTaskScheduler
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err := ws.k8sClient.Get(ws.watchContext, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: ws.namespace,
+	}, taskScheduler)
+	
+	if err != nil {
+		return fmt.Errorf("failed to get MCPTaskScheduler: %w", err)
+	}
+	
+	// Check if the resource version has changed
+	currentResourceVersion := taskScheduler.ResourceVersion
+	if *lastResourceVersion != "" && *lastResourceVersion == currentResourceVersion {
+		// No changes, skip sync
+		return nil
+	}
+	
+	// Resource version changed, sync workflows to PostgreSQL
+	if ws.workflowStore != nil {
+		ws.logger.Info("MCPTaskScheduler CRD changed, syncing workflows to PostgreSQL", 
+			"resourceVersion", currentResourceVersion, "workflowCount", len(taskScheduler.Spec.Workflows))
+		
+		if err := ws.syncWorkflowsToPostgreSQL(taskScheduler.Spec.Workflows); err != nil {
+			return fmt.Errorf("failed to sync workflows to PostgreSQL: %w", err)
+		}
+	}
+	
+	// Update the last known resource version
+	*lastResourceVersion = currentResourceVersion
+	return nil
+}
+
+// syncWorkflowsToPostgreSQL syncs a list of workflows to PostgreSQL (handles additions, updates, and deletions)
+func (ws *WorkflowScheduler) syncWorkflowsToPostgreSQL(workflows []crd.WorkflowDefinition) error {
+	// Step 1: Get all workflows currently in PostgreSQL
+	existingWorkflows, err := ws.workflowStore.ListWorkflows()
+	if err != nil {
+		return fmt.Errorf("failed to list existing workflows from PostgreSQL: %w", err)
+	}
+	
+	// Step 2: Create a map of CRD workflow names for efficient lookup
+	crdWorkflowNames := make(map[string]bool)
+	for _, workflow := range workflows {
+		crdWorkflowNames[workflow.Name] = true
+	}
+	
+	// Step 3: Sync additions/updates from CRD to PostgreSQL
+	syncedCount := 0
+	for _, workflow := range workflows {
+		if err := ws.syncWorkflowToPostgreSQL(workflow); err != nil {
+			ws.logger.Error(err, "Failed to sync workflow to PostgreSQL", "workflow", workflow.Name)
+			continue
+		}
+		syncedCount++
+	}
+	
+	// Step 4: Handle deletions (now safe with soft deletion)
+	deletedCount := 0
+	if ws.enableDeletionSync {
+		for _, existingWorkflow := range existingWorkflows {
+			if !crdWorkflowNames[existingWorkflow.Name] {
+				if err := ws.workflowStore.DeleteWorkflow(existingWorkflow.Name); err != nil {
+					ws.logger.Error(err, "Failed to soft delete workflow from PostgreSQL", "workflow", existingWorkflow.Name)
+					continue
+				}
+				ws.logger.Info("Soft deleted workflow from PostgreSQL (no longer in CRD)", "workflow", existingWorkflow.Name)
+				deletedCount++
+			}
+		}
+	} else {
+		ws.logger.V(1).Info("Deletion sync disabled, skipping workflow cleanup")
+	}
+	
+	
+	ws.logger.Info("Completed workflow sync", 
+		"synced", syncedCount, "total", len(workflows), 
+		"deleted", deletedCount, "existing", len(existingWorkflows))
+	return nil
+}
+
+// syncWorkflowToPostgreSQL syncs a single CRD workflow to PostgreSQL
+func (ws *WorkflowScheduler) syncWorkflowToPostgreSQL(workflow crd.WorkflowDefinition) error {
+	// Check if workflow already exists in PostgreSQL
+	existingWorkflow, err := ws.workflowStore.GetWorkflow(workflow.Name)
+	if err == nil && existingWorkflow != nil {
+		// Workflow already exists, skip syncing
+		ws.logger.V(1).Info("Workflow already exists in PostgreSQL, skipping sync", "workflow", workflow.Name)
+		return nil
+	}
+	
+	// Create workflow in PostgreSQL
+	_, err = ws.workflowStore.CreateWorkflow(workflow)
+	if err != nil {
+		return fmt.Errorf("failed to create workflow in PostgreSQL: %w", err)
+	}
+	
+	ws.logger.Info("Successfully synced workflow to PostgreSQL", "workflow", workflow.Name)
+	return nil
+}
+
+// syncWorkflowsFromPostgreSQLToCRD syncs active workflows from PostgreSQL to the CRD on startup
+func (ws *WorkflowScheduler) syncWorkflowsFromPostgreSQLToCRD() error {
+	if ws.k8sClient == nil || ws.workflowStore == nil {
+		return nil
+	}
+
+	// Get all active workflows from PostgreSQL
+	pgWorkflows, err := ws.workflowStore.ListWorkflows()
+	if err != nil {
+		return fmt.Errorf("failed to list workflows from PostgreSQL: %w", err)
+	}
+
+	if len(pgWorkflows) == 0 {
+		ws.logger.Info("No active workflows found in PostgreSQL to sync to CRD")
+		return nil
+	}
+
+	// Get current CRD
+	ctx := context.Background()
+	taskScheduler := &crd.MCPTaskScheduler{}
+	err = ws.k8sClient.Get(ctx, types.NamespacedName{
+		Name:      "task-scheduler",
+		Namespace: ws.namespace,
+	}, taskScheduler)
+	if err != nil {
+		return fmt.Errorf("failed to get MCPTaskScheduler for PostgreSQL sync: %w", err)
+	}
+
+	// Convert PostgreSQL workflows to CRD format
+	crdWorkflows := make([]crd.WorkflowDefinition, 0, len(pgWorkflows))
+	for _, pgWorkflow := range pgWorkflows {
+		crdWorkflow := pgWorkflow.ToCRDWorkflowDefinition()
+		crdWorkflows = append(crdWorkflows, crdWorkflow)
+	}
+
+	// Update CRD with PostgreSQL workflows
+	taskScheduler.Spec.Workflows = crdWorkflows
+	
+	err = ws.k8sClient.Update(ctx, taskScheduler)
+	if err != nil {
+		return fmt.Errorf("failed to update MCPTaskScheduler with PostgreSQL workflows: %w", err)
+	}
+
+	ws.logger.Info("Successfully synced workflows from PostgreSQL to CRD", 
+		"syncedCount", len(crdWorkflows), 
+		"workflows", func() []string {
+			names := make([]string, len(crdWorkflows))
+			for i, w := range crdWorkflows {
+				names[i] = w.Name
+			}
+			return names
+		}())
+	
+	return nil
+}
+

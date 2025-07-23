@@ -91,6 +91,30 @@ Examples:
 			// Create the MCP tool server
 			toolServer := scheduler.NewMCPToolServer(cronEngine, workflowEngine, logr.WithName("scheduler"))
 
+			// Set up PostgreSQL workflow store if database is available
+			var workflowStore *scheduler.WorkflowStore
+			if cfg != nil && cfg.TaskScheduler != nil && cfg.TaskScheduler.DatabaseURL != "" {
+				store, err := scheduler.NewWorkflowStore(cfg.TaskScheduler.DatabaseURL, logr.WithName("workflow-store"))
+				if err != nil {
+					logger.Warning("Failed to create workflow store, falling back to CRD storage: %v", err)
+				} else {
+					workflowStore = store
+					toolServer.SetWorkflowStore(workflowStore)
+					logger.Info("PostgreSQL workflow store initialized successfully")
+				}
+			} else {
+				// Try default PostgreSQL connection
+				defaultDatabaseURL := "postgresql://postgres:password@matey-postgres:5432/matey?sslmode=disable"
+				store, err := scheduler.NewWorkflowStore(defaultDatabaseURL, logr.WithName("workflow-store"))
+				if err != nil {
+					logger.Warning("Failed to create default workflow store, falling back to CRD storage: %v", err)
+				} else {
+					workflowStore = store
+					toolServer.SetWorkflowStore(workflowStore)
+					logger.Info("Default PostgreSQL workflow store initialized successfully")
+				}
+			}
+
 			// Set up Kubernetes client for CRD access
 			namespace, _ := cmd.Flags().GetString("namespace")
 			if namespace == "" {
@@ -107,6 +131,14 @@ Examples:
 				
 				// Create and start workflow scheduler for automated workflow execution with K8s Job execution
 				workflowScheduler = scheduler.NewWorkflowScheduler(cronEngine, workflowEngine, k8sClient, namespace, cfg, logr.WithName("workflow-scheduler"))
+				
+				// Set workflow store for PostgreSQL sync if available
+				if workflowStore != nil {
+					workflowScheduler.SetWorkflowStore(workflowStore)
+					workflowScheduler.EnableDeletionSync() // Enable safe deletion sync
+					logger.Info("Workflow scheduler connected to PostgreSQL workflow store with deletion sync enabled")
+				}
+				
 				if err := workflowScheduler.Start(); err != nil {
 					logger.Error("Failed to start workflow scheduler: %v", err)
 				} else {

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"github.com/phildougherty/m8e/internal/compose"
+	"github.com/phildougherty/m8e/internal/memory"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,6 +17,8 @@ type MateyMCPServer struct {
 	clientset   kubernetes.Interface
 	composer    *compose.K8sComposer
 	config      *rest.Config
+	memoryStore *memory.MemoryStore
+	memoryTools *memory.MCPMemoryTools
 }
 
 // Tool represents an MCP tool

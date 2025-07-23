@@ -20,6 +20,7 @@ type MCPToolServer struct {
 	workflowEngine   *WorkflowEngine
 	workflowScheduler *WorkflowScheduler // NEW: Reference to WorkflowScheduler for sync
 	templateRegistry *TemplateRegistry
+	workflowStore    *WorkflowStore     // NEW: PostgreSQL workflow persistence
 	k8sClient        client.Client // NEW: Kubernetes client for CRD access
 	namespace        string        // NEW: Kubernetes namespace
 	logger           logr.Logger
@@ -33,6 +34,11 @@ func NewMCPToolServer(cronEngine *CronEngine, workflowEngine *WorkflowEngine, lo
 		namespace:        "default", // Default namespace
 		logger:           logger,
 	}
+}
+
+// SetWorkflowStore sets the workflow store for PostgreSQL persistence
+func (mts *MCPToolServer) SetWorkflowStore(store *WorkflowStore) {
+	mts.workflowStore = store
 }
 
 // SetWorkflowScheduler sets the WorkflowScheduler reference for synchronization
@@ -1048,6 +1054,130 @@ func (mts *MCPToolServer) getMetrics(ctx context.Context, params map[string]inte
 // NEW: Workflow Management Tool Implementations
 
 func (mts *MCPToolServer) createWorkflow(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	// Use PostgreSQL workflow store if available, otherwise fall back to CRD
+	if mts.workflowStore != nil {
+		return mts.createWorkflowInDB(ctx, params)
+	}
+	
+	// Fallback to CRD-based creation
+	return mts.createWorkflowInCRD(ctx, params)
+}
+
+// createWorkflowInDB creates a workflow in PostgreSQL database
+func (mts *MCPToolServer) createWorkflowInDB(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	name, ok := params["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("name parameter is required")
+	}
+
+	steps, ok := params["steps"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("steps parameter is required")
+	}
+
+	// Convert steps interface{} to WorkflowStep structs
+	workflowSteps := make([]crd.WorkflowStep, 0, len(steps))
+	for i, stepInterface := range steps {
+		stepMap, ok := stepInterface.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("step %d is not a valid object", i)
+		}
+
+		step := crd.WorkflowStep{
+			Name: fmt.Sprintf("%v", stepMap["name"]),
+		}
+		
+		// Set tool to execute
+		if tool, ok := stepMap["tool"].(string); ok {
+			step.Tool = tool
+		} else {
+			return nil, fmt.Errorf("step %d is missing required 'tool' field", i)
+		}
+		
+		// Set parameters
+		if stepParams, ok := stepMap["parameters"].(map[string]interface{}); ok {
+			step.Parameters = stepParams
+		}
+		
+		// Set optional fields
+		if condition, ok := stepMap["condition"].(string); ok {
+			step.Condition = condition
+		}
+		if continueOnError, ok := stepMap["continueOnError"].(bool); ok {
+			step.ContinueOnError = continueOnError
+		}
+		if timeout, ok := stepMap["timeout"].(string); ok {
+			step.Timeout = timeout
+		}
+		if dependsOn, ok := stepMap["dependsOn"].([]interface{}); ok {
+			dependencies := make([]string, len(dependsOn))
+			for j, dep := range dependsOn {
+				if depStr, ok := dep.(string); ok {
+					dependencies[j] = depStr
+				}
+			}
+			step.DependsOn = dependencies
+		}
+		
+		workflowSteps = append(workflowSteps, step)
+	}
+
+	// Create the workflow definition
+	workflow := crd.WorkflowDefinition{
+		Name:    name,
+		Enabled: true,
+		Steps:   workflowSteps,
+	}
+
+	// Set optional fields
+	if description, ok := params["description"].(string); ok {
+		workflow.Description = description
+	}
+	if schedule, ok := params["schedule"].(string); ok {
+		workflow.Schedule = schedule
+	}
+	if timezone, ok := params["timezone"].(string); ok {
+		workflow.Timezone = timezone
+	}
+	if enabled, ok := params["enabled"].(bool); ok {
+		workflow.Enabled = enabled
+	}
+	if concurrencyPolicy, ok := params["concurrencyPolicy"].(string); ok {
+		workflow.ConcurrencyPolicy = crd.WorkflowConcurrencyPolicy(concurrencyPolicy)
+	}
+	if timeout, ok := params["timeout"].(string); ok {
+		workflow.Timeout = timeout
+	}
+
+	// Create workflow in database
+	workflowRecord, err := mts.workflowStore.CreateWorkflow(workflow)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create workflow in database: %w", err)
+	}
+
+	// Sync the new workflow to the WorkflowScheduler if it has a schedule
+	if mts.workflowScheduler != nil && workflow.Schedule != "" {
+		if err := mts.workflowScheduler.SyncWorkflow(&workflow); err != nil {
+			mts.logger.Error(err, "Failed to sync workflow to scheduler", "workflow", name)
+		} else {
+			mts.logger.Info("Synced workflow to scheduler", "workflow", name, "schedule", workflow.Schedule)
+		}
+	}
+
+	mts.logger.Info("Created workflow in database", "name", name, "id", workflowRecord.ID)
+
+	return map[string]interface{}{
+		"name":      name,
+		"id":        workflowRecord.ID.String(),
+		"steps":     len(workflowSteps),
+		"message":   "Workflow created successfully in database",
+		"enabled":   workflow.Enabled,
+		"schedule":  workflow.Schedule,
+	}, nil
+}
+
+// createWorkflowInCRD creates a workflow in Kubernetes CRD (fallback method)
+func (mts *MCPToolServer) createWorkflowInCRD(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	if mts.k8sClient == nil {
 		return nil, fmt.Errorf("kubernetes client not configured")
 	}
@@ -1146,6 +1276,47 @@ func (mts *MCPToolServer) createWorkflow(ctx context.Context, params map[string]
 }
 
 func (mts *MCPToolServer) listWorkflows(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	// Use PostgreSQL workflow store if available, otherwise fall back to CRD
+	if mts.workflowStore != nil {
+		return mts.listWorkflowsFromDB(ctx, params)
+	}
+	
+	// Fallback to CRD-based listing
+	return mts.listWorkflowsFromCRD(ctx, params)
+}
+
+// listWorkflowsFromDB lists workflows from PostgreSQL database
+func (mts *MCPToolServer) listWorkflowsFromDB(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+	workflows, err := mts.workflowStore.ListWorkflows()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workflows from database: %w", err)
+	}
+
+	workflowList := make([]map[string]interface{}, 0, len(workflows))
+	for _, workflow := range workflows {
+		workflowInfo := map[string]interface{}{
+			"name":         workflow.Name,
+			"description":  workflow.Description,
+			"enabled":      workflow.Enabled,
+			"schedule":     workflow.Schedule,
+			"timezone":     workflow.Timezone,
+			"steps":        len(workflow.Steps),
+			"retry_policy": workflow.RetryPolicy != nil,
+			"created_at":   workflow.CreatedAt.Format(time.RFC3339),
+			"updated_at":   workflow.UpdatedAt.Format(time.RFC3339),
+		}
+		workflowList = append(workflowList, workflowInfo)
+	}
+
+	return map[string]interface{}{
+		"workflows": workflowList,
+		"count":     len(workflows),
+		"source":    "database",
+	}, nil
+}
+
+// listWorkflowsFromCRD lists workflows from Kubernetes CRD (fallback method)
+func (mts *MCPToolServer) listWorkflowsFromCRD(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	if mts.k8sClient == nil {
 		return nil, fmt.Errorf("kubernetes client not configured")
 	}

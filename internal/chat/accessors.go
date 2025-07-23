@@ -106,7 +106,6 @@ func (tc *TermChat) ExecuteNativeToolCall(toolCall interface{}, index int) (inte
 	case "get_logs", "get_metrics", "check_health", "get_service_status", "create_backup":
 		return tc.executeMonitoringCommand(call.Function.Name, call.Function.Arguments)
 	case "edit_file", "editfile", "edit-file":
-		fmt.Printf("DEBUG: Executing INTERNAL edit_file function\n")
 		return tc.executeEditFile(call.Function.Arguments)
 	case "read_file", "readfile", "read-file":
 		return tc.executeReadFile(call.Function.Arguments)

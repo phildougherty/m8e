@@ -353,6 +353,240 @@ func (m *MateyMCPServer) GetTools() []Tool {
 				"properties": map[string]interface{}{},
 			},
 		},
+		// Memory graph tools
+		{
+			Name:        "create_entities",
+			Description: "Create multiple new entities in the knowledge graph",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"entities": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of entity objects to create",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"name": map[string]interface{}{
+									"type":        "string",
+									"description": "Entity name",
+								},
+								"entityType": map[string]interface{}{
+									"type":        "string",
+									"description": "Type of entity (person, place, concept, etc.)",
+								},
+								"observations": map[string]interface{}{
+									"type":        "array",
+									"description": "Initial observations for this entity",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+							"required": []string{"name", "entityType"},
+						},
+					},
+				},
+				"required": []string{"entities"},
+			},
+		},
+		{
+			Name:        "delete_entities",
+			Description: "Delete multiple entities and their associated relations",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"entityNames": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of entity names to delete",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+				"required": []string{"entityNames"},
+			},
+		},
+		{
+			Name:        "add_observations",
+			Description: "Add new observations to existing entities",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"observations": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of observations to add",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"entityName": map[string]interface{}{
+									"type":        "string",
+									"description": "Name of the entity",
+								},
+								"contents": map[string]interface{}{
+									"type":        "array",
+									"description": "Array of observation content",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+							"required": []string{"entityName", "contents"},
+						},
+					},
+				},
+				"required": []string{"observations"},
+			},
+		},
+		{
+			Name:        "delete_observations",
+			Description: "Delete specific observations from entities",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"deletions": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of observations to delete",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"entityName": map[string]interface{}{
+									"type":        "string",
+									"description": "Name of the entity",
+								},
+								"observations": map[string]interface{}{
+									"type":        "array",
+									"description": "Array of observation content to remove",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+							"required": []string{"entityName", "observations"},
+						},
+					},
+				},
+				"required": []string{"deletions"},
+			},
+		},
+		{
+			Name:        "create_relations",
+			Description: "Create typed relationships between entities",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"relations": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of relations to create",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"from": map[string]interface{}{
+									"type":        "string",
+									"description": "Source entity name",
+								},
+								"to": map[string]interface{}{
+									"type":        "string",
+									"description": "Target entity name",
+								},
+								"relationType": map[string]interface{}{
+									"type":        "string",
+									"description": "Type of relationship",
+								},
+							},
+							"required": []string{"from", "to", "relationType"},
+						},
+					},
+				},
+				"required": []string{"relations"},
+			},
+		},
+		{
+			Name:        "delete_relations",
+			Description: "Delete specific relationships between entities",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"relations": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of relations to delete",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"from": map[string]interface{}{
+									"type":        "string",
+									"description": "Source entity name",
+								},
+								"to": map[string]interface{}{
+									"type":        "string",
+									"description": "Target entity name",
+								},
+								"relationType": map[string]interface{}{
+									"type":        "string",
+									"description": "Type of relationship",
+								},
+							},
+							"required": []string{"from", "to", "relationType"},
+						},
+					},
+				},
+				"required": []string{"relations"},
+			},
+		},
+		{
+			Name:        "read_graph",
+			Description: "Retrieve the entire knowledge graph",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "search_nodes",
+			Description: "Search for nodes using text queries with full-text search",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Search query string",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
+			Name:        "open_nodes",
+			Description: "Retrieve specific nodes by their names",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"names": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of entity names to retrieve",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+				"required": []string{"names"},
+			},
+		},
+		{
+			Name:        "memory_health_check",
+			Description: "Check the health of the memory system",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "memory_stats",
+			Description: "Get statistics about the knowledge graph",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 		// Task scheduler management
 		{
 			Name:        "task_scheduler_status",

@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/go-logr/logr"
 	"github.com/phildougherty/m8e/internal/compose"
 	"github.com/phildougherty/m8e/internal/crd"
+	"github.com/phildougherty/m8e/internal/memory"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -26,6 +28,9 @@ func NewMateyMCPServer(mateyBinary, configFile, namespace string) *MateyMCPServe
 	
 	// Initialize k8s client and composer
 	server.initializeK8sComponents()
+	
+	// Initialize memory store if available
+	server.initializeMemoryStore()
 	
 	return server
 }
@@ -178,6 +183,31 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 		return m.memoryStart(ctx, arguments)
 	case "memory_stop":
 		return m.memoryStop(ctx, arguments)
+	
+	// Memory graph tools
+	case "create_entities":
+		return m.createEntities(ctx, arguments)
+	case "delete_entities":
+		return m.deleteEntities(ctx, arguments)
+	case "add_observations":
+		return m.addObservations(ctx, arguments)
+	case "delete_observations":
+		return m.deleteObservations(ctx, arguments)
+	case "create_relations":
+		return m.createRelations(ctx, arguments)
+	case "delete_relations":
+		return m.deleteRelations(ctx, arguments)
+	case "read_graph":
+		return m.readGraph(ctx, arguments)
+	case "search_nodes":
+		return m.searchNodes(ctx, arguments)
+	case "open_nodes":
+		return m.openNodes(ctx, arguments)
+	case "memory_health_check":
+		return m.memoryHealthCheck(ctx, arguments)
+	case "memory_stats":
+		return m.memoryStats(ctx, arguments)
+		
 	case "task_scheduler_status":
 		return m.taskSchedulerStatus(ctx, arguments)
 	case "task_scheduler_start":
@@ -248,4 +278,48 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 			IsError: true,
 		}, fmt.Errorf("unknown tool: %s", name)
 	}
+}
+
+// initializeMemoryStore initializes the memory store by connecting to the MCPMemory database
+func (m *MateyMCPServer) initializeMemoryStore() {
+	fmt.Printf("DEBUG: Initializing memory store...\n")
+	
+	// Check if k8s client is available
+	if m.k8sClient == nil {
+		fmt.Printf("DEBUG: Kubernetes client not available, skipping memory store initialization\n")
+		return
+	}
+	
+	// Try to get MCPMemory resource
+	var memoryResource crd.MCPMemory
+	err := m.k8sClient.Get(context.Background(), client.ObjectKey{
+		Name:      "memory",
+		Namespace: m.namespace,
+	}, &memoryResource)
+	
+	if err != nil {
+		fmt.Printf("DEBUG: MCPMemory resource not found, memory graph tools will not be available: %v\n", err)
+		return
+	}
+	
+	// Use the main matey-postgres database with a separate database for internal memory
+	internalDatabaseURL := "postgresql://postgres:password@matey-postgres:5432/matey_memory?sslmode=disable"
+	
+	fmt.Printf("DEBUG: Using internal memory database URL: %s\n", internalDatabaseURL)
+	
+	// Initialize memory store with internal database
+	memoryStore, err := memory.NewMemoryStore(internalDatabaseURL, logr.Discard())
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to initialize memory store: %v\n", err)
+		return
+	}
+	
+	// Initialize memory tools
+	memoryTools := memory.NewMCPMemoryTools(memoryStore, logr.Discard())
+	
+	// Set on the server
+	m.memoryStore = memoryStore
+	m.memoryTools = memoryTools
+	
+	fmt.Printf("DEBUG: Memory store initialized successfully\n")
 }

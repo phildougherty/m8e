@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -558,10 +561,141 @@ func (m *MateyMCPServer) executeWorkflow(ctx context.Context, args map[string]in
 		}, fmt.Errorf("name is required")
 	}
 	
+	// Try to execute via direct MCP call to task scheduler service
+	if m.useK8sClient() {
+		return m.executeWorkflowViaMCP(ctx, name, args)
+	}
+	
+	// Fall back to binary execution
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("Manual execution of workflow '%s' is not yet implemented. This requires connecting to the task scheduler's execution API.", name)}},
+		Content: []Content{{Type: "text", Text: "Workflow execution via binary not yet implemented. Please ensure MCPTaskScheduler is deployed and try again."}},
 		IsError: true,
-	}, fmt.Errorf("workflow execution not implemented")
+	}, fmt.Errorf("workflow execution via binary not implemented")
+}
+
+// executeWorkflowViaMCP executes a workflow by calling the task scheduler's MCP service directly
+func (m *MateyMCPServer) executeWorkflowViaMCP(ctx context.Context, workflowName string, args map[string]interface{}) (*ToolResult, error) {
+	// Build the task scheduler service URL
+	taskSchedulerURL := fmt.Sprintf("http://task-scheduler.%s.svc.cluster.local:8018/api/v1/call", m.namespace)
+	
+	// Prepare the request payload for the task scheduler's API format
+	requestPayload := map[string]interface{}{
+		"tool": "execute_workflow",
+		"parameters": map[string]interface{}{
+			"name": workflowName,
+		},
+	}
+	
+	// Add optional parameters if provided
+	if parameters, ok := args["parameters"].(map[string]interface{}); ok && len(parameters) > 0 {
+		requestPayload["parameters"].(map[string]interface{})["parameters"] = parameters
+	}
+	
+	// Marshal the request to JSON
+	requestBody, err := json.Marshal(requestPayload)
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error marshaling MCP request: %v", err)}},
+			IsError: true,
+		}, err
+	}
+	
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", taskSchedulerURL, bytes.NewReader(requestBody))
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error creating HTTP request: %v", err)}},
+			IsError: true,
+		}, err
+	}
+	
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	
+	// Make the HTTP request
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error calling task scheduler service: %v. Ensure task-scheduler service is running.", err)}},
+			IsError: true,
+		}, err
+	}
+	defer resp.Body.Close()
+	
+	// Read the response
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error reading response: %v", err)}},
+			IsError: true,
+		}, err
+	}
+	
+	// Check HTTP status
+	if resp.StatusCode != http.StatusOK {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Task scheduler returned HTTP %d: %s", resp.StatusCode, string(responseBody))}},
+			IsError: true,
+		}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(responseBody))
+	}
+	
+	// Parse the response
+	var response map[string]interface{}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error parsing response: %v. Response: %s", err, string(responseBody))}},
+			IsError: true,
+		}, err
+	}
+	
+	// Check for errors
+	if errorInfo, exists := response["error"]; exists {
+		errorMsg := fmt.Sprintf("Task scheduler error: %v", errorInfo)
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: errorMsg}},
+			IsError: true,
+		}, fmt.Errorf("task scheduler error: %v", errorInfo)
+	}
+	
+	// Extract the result
+	result, exists := response["result"]
+	if !exists {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "No result in response"}},
+			IsError: true,
+		}, fmt.Errorf("no result in response")
+	}
+	
+	// Format the result for display
+	var resultText string
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		// Extract specific fields from the task scheduler response
+		if message, exists := resultMap["message"]; exists {
+			resultText = fmt.Sprintf("Workflow '%s' execution: %v", workflowName, message)
+			
+			// Add additional details if available
+			if runID, exists := resultMap["run_id"]; exists {
+				resultText += fmt.Sprintf(" (Run ID: %v)", runID)
+			}
+			if status, exists := resultMap["status"]; exists {
+				resultText += fmt.Sprintf(" - Status: %v", status)
+			}
+		} else {
+			// Fall back to displaying the entire result
+			if resultJSON, err := json.MarshalIndent(resultMap, "", "  "); err == nil {
+				resultText = fmt.Sprintf("Workflow '%s' execution result:\n%s", workflowName, string(resultJSON))
+			} else {
+				resultText = fmt.Sprintf("Workflow '%s' execution result: %v", workflowName, result)
+			}
+		}
+	} else {
+		resultText = fmt.Sprintf("Workflow '%s' execution result: %v", workflowName, result)
+	}
+	
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: resultText}},
+	}, nil
 }
 
 // pauseWorkflow pauses a workflow
