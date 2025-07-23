@@ -4,6 +4,7 @@ package task_scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -38,6 +39,7 @@ type TaskRequest struct {
 	Timeout     time.Duration          `json:"timeout"`
 	Retry       TaskRetryConfig        `json:"retry"`
 	Resources   TaskResourceConfig     `json:"resources"`
+	Volumes     []TaskVolumeConfig     `json:"volumes,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata"`
 }
 
@@ -52,6 +54,68 @@ type TaskRetryConfig struct {
 type TaskResourceConfig struct {
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
+}
+
+// TaskVolumeConfig defines volume configuration for tasks
+type TaskVolumeConfig struct {
+	// Name of the volume
+	Name string `json:"name"`
+	// Mount path in the container
+	MountPath string `json:"mountPath"`
+	// Volume type (pvc, configmap, secret, emptyDir)
+	Type string `json:"type"`
+	// Source configuration (depends on type)
+	Source TaskVolumeSource `json:"source"`
+	// ReadOnly mount
+	ReadOnly bool `json:"readOnly,omitempty"`
+}
+
+// TaskVolumeSource defines the source of a volume
+type TaskVolumeSource struct {
+	// PVC configuration (for type: pvc)
+	PVC *TaskVolumePVC `json:"pvc,omitempty"`
+	// EmptyDir configuration (for type: emptyDir)
+	EmptyDir *TaskVolumeEmptyDir `json:"emptyDir,omitempty"`
+	// ConfigMap configuration (for type: configmap)
+	ConfigMap *TaskVolumeConfigMap `json:"configMap,omitempty"`
+}
+
+// TaskVolumePVC defines PVC volume source
+type TaskVolumePVC struct {
+	// Claim name (if existing) or auto-generated if empty
+	ClaimName string `json:"claimName,omitempty"`
+	// Size for auto-created PVC
+	Size string `json:"size,omitempty"`
+	// Storage class for auto-created PVC
+	StorageClass string `json:"storageClass,omitempty"`
+	// Access modes for auto-created PVC
+	AccessModes []string `json:"accessModes,omitempty"`
+	// Auto-delete PVC after job completion
+	AutoDelete bool `json:"autoDelete,omitempty"`
+}
+
+// TaskVolumeEmptyDir defines emptyDir volume source
+type TaskVolumeEmptyDir struct {
+	// Size limit for emptyDir
+	SizeLimit string `json:"sizeLimit,omitempty"`
+	// Medium (Memory for tmpfs)
+	Medium string `json:"medium,omitempty"`
+}
+
+// TaskVolumeConfigMap defines configMap volume source
+type TaskVolumeConfigMap struct {
+	// ConfigMap name
+	Name string `json:"name"`
+	// Items to project from configMap
+	Items []TaskVolumeConfigMapItem `json:"items,omitempty"`
+}
+
+// TaskVolumeConfigMapItem defines a configMap item projection
+type TaskVolumeConfigMapItem struct {
+	// Key in configMap
+	Key string `json:"key"`
+	// Path to mount the key
+	Path string `json:"path"`
 }
 
 // TaskStatus represents the status of a task
@@ -107,7 +171,7 @@ func (jm *K8sJobManager) SubmitTask(ctx context.Context, task *TaskRequest) (*Ta
 	jm.logger.Info("Submitting task %s (%s) to Kubernetes", task.ID, task.Name)
 
 	// Create Job specification
-	job, err := jm.createJobSpec(task)
+	job, err := jm.createJobSpec(ctx, task)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create job spec: %w", err)
 	}
@@ -338,7 +402,7 @@ func (jm *K8sJobManager) CleanupCompletedTasks(ctx context.Context, schedulerNam
 }
 
 // createJobSpec creates a Kubernetes Job specification from a task request
-func (jm *K8sJobManager) createJobSpec(task *TaskRequest) (*batchv1.Job, error) {
+func (jm *K8sJobManager) createJobSpec(ctx context.Context, task *TaskRequest) (*batchv1.Job, error) {
 	// Generate unique job name
 	jobName := fmt.Sprintf("task-%s", task.ID)
 	
@@ -388,6 +452,99 @@ func (jm *K8sJobManager) createJobSpec(task *TaskRequest) (*batchv1.Job, error) 
 		backoffLimit = 3 // Default retry limit
 	}
 
+	// Build volume mounts and volumes
+	var volumeMounts []corev1.VolumeMount
+	var volumes []corev1.Volume
+	var pvcCreated []string
+
+	for _, volConfig := range task.Volumes {
+		// Create volume mount
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volConfig.Name,
+			MountPath: volConfig.MountPath,
+			ReadOnly:  volConfig.ReadOnly,
+		})
+
+		// Create volume based on type
+		var volume corev1.Volume
+		switch volConfig.Type {
+		case "pvc":
+			pvcName := volConfig.Source.PVC.ClaimName
+			if pvcName == "" {
+				// Auto-generate PVC name
+				pvcName = fmt.Sprintf("%s-%s", jobName, volConfig.Name)
+			}
+
+			volume = corev1.Volume{
+				Name: volConfig.Name,
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: pvcName,
+					},
+				},
+			}
+
+			// Auto-create PVC if needed
+			if volConfig.Source.PVC.ClaimName == "" {
+				err := jm.createPVCForTask(ctx, pvcName, volConfig.Source.PVC)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create PVC %s: %w", pvcName, err)
+				}
+				pvcCreated = append(pvcCreated, pvcName)
+			}
+
+		case "emptyDir":
+			volumeSource := corev1.EmptyDirVolumeSource{}
+			if volConfig.Source.EmptyDir != nil {
+				if volConfig.Source.EmptyDir.SizeLimit != "" {
+					sizeLimit := parseResourceQuantity(volConfig.Source.EmptyDir.SizeLimit)
+					volumeSource.SizeLimit = &sizeLimit
+				}
+				if volConfig.Source.EmptyDir.Medium != "" {
+					volumeSource.Medium = corev1.StorageMedium(volConfig.Source.EmptyDir.Medium)
+				}
+			}
+			volume = corev1.Volume{
+				Name: volConfig.Name,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &volumeSource,
+				},
+			}
+
+		case "configmap":
+			if volConfig.Source.ConfigMap == nil {
+				return nil, fmt.Errorf("configMap source required for volume %s", volConfig.Name)
+			}
+			
+			configMapSource := &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: volConfig.Source.ConfigMap.Name,
+				},
+			}
+
+			if len(volConfig.Source.ConfigMap.Items) > 0 {
+				for _, item := range volConfig.Source.ConfigMap.Items {
+					configMapSource.Items = append(configMapSource.Items, corev1.KeyToPath{
+						Key:  item.Key,
+						Path: item.Path,
+					})
+				}
+			}
+
+			volume = corev1.Volume{
+				Name: volConfig.Name,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: configMapSource,
+				},
+			}
+
+		default:
+			return nil, fmt.Errorf("unsupported volume type: %s", volConfig.Type)
+		}
+
+		volumes = append(volumes, volume)
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -429,14 +586,85 @@ func (jm *K8sJobManager) createJobSpec(task *TaskRequest) (*batchv1.Job, error) 
 							Env:             env,
 							Resources:       resources,
 							ImagePullPolicy: corev1.PullIfNotPresent,
+							VolumeMounts:    volumeMounts,
 						},
 					},
+					Volumes: volumes,
 				},
 			},
 		},
 	}
 
+	// Store PVC list for cleanup if auto-delete is enabled
+	if len(pvcCreated) > 0 {
+		if job.ObjectMeta.Annotations == nil {
+			job.ObjectMeta.Annotations = make(map[string]string)
+		}
+		job.ObjectMeta.Annotations["mcp.matey.ai/auto-created-pvcs"] = strings.Join(pvcCreated, ",")
+	}
+
 	return job, nil
+}
+
+// createPVCForTask creates a PersistentVolumeClaim for a task
+func (jm *K8sJobManager) createPVCForTask(ctx context.Context, pvcName string, config *TaskVolumePVC) error {
+	// Default values
+	size := config.Size
+	if size == "" {
+		size = "1Gi"
+	}
+
+	accessModes := config.AccessModes
+	if len(accessModes) == 0 {
+		accessModes = []string{"ReadWriteOnce"}
+	}
+
+	// Convert access modes to Kubernetes types
+	k8sAccessModes := make([]corev1.PersistentVolumeAccessMode, len(accessModes))
+	for i, mode := range accessModes {
+		k8sAccessModes[i] = corev1.PersistentVolumeAccessMode(mode)
+	}
+
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: jm.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "workflow-workspace",
+				"app.kubernetes.io/component":  "storage",
+				"app.kubernetes.io/managed-by": "matey-task-scheduler",
+			},
+			Annotations: map[string]string{
+				"mcp.matey.ai/created-at": time.Now().Format(time.RFC3339),
+			},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: k8sAccessModes,
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: parseResourceQuantity(size),
+				},
+			},
+		},
+	}
+
+	// Set storage class if specified
+	if config.StorageClass != "" {
+		pvc.Spec.StorageClassName = &config.StorageClass
+	}
+
+	// Add auto-delete annotation if enabled
+	if config.AutoDelete {
+		pvc.ObjectMeta.Annotations["mcp.matey.ai/auto-delete"] = "true"
+	}
+
+	_, err := jm.client.CoreV1().PersistentVolumeClaims(jm.namespace).Create(ctx, pvc, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create PVC: %w", err)
+	}
+
+	jm.logger.Info("Created PVC %s for task storage", pvcName)
+	return nil
 }
 
 // enrichStatusWithPodInfo adds pod information and exit code to task status

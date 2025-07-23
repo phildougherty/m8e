@@ -12,6 +12,7 @@ import (
 
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/crd"
+	"github.com/phildougherty/m8e/internal/task_scheduler"
 )
 
 // WorkflowScheduler integrates CronEngine with WorkflowEngine for scheduled workflow execution
@@ -122,7 +123,9 @@ func (ws *WorkflowScheduler) scheduleWorkflow(workflow *crd.WorkflowDefinition) 
 				"jobName", taskStatus.JobName,
 				"taskID", taskStatus.ID)
 			
-			// The Job will handle updating the status via the scheduler-execute-workflow command
+			// Start a goroutine to monitor the Job and update status when complete
+			go ws.monitorJobAndUpdateStatus(ctx, workflow, workflow.Name, executionID, taskStatus)
+			
 			return nil
 		} else {
 			ws.logger.Info("Executing workflow in-process (no K8s executor available)", "workflow", workflow.Name)
@@ -177,6 +180,129 @@ func (ws *WorkflowScheduler) scheduleWorkflow(workflow *crd.WorkflowDefinition) 
 
 	// Add job to CronEngine
 	return ws.cronEngine.AddJob(jobSpec)
+}
+
+// monitorJobAndUpdateStatus monitors a Kubernetes Job and updates the MCPTaskScheduler status when complete
+func (ws *WorkflowScheduler) monitorJobAndUpdateStatus(ctx context.Context, workflow *crd.WorkflowDefinition, workflowName, executionID string, taskStatus *task_scheduler.TaskStatus) {
+	// Create a WorkflowExecution for status tracking
+	execution := &WorkflowExecution{
+		ID:           executionID,
+		WorkflowName: workflowName,
+		StartTime:    time.Now(),
+		Status:       WorkflowExecutionStatusRunning,
+		Steps:        make([]StepExecution, len(workflow.Steps)),
+	}
+	
+	// Initialize step executions
+	for i, step := range workflow.Steps {
+		execution.Steps[i] = StepExecution{
+			Name:   step.Name,
+			Status: StepExecutionStatusPending,
+		}
+	}
+	
+	ws.logger.Info("Monitoring Kubernetes Job for workflow execution", 
+		"workflow", workflowName, "executionID", executionID, "jobName", taskStatus.JobName)
+	
+	// Monitor the job status in a loop
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	
+	timeout := time.After(30 * time.Minute) // Default timeout
+	if workflow.Timeout != "" {
+		if duration, err := time.ParseDuration(workflow.Timeout); err == nil {
+			timeout = time.After(duration)
+		}
+	}
+	
+	for {
+		select {
+		case <-ctx.Done():
+			ws.logger.Info("Context cancelled, stopping job monitoring", "workflow", workflowName)
+			return
+			
+		case <-timeout:
+			ws.logger.Error(nil, "Job monitoring timed out", "workflow", workflowName, "executionID", executionID)
+			execution.Status = WorkflowExecutionStatusFailed
+			execution.Error = "Job execution timed out"
+			endTime := time.Now()
+			execution.EndTime = &endTime
+			ws.updateWorkflowExecutionStatus(ctx, execution)
+			return
+			
+		case <-ticker.C:
+			// Check job status
+			currentStatus, err := ws.k8sExecutor.GetWorkflowJobStatus(ctx, workflowName, executionID)
+			if err != nil {
+				ws.logger.Error(err, "Failed to get job status", "workflow", workflowName, "executionID", executionID)
+				continue
+			}
+			
+			// Map TaskStatus.Phase to workflow status
+			var jobStatus string
+			switch currentStatus.Phase {
+			case "Succeeded":
+				jobStatus = "completed"
+			case "Failed":
+				jobStatus = "failed"  
+			case "Running":
+				jobStatus = "running"
+			default:
+				jobStatus = "unknown"
+			}
+			
+			switch jobStatus {
+			case "completed":
+				ws.logger.Info("Kubernetes Job completed successfully", 
+					"workflow", workflowName, "executionID", executionID)
+				
+				execution.Status = WorkflowExecutionStatusSucceeded
+				endTime := time.Now()
+				execution.EndTime = &endTime
+				
+				// Mark all steps as completed (simplified for now)
+				for i := range execution.Steps {
+					execution.Steps[i].Status = StepExecutionStatusSucceeded
+					execution.Steps[i].Duration = execution.EndTime.Sub(execution.StartTime)
+				}
+				
+				// Get job logs if possible
+				if logs, err := ws.k8sExecutor.GetWorkflowJobLogs(ctx, workflowName, executionID); err == nil && logs != "" {
+					execution.Error = "" // Clear any previous error, use logs for output
+				}
+				
+				ws.updateWorkflowExecutionStatus(ctx, execution)
+				return
+				
+			case "failed":
+				ws.logger.Error(nil, "Kubernetes Job failed", 
+					"workflow", workflowName, "executionID", executionID)
+				
+				execution.Status = WorkflowExecutionStatusFailed
+				endTime := time.Now()
+				execution.EndTime = &endTime
+				
+				// Get job logs for error details
+				if logs, err := ws.k8sExecutor.GetWorkflowJobLogs(ctx, workflowName, executionID); err == nil {
+					execution.Error = logs
+				} else {
+					execution.Error = "Job execution failed"
+				}
+				
+				ws.updateWorkflowExecutionStatus(ctx, execution)
+				return
+				
+			case "running":
+				// Job still running, continue monitoring
+				continue
+				
+			default:
+				ws.logger.Info("Kubernetes Job in unknown state", 
+					"workflow", workflowName, "executionID", executionID, "phase", currentStatus.Phase)
+				continue
+			}
+		}
+	}
 }
 
 // updateWorkflowExecutionStatus updates the MCPTaskScheduler CRD with workflow execution results

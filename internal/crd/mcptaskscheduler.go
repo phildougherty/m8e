@@ -366,6 +366,9 @@ type WorkflowDefinition struct {
 	// Success/failure job history limits
 	SuccessfulJobsHistoryLimit *int32 `json:"successfulJobsHistoryLimit,omitempty"`
 	FailedJobsHistoryLimit     *int32 `json:"failedJobsHistoryLimit,omitempty"`
+
+	// Workspace volume configuration for step data sharing
+	Workspace *WorkflowWorkspace `json:"workspace,omitempty"`
 }
 
 // WorkflowStep defines a single step in a unified workflow (consolidated into Task Scheduler)
@@ -507,6 +510,37 @@ const (
 	WorkflowBackoffExponential WorkflowBackoffStrategy = "Exponential"
 	// Fixed delay
 	WorkflowBackoffFixed WorkflowBackoffStrategy = "Fixed"
+)
+
+// WorkflowWorkspace defines workspace volume configuration for step data sharing
+type WorkflowWorkspace struct {
+	// Enable workspace volume (default: true for multi-step workflows)
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Size of the workspace volume (default: "1Gi")
+	Size string `json:"size,omitempty"`
+
+	// Storage class for the workspace volume (default: use cluster default)
+	StorageClass string `json:"storageClass,omitempty"`
+
+	// Mount path within containers (default: "/workspace")
+	MountPath string `json:"mountPath,omitempty"`
+
+	// Access modes for the volume (default: ["ReadWriteOnce"])
+	AccessModes []string `json:"accessModes,omitempty"`
+
+	// Volume reclaim policy (default: "Delete" - cleanup after workflow completes)
+	ReclaimPolicy WorkflowVolumeReclaimPolicy `json:"reclaimPolicy,omitempty"`
+}
+
+// WorkflowVolumeReclaimPolicy defines volume cleanup policies
+type WorkflowVolumeReclaimPolicy string
+
+const (
+	// Delete volume after workflow completion (default)
+	WorkflowVolumeReclaimDelete WorkflowVolumeReclaimPolicy = "Delete"
+	// Retain volume after workflow completion (manual cleanup required)
+	WorkflowVolumeReclaimRetain WorkflowVolumeReclaimPolicy = "Retain"
 )
 
 // MCPTaskSchedulerStatus defines the observed state of MCPTaskScheduler
@@ -1261,6 +1295,11 @@ func (in *WorkflowDefinition) DeepCopyInto(out *WorkflowDefinition) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.Workspace != nil {
+		in, out := &in.Workspace, &out.Workspace
+		*out = new(WorkflowWorkspace)
+		(*in).DeepCopyInto(*out)
+	}
 }
 
 func (in *WorkflowDefinition) DeepCopy() *WorkflowDefinition {
@@ -1422,6 +1461,25 @@ func (in *StepResult) DeepCopy() *StepResult {
 		return nil
 	}
 	out := new(StepResult)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopy methods for WorkflowWorkspace
+func (in *WorkflowWorkspace) DeepCopyInto(out *WorkflowWorkspace) {
+	*out = *in
+	if in.AccessModes != nil {
+		in, out := &in.AccessModes, &out.AccessModes
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+}
+
+func (in *WorkflowWorkspace) DeepCopy() *WorkflowWorkspace {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkflowWorkspace)
 	in.DeepCopyInto(out)
 	return out
 }

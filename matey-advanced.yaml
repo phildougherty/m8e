@@ -374,6 +374,409 @@ volumes:
       backup: "daily"
 
 # ============================================================================
+# TASK SCHEDULER CONFIGURATION - OPTIONAL (AI-powered workflow orchestration)
+# ============================================================================
+task_scheduler:
+  enabled: true                    # OPTIONAL (default: false)
+  
+  # ========================================================================
+  # BASIC CONFIGURATION
+  # ========================================================================
+  port: 8018                      # OPTIONAL (default: 8018)
+  host: "0.0.0.0"                 # OPTIONAL (default: "localhost")
+  database_path: "/data/scheduler.db" # OPTIONAL (default: "/data/task-scheduler.db")
+  log_level: "debug"              # OPTIONAL (default: "info", options: debug, info, warn, error)
+  
+  # ========================================================================
+  # AI PROVIDER CONFIGURATION - AT LEAST ONE REQUIRED if enabled
+  # ========================================================================
+  openrouter_api_key: "${OPENROUTER_API_KEY}"        # REQUIRED ENV VAR
+  openrouter_model: "openai/gpt-4o"                  # OPTIONAL (default: "openai/gpt-4")
+  ollama_url: "http://ollama:11434"                   # OPTIONAL (local LLM endpoint)
+  ollama_model: "llama3:8b"                          # OPTIONAL (local model name)
+  
+  # ========================================================================
+  # MCP INTEGRATION
+  # ========================================================================
+  mcp_proxy_url: "http://proxy:9876"                 # OPTIONAL (MCP proxy endpoint)
+  mcp_proxy_api_key: "${MCP_PROXY_API_KEY}"          # REQUIRED ENV VAR if mcp_proxy_url specified
+  
+  # ========================================================================
+  # RESOURCE CONFIGURATION
+  # ========================================================================
+  cpus: "2.0"                     # OPTIONAL (CPU limit)
+  memory: "1g"                    # OPTIONAL (memory limit)
+  volumes:                        # OPTIONAL (volume mounts)
+    - "/workspace:/workspace:rw"
+    - "/tmp:/tmp:rw"
+  
+  # ========================================================================
+  # WORKSPACE & INTEGRATION
+  # ========================================================================
+  workspace: "/workspace"         # OPTIONAL (working directory)
+  openwebui_enabled: false        # OPTIONAL (default: false)
+  
+  # ========================================================================
+  # SCHEDULER CONFIGURATION - Advanced task management
+  # ========================================================================
+  scheduler_config:
+    # Basic settings
+    default_timeout: "30m"        # OPTIONAL (default task timeout)
+    max_concurrent_tasks: 10      # OPTIONAL (maximum parallel tasks)
+    
+    # Task storage and history
+    task_storage_enabled: true    # OPTIONAL (enable task persistence)
+    task_history_limit: 1000     # OPTIONAL (number of completed tasks to keep)
+    task_cleanup_policy: "delete_after_30_days" # OPTIONAL (cleanup strategy)
+    
+    # Webhooks and notifications
+    activity_webhook: "${SLACK_WEBHOOK_URL}"  # OPTIONAL (activity notifications)
+    
+    # Retry policy for failed tasks
+    retry_policy:
+      max_retries: 3              # OPTIONAL (maximum retry attempts)
+      retry_delay: "5m"           # OPTIONAL (initial delay between retries)
+      backoff_strategy: "Exponential"  # OPTIONAL (Linear, Exponential, Fixed)
+    
+    # Auto-scaling configuration
+    auto_scaling:
+      enabled: true               # OPTIONAL (enable auto-scaling)
+      min_concurrent_tasks: 2     # OPTIONAL (minimum task slots)
+      max_concurrent_tasks: 20    # OPTIONAL (maximum task slots)
+      target_cpu_utilization: 70 # OPTIONAL (target CPU percentage)
+      target_memory_utilization: 80  # OPTIONAL (target memory percentage)
+      scale_up_cooldown: "5m"     # OPTIONAL (cooldown before scaling up)
+      scale_down_cooldown: "10m"  # OPTIONAL (cooldown before scaling down)
+      metrics_interval: "1m"      # OPTIONAL (metrics collection interval)
+      custom_metrics:             # OPTIONAL (custom scaling metrics)
+        - name: "queue_length"
+          type: "pods"
+          target_value: "10"
+          selector:
+            app: "task-scheduler"
+    
+    # Event-driven workflow triggers
+    event_triggers:
+      - name: "pod-failure-trigger"     # Event trigger name
+        type: "k8s-event"               # Type: k8s-event, webhook, file-watch
+        workflow: "incident-response"   # Workflow to trigger
+        cooldown_duration: "10m"        # Prevent rapid re-triggering
+        kubernetes_event:               # Kubernetes event configuration
+          kind: "Pod"                   # Resource kind to watch
+          reason: "Failed"              # Event reason filter
+          namespace: "default"          # Namespace filter (optional)
+          label_selector: "app=critical" # Label selector (optional)
+          field_selector: "status.phase=Failed" # Field selector (optional)
+        conditions:                     # Additional conditions
+          - field: "reason"
+            operator: "equals"
+            value: "Failed"
+      
+      - name: "webhook-deployment"      # Webhook trigger example
+        type: "webhook"
+        workflow: "deployment-pipeline"
+        cooldown_duration: "5m"
+        webhook:
+          endpoint: "/webhooks/deploy"   # Webhook endpoint path
+          method: "POST"                 # HTTP method
+          authentication: "bearer-token" # Auth method (optional)
+          headers:                       # Expected headers (optional)
+            "X-GitHub-Event": "push"
+        conditions:
+          - field: "ref"
+            operator: "equals"
+            value: "refs/heads/main"
+      
+      - name: "file-change-trigger"     # File watch trigger example
+        type: "file-watch"
+        workflow: "data-processing"
+        cooldown_duration: "30m"
+        file_watch:
+          path: "/data/input"            # Path to watch
+          pattern: "*.csv"               # File pattern filter
+          events: ["create", "modify"]   # Watch events
+          recursive: true                # Recursive watching
+    
+    # Conditional dependencies
+    conditional_dependencies:
+      enabled: true                      # OPTIONAL (enable conditional deps)
+      default_strategy: "wait_for_completion" # OPTIONAL (dependency strategy)
+      resolution_timeout: "1h"          # OPTIONAL (max wait for dependencies)
+      cross_workflow_enabled: true      # OPTIONAL (allow cross-workflow deps)
+  
+  # ========================================================================
+  # WORKFLOW DEFINITIONS - Define workflows directly in task scheduler
+  # ========================================================================
+  workflows:
+    # Simple scheduled task
+    - name: "health-monitoring"
+      schedule: "*/15 * * * *"          # Every 15 minutes
+      timezone: "UTC"                   # Timezone for schedule
+      enabled: true                     # Enable/disable workflow
+      description: "Monitor system health"
+      tags: ["monitoring", "health"]    # Categorization tags
+      parameters:                       # Global workflow parameters
+        alert_threshold: 80
+        notification_channel: "alerts"
+      steps:
+        - name: "check-system"
+          tool: "health_check"
+          parameters:
+            services: ["proxy", "memory", "scheduler"]
+            include_metrics: true
+          timeout: "30s"                # Step timeout
+        - name: "analyze-results"
+          tool: "ai_analyze"
+          parameters:
+            data: "{{steps.check-system.output}}"
+            prompt: "Analyze health metrics and identify issues"
+          depends_on: ["check-system"]  # Step dependencies
+        - name: "send-alerts"
+          tool: "send_notification"
+          parameters:
+            channel: "{{parameters.notification_channel}}"
+            message: "{{steps.analyze-results.output}}"
+          condition: "{{steps.analyze-results.issues_found}}" # Conditional execution
+          continue_on_error: false      # Stop workflow on error
+          run_policy: "OnCondition"     # Always, OnSuccess, OnFailure, OnCondition
+    
+    # Complex multi-step workflow with dependencies
+    - name: "data-backup-pipeline"
+      schedule: "0 2 * * *"             # Daily at 2 AM
+      timezone: "America/New_York"
+      enabled: true
+      description: "Comprehensive data backup with validation"
+      concurrency_policy: "Forbid"     # Allow, Forbid, Replace
+      parameters:
+        backup_location: "s3://backups"
+        retention_days: 30
+        compression: true
+      retry_policy:                     # Workflow-level retry policy
+        max_retries: 2
+        retry_delay: "10m"
+        backoff_strategy: "Linear"
+        max_retry_delay: "1h"
+        backoff_multiplier: 2.0
+      timeout: "2h"                     # Maximum workflow execution time
+      successful_jobs_history_limit: 5  # Keep last 5 successful runs
+      failed_jobs_history_limit: 3      # Keep last 3 failed runs
+      workspace:                        # Shared workspace for steps
+        enabled: true
+        size: "10Gi"
+        mount_path: "/shared"
+        storage_class: "fast-ssd"
+        access_modes: ["ReadWriteOnce"]
+        reclaim_policy: "Delete"        # Delete, Retain
+      steps:
+        - name: "pre-backup-validation"
+          tool: "validate_services"
+          parameters:
+            services: ["memory", "task-scheduler"]
+            health_check: true
+          timeout: "5m"
+        - name: "backup-memory-db"
+          tool: "backup_database"
+          parameters:
+            service: "memory"
+            destination: "{{parameters.backup_location}}/memory"
+            compression: "{{parameters.compression}}"
+          depends_on: ["pre-backup-validation"]
+          retry_policy:                 # Step-level retry policy
+            max_retries: 3
+            retry_delay: "2m"
+            backoff_strategy: "Exponential"
+          timeout: "45m"
+        - name: "backup-scheduler-db"
+          tool: "backup_database"
+          parameters:
+            service: "task-scheduler"
+            destination: "{{parameters.backup_location}}/scheduler"
+            compression: "{{parameters.compression}}"
+          depends_on: ["pre-backup-validation"]
+          timeout: "30m"
+        - name: "verify-backups"
+          tool: "verify_backup_integrity"
+          parameters:
+            backup_paths: [
+              "{{steps.backup-memory-db.output.path}}",
+              "{{steps.backup-scheduler-db.output.path}}"
+            ]
+          depends_on: ["backup-memory-db", "backup-scheduler-db"]
+          timeout: "15m"
+        - name: "cleanup-old-backups"
+          tool: "cleanup_old_files"
+          parameters:
+            location: "{{parameters.backup_location}}"
+            older_than: "{{parameters.retention_days}}d"
+            dry_run: false
+          depends_on: ["verify-backups"]
+          timeout: "10m"
+        - name: "send-completion-report"
+          tool: "send_email"
+          parameters:
+            recipients: ["ops-team@company.com"]
+            subject: "Backup Completed - {{date}}"
+            body: |
+              Backup completed successfully:
+              Memory DB: {{steps.backup-memory-db.output.size}}
+              Scheduler DB: {{steps.backup-scheduler-db.output.size}}
+              Verification: {{steps.verify-backups.output.status}}
+          depends_on: ["cleanup-old-backups"]
+          continue_on_error: true       # Don't fail workflow if email fails
+    
+    # Event-triggered workflow (no schedule)
+    - name: "incident-response"
+      enabled: true
+      description: "Automated incident response"
+      manual_execution: true            # Allow manual triggering
+      parameters:
+        escalation_timeout: "30m"
+        auto_remediation: false
+      steps:
+        - name: "assess-incident"
+          tool: "analyze_system_state"
+          parameters:
+            comprehensive: true
+            include_logs: true
+        - name: "ai-diagnosis"
+          tool: "ai_analyze"
+          parameters:
+            data: "{{steps.assess-incident.output}}"
+            prompt: "Diagnose the incident and suggest remediation steps"
+        - name: "attempt-auto-remediation"
+          tool: "execute_remediation"
+          parameters:
+            actions: "{{steps.ai-diagnosis.remediation_steps}}"
+            safe_mode: true
+          condition: "{{parameters.auto_remediation}}"
+          depends_on: ["ai-diagnosis"]
+        - name: "escalate-to-human"
+          tool: "create_incident_ticket"
+          parameters:
+            severity: "{{steps.ai-diagnosis.severity}}"
+            description: "{{steps.ai-diagnosis.summary}}"
+            assignee: "on-call-engineer"
+          depends_on: ["ai-diagnosis"]
+          run_policy: "OnFailure"       # Only run if remediation fails
+  
+  # ========================================================================
+  # WORKFLOW TEMPLATES - Reusable workflow patterns
+  # ========================================================================
+  templates:
+    - name: "monitoring-template"
+      description: "Standard monitoring workflow template"
+      category: "monitoring"
+      version: "1.0"
+      tags: ["template", "monitoring"]
+      parameters:                       # Template parameters
+        - name: "check_interval"
+          type: "string"
+          description: "Cron schedule for monitoring"
+          required: false
+          default: "*/10 * * * *"
+        - name: "services"
+          type: "array"
+          description: "Services to monitor"
+          required: true
+        - name: "alert_threshold"
+          type: "integer"
+          description: "Alert threshold percentage"
+          required: false
+          default: 80
+          minimum: 1
+          maximum: 100
+      workflow:                         # Template workflow definition
+        schedule: "{{.check_interval}}"
+        enabled: true
+        steps:
+          - name: "health-check"
+            tool: "health_check"
+            parameters:
+              services: "{{.services}}"
+              threshold: "{{.alert_threshold}}"
+          - name: "send-alert"
+            tool: "send_notification"
+            condition: "{{steps.health-check.alert_needed}}"
+    
+    - name: "backup-template"
+      description: "Standard backup workflow template"
+      category: "maintenance"
+      version: "1.0"
+      parameters:
+        - name: "backup_schedule"
+          type: "string"
+          default: "0 2 * * *"
+        - name: "services"
+          type: "array"
+          required: true
+        - name: "retention_days"
+          type: "integer"
+          default: 30
+          minimum: 1
+          maximum: 365
+      workflow:
+        schedule: "{{.backup_schedule}}"
+        steps:
+          - name: "backup-services"
+            tool: "backup_services"
+            parameters:
+              services: "{{.services}}"
+              retention: "{{.retention_days}}d"
+  
+  # ========================================================================
+  # SIMPLE TASK DEFINITIONS - Individual scheduled tasks
+  # ========================================================================
+  tasks:
+    - name: "daily-health-check"
+      schedule: "0 8 * * *"             # Daily at 8 AM
+      tool: "health_check"
+      parameters:
+        services: ["all"]
+        detailed: true
+      enabled: true
+      description: "Daily comprehensive health check"
+      retry_policy:
+        max_retries: 2
+        retry_delay: "5m"
+        backoff_strategy: "Linear"
+      timeout: "10m"
+      tags: ["health", "daily"]
+    
+    - name: "weekly-cleanup"
+      schedule: "0 2 * * 0"             # Sunday at 2 AM
+      tool: "cleanup_system"
+      parameters:
+        cleanup_logs: true
+        cleanup_temp: true
+        max_age: "7d"
+      enabled: true
+      description: "Weekly system cleanup"
+      timeout: "30m"
+      tags: ["cleanup", "maintenance"]
+  
+  # ========================================================================
+  # GLOBAL WORKFLOW CONFIGURATION
+  # ========================================================================
+  global_retry_policy:                  # Default retry policy for all workflows
+    max_retries: 3
+    retry_delay: "5m"
+    backoff_strategy: "Exponential"
+    max_retry_delay: "30m"
+    backoff_multiplier: 2.0
+  
+  dependency_timeout: "1h"              # Default dependency timeout
+  workflow_history_limit: 100          # Maximum workflow executions to keep
+  
+  # ========================================================================
+  # ENVIRONMENT VARIABLES
+  # ========================================================================
+  env:                                  # OPTIONAL (additional environment variables)
+    NODE_ENV: "production"
+    DEBUG: "false"
+    METRICS_ENABLED: "true"
+    AUDIT_LOGGING: "true"
+
+# ============================================================================
 # SECURITY WARNINGS & REQUIREMENTS
 # ============================================================================
 # CRITICAL SECURITY REQUIREMENTS:

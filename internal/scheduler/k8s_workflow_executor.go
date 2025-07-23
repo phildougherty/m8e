@@ -112,6 +112,18 @@ func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.Workf
 		Memory: "256Mi",
 	}
 
+	// Configure workspace volumes if enabled
+	var volumes []task_scheduler.TaskVolumeConfig
+	if kwe.shouldEnableWorkspace(workflowDef) {
+		workspaceConfig := kwe.createWorkspaceVolume(workflowDef, workflowName, executionID)
+		volumes = append(volumes, workspaceConfig)
+
+		// Add workspace path to environment variables
+		workspacePath := kwe.getWorkspaceMountPath(workflowDef)
+		env["WORKFLOW_WORKSPACE_PATH"] = workspacePath
+		env["WORKSPACE_ENABLED"] = "true"
+	}
+
 	return &task_scheduler.TaskRequest{
 		ID:          fmt.Sprintf("%s-%s", workflowName, executionID),
 		Name:        fmt.Sprintf("workflow-%s", workflowName),
@@ -123,6 +135,7 @@ func (kwe *K8sWorkflowExecutor) createWorkflowTaskRequest(workflowDef *crd.Workf
 		Timeout:     timeout,
 		Retry:       retryConfig,
 		Resources:   resources,
+		Volumes:     volumes,
 		Metadata: map[string]interface{}{
 			"workflowName":    workflowName,
 			"executionID":     executionID,
@@ -156,6 +169,15 @@ func (kwe *K8sWorkflowExecutor) buildShellScript(workflowDef *crd.WorkflowDefini
 	script := "#!/bin/bash\n"
 	script += "set -e\n" // Exit on error
 	script += fmt.Sprintf("echo 'Starting workflow: %s'\n", workflowDef.Name)
+	
+	// Add workspace initialization if enabled
+	if kwe.shouldEnableWorkspace(workflowDef) {
+		workspacePath := kwe.getWorkspaceMountPath(workflowDef)
+		script += fmt.Sprintf("echo 'Workspace enabled at: %s'\n", workspacePath)
+		script += fmt.Sprintf("mkdir -p %s\n", workspacePath)
+		script += fmt.Sprintf("cd %s\n", workspacePath)
+		script += fmt.Sprintf("echo 'Working directory set to workspace'\n")
+	}
 	
 	for i, step := range workflowDef.Steps {
 		script += fmt.Sprintf("echo 'Step %d: %s'\n", i+1, step.Name)
@@ -348,4 +370,68 @@ func (kwe *K8sWorkflowExecutor) ListWorkflowJobs(ctx context.Context) ([]*task_s
 // CleanupOldWorkflowJobs removes old completed workflow jobs
 func (kwe *K8sWorkflowExecutor) CleanupOldWorkflowJobs(ctx context.Context, olderThan time.Duration) error {
 	return kwe.jobManager.CleanupCompletedTasks(ctx, "workflow-scheduler", olderThan)
+}
+
+// shouldEnableWorkspace determines if workspace should be enabled for a workflow
+func (kwe *K8sWorkflowExecutor) shouldEnableWorkspace(workflowDef *crd.WorkflowDefinition) bool {
+	// If workspace is explicitly configured, use that setting
+	if workflowDef.Workspace != nil {
+		return workflowDef.Workspace.Enabled
+	}
+	
+	// Default: enable workspace for workflows with multiple steps
+	return len(workflowDef.Steps) > 1
+}
+
+// getWorkspaceMountPath returns the mount path for the workspace
+func (kwe *K8sWorkflowExecutor) getWorkspaceMountPath(workflowDef *crd.WorkflowDefinition) string {
+	if workflowDef.Workspace != nil && workflowDef.Workspace.MountPath != "" {
+		return workflowDef.Workspace.MountPath
+	}
+	return "/workspace" // Default mount path
+}
+
+// createWorkspaceVolume creates a volume configuration for the workflow workspace
+func (kwe *K8sWorkflowExecutor) createWorkspaceVolume(workflowDef *crd.WorkflowDefinition, workflowName, executionID string) task_scheduler.TaskVolumeConfig {
+	// Get configuration with defaults
+	workspace := workflowDef.Workspace
+	if workspace == nil {
+		workspace = &crd.WorkflowWorkspace{} // Use defaults
+	}
+
+	// Default values
+	size := workspace.Size
+	if size == "" {
+		size = "1Gi"
+	}
+
+	mountPath := kwe.getWorkspaceMountPath(workflowDef)
+
+	accessModes := workspace.AccessModes
+	if len(accessModes) == 0 {
+		accessModes = []string{"ReadWriteOnce"}
+	}
+
+	// Create unique volume name for this workflow execution
+	volumeName := fmt.Sprintf("workspace-%s-%s", workflowName, executionID)
+
+	// Use PVC for persistence between steps, with auto-cleanup
+	autoDelete := true
+	if workspace.ReclaimPolicy == crd.WorkflowVolumeReclaimRetain {
+		autoDelete = false
+	}
+
+	return task_scheduler.TaskVolumeConfig{
+		Name:      volumeName,
+		MountPath: mountPath,
+		Type:      "pvc",
+		Source: task_scheduler.TaskVolumeSource{
+			PVC: &task_scheduler.TaskVolumePVC{
+				Size:         size,
+				StorageClass: workspace.StorageClass,
+				AccessModes:  accessModes,
+				AutoDelete:   autoDelete,
+			},
+		},
+	}
 }
