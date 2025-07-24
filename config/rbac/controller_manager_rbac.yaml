@@ -17,7 +17,7 @@ metadata:
     app.kubernetes.io/component: controller-manager
 rules:
 - apiGroups: [""]
-  resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "namespaces"]
+  resources: ["pods", "services", "endpoints", "configmaps", "secrets", "persistentvolumeclaims", "namespaces"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["apps"]
   resources: ["deployments", "replicasets"]

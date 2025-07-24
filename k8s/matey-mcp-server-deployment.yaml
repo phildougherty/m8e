@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: matey-mcp-server
-  namespace: default
+  namespace: matey
   labels:
     app: matey
     component: mcp-server
@@ -28,7 +28,7 @@ spec:
         image: mcp.robotrad.io/matey:latest
         imagePullPolicy: Always
         command: ["./matey"]
-        args: ["mcp-server", "--port=8081"]
+        args: ["mcp-server", "--port=8081", "--namespace=matey"]
         env:
         - name: KUBERNETES_NAMESPACE
           valueFrom:
@@ -70,7 +70,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: matey-mcp-server
-  namespace: default
+  namespace: matey
   labels:
     app: matey
     component: mcp-server
@@ -92,7 +92,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: matey-mcp-server
-  namespace: default
+  namespace: matey
   labels:
     app: matey
     component: mcp-server
@@ -109,8 +109,11 @@ rules:
   resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["mcp.matey.ai"]
-  resources: ["mcpservers", "mcptoolboxes", "workflows", "mcpmemory", "mcptaskschedulers"]
+  resources: ["mcpservers", "mcptoolboxes", "workflows", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["mcp.matey.ai"]
+  resources: ["mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"]
+  verbs: ["get", "update", "patch"]
 - apiGroups: ["batch"]
   resources: ["jobs", "cronjobs"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -126,4 +129,4 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: matey-mcp-server
-  namespace: default
+  namespace: matey

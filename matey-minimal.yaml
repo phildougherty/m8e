@@ -5,28 +5,6 @@ proxy_auth:
     enabled: true
     api_key: myapikey
 servers:
-    postgres-memory:
-        image: postgres:15-alpine
-        env:
-            POSTGRES_DB: memory_graph
-            POSTGRES_PASSWORD: password
-            POSTGRES_USER: postgres
-        volumes:
-            - postgres-memory-data:/var/lib/postgresql/data
-        networks:
-            - mcp-net
-        user: postgres
-        security_opt:
-            - no-new-privileges:true
-        restart: unless-stopped
-        healthcheck:
-            test:
-                - CMD-SHELL
-                - pg_isready -U postgres
-            interval: 10s
-            timeout: 5s
-            retries: 5
-            start_period: 30s
     postgres-mcp:
         command: postgres-mcp
         args:
@@ -36,14 +14,12 @@ servers:
             - --sse-port=8013
         image: crystaldba/postgres-mcp
         env:
-            DATABASE_URI: postgresql://postgres:password@postgres-memory:5432/memory_graph
+            DATABASE_URI: postgresql://postgres:password@matey-postgres:5432/memory_graph
             TZ: America/New_York
         http_port: 8013
         protocol: sse
         capabilities:
             - tools
-        depends_on:
-            - postgres-memory
         security:
             trusted_image: true
         networks:
@@ -74,5 +50,4 @@ networks:
     mcp-net:
         driver: bridge
 volumes:
-    postgres-memory-data:
         driver: local

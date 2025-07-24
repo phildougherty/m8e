@@ -535,38 +535,11 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		Command:         []string{"./matey"},
 		Args:            []string{"scheduler-server"},
 		Env:             env,
-		Ports: []corev1.ContainerPort{
-			{
-				Name:          "http",
-				ContainerPort: taskScheduler.Spec.Port,
-				Protocol:      corev1.ProtocolTCP,
-			},
-		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      "config",
 				MountPath: "/app/config",
 			},
-		},
-		LivenessProbe: &corev1.Probe{
-			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/health",
-					Port: intOrString(taskScheduler.Spec.Port),
-				},
-			},
-			InitialDelaySeconds: 30,
-			PeriodSeconds:       10,
-		},
-		ReadinessProbe: &corev1.Probe{
-			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/health",
-					Port: intOrString(taskScheduler.Spec.Port),
-				},
-			},
-			InitialDelaySeconds: 5,
-			PeriodSeconds:       5,
 		},
 	}
 
@@ -592,8 +565,6 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		// Default args for built-in scheduler-server with config file
 		container.Args = []string{
 			"scheduler-server",
-			"--port", fmt.Sprintf("%d", taskScheduler.Spec.Port),
-			"--host", taskScheduler.Spec.Host,
 			"--file", "/app/config/matey.yaml",
 		}
 	}

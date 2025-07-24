@@ -76,67 +76,58 @@ func (ms *MemoryStore) Close() error {
 }
 
 func (ms *MemoryStore) initSchema() error {
-	// Create tables if they don't exist
+	// Create tables if they don't exist (compatible with memory service schema)
 	schema := `
-	-- Enable extensions
-	CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 	-- Entities table
 	CREATE TABLE IF NOT EXISTS entities (
-		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-		name VARCHAR(255) UNIQUE NOT NULL,
-		entity_type VARCHAR(100) NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		id SERIAL PRIMARY KEY,
+		name TEXT UNIQUE NOT NULL,
+		entity_type TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT now(),
+		updated_at TIMESTAMP DEFAULT now()
 	);
 
 	-- Observations table
 	CREATE TABLE IF NOT EXISTS observations (
-		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-		entity_name VARCHAR(255) NOT NULL REFERENCES entities(name) ON DELETE CASCADE,
+		id SERIAL PRIMARY KEY,
+		entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
 		content TEXT NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE(entity_name, content)
+		created_at TIMESTAMP DEFAULT now()
 	);
 
 	-- Relations table
 	CREATE TABLE IF NOT EXISTS relations (
-		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-		from_entity VARCHAR(255) NOT NULL REFERENCES entities(name) ON DELETE CASCADE,
-		to_entity VARCHAR(255) NOT NULL REFERENCES entities(name) ON DELETE CASCADE,
-		relation_type VARCHAR(100) NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE(from_entity, to_entity, relation_type)
+		id SERIAL PRIMARY KEY,
+		from_entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+		to_entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+		relation_type TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT now()
 	);
 
-	-- Indexes for performance
+	-- Create indexes if they don't exist
+	CREATE INDEX IF NOT EXISTS entities_name_key ON entities(name);
 	CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+	CREATE INDEX IF NOT EXISTS idx_entities_name_fts ON entities USING gin(to_tsvector('english', name));
 	CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
-	CREATE INDEX IF NOT EXISTS idx_observations_entity ON observations(entity_name);
-	CREATE INDEX IF NOT EXISTS idx_observations_content_gin ON observations USING gin(to_tsvector('english', content));
-	CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_entity);
-	CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_entity);
-	CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(relation_type);
+	CREATE INDEX IF NOT EXISTS idx_observations_entity_id ON observations(entity_id);
+	CREATE INDEX IF NOT EXISTS idx_observations_content_fts ON observations USING gin(to_tsvector('english', content));
+	CREATE INDEX IF NOT EXISTS idx_relations_from_entity_id ON relations(from_entity_id);
+	CREATE INDEX IF NOT EXISTS idx_relations_to_entity_id ON relations(to_entity_id);
 
-	-- Full-text search index on entity names and types
-	CREATE INDEX IF NOT EXISTS idx_entities_search ON entities USING gin(
-		to_tsvector('english', name || ' ' || entity_type)
-	);
-
-	-- Update trigger for entities
+	-- Create trigger function for updating updated_at
 	CREATE OR REPLACE FUNCTION update_updated_at_column()
 	RETURNS TRIGGER AS $$
 	BEGIN
-		NEW.updated_at = CURRENT_TIMESTAMP;
+		NEW.updated_at = now();
 		RETURN NEW;
 	END;
 	$$ language 'plpgsql';
 
+	-- Create trigger for entities table
 	DROP TRIGGER IF EXISTS update_entities_updated_at ON entities;
 	CREATE TRIGGER update_entities_updated_at
 		BEFORE UPDATE ON entities
-		FOR EACH ROW
-		EXECUTE FUNCTION update_updated_at_column();
+		FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 	`
 
 	_, err := ms.db.Exec(schema)
@@ -158,20 +149,26 @@ func (ms *MemoryStore) CreateEntities(entities []Entity) error {
 			VALUES ($1, $2) 
 			ON CONFLICT (name) DO UPDATE SET 
 				entity_type = EXCLUDED.entity_type,
-				updated_at = CURRENT_TIMESTAMP
+				updated_at = now()
 		`, entity.Name, entity.EntityType)
 		
 		if err != nil {
 			return fmt.Errorf("failed to insert entity %s: %w", entity.Name, err)
 		}
 
+		// Get entity ID for observations
+		var entityID int
+		err = tx.QueryRow("SELECT id FROM entities WHERE name = $1", entity.Name).Scan(&entityID)
+		if err != nil {
+			return fmt.Errorf("failed to get entity ID for %s: %w", entity.Name, err)
+		}
+
 		// Insert observations
 		for _, observation := range entity.Observations {
 			_, err := tx.Exec(`
-				INSERT INTO observations (entity_name, content) 
-				VALUES ($1, $2) 
-				ON CONFLICT (entity_name, content) DO NOTHING
-			`, entity.Name, observation)
+				INSERT INTO observations (entity_id, content) 
+				VALUES ($1, $2)
+			`, entityID, observation)
 			
 			if err != nil {
 				return fmt.Errorf("failed to insert observation for entity %s: %w", entity.Name, err)
@@ -220,12 +217,18 @@ func (ms *MemoryStore) AddObservations(observations map[string][]string) error {
 	defer tx.Rollback()
 
 	for entityName, contents := range observations {
+		// Get entity ID
+		var entityID int
+		err := tx.QueryRow("SELECT id FROM entities WHERE name = $1", entityName).Scan(&entityID)
+		if err != nil {
+			return fmt.Errorf("failed to get entity ID for %s: %w", entityName, err)
+		}
+
 		for _, content := range contents {
 			_, err := tx.Exec(`
-				INSERT INTO observations (entity_name, content) 
-				VALUES ($1, $2) 
-				ON CONFLICT (entity_name, content) DO NOTHING
-			`, entityName, content)
+				INSERT INTO observations (entity_id, content) 
+				VALUES ($1, $2)
+			`, entityID, content)
 			
 			if err != nil {
 				return fmt.Errorf("failed to insert observation for entity %s: %w", entityName, err)
@@ -233,8 +236,8 @@ func (ms *MemoryStore) AddObservations(observations map[string][]string) error {
 		}
 
 		// Update entity's updated_at timestamp
-		_, err := tx.Exec(`
-			UPDATE entities SET updated_at = CURRENT_TIMESTAMP WHERE name = $1
+		_, err = tx.Exec(`
+			UPDATE entities SET updated_at = now() WHERE name = $1
 		`, entityName)
 		
 		if err != nil {
@@ -254,10 +257,17 @@ func (ms *MemoryStore) DeleteObservations(deletions map[string][]string) error {
 	defer tx.Rollback()
 
 	for entityName, contents := range deletions {
+		// Get entity ID
+		var entityID int
+		err := tx.QueryRow("SELECT id FROM entities WHERE name = $1", entityName).Scan(&entityID)
+		if err != nil {
+			return fmt.Errorf("failed to get entity ID for %s: %w", entityName, err)
+		}
+
 		for _, content := range contents {
 			_, err := tx.Exec(`
-				DELETE FROM observations WHERE entity_name = $1 AND content = $2
-			`, entityName, content)
+				DELETE FROM observations WHERE entity_id = $1 AND content = $2
+			`, entityID, content)
 			
 			if err != nil {
 				return fmt.Errorf("failed to delete observation for entity %s: %w", entityName, err)
@@ -265,8 +275,8 @@ func (ms *MemoryStore) DeleteObservations(deletions map[string][]string) error {
 		}
 
 		// Update entity's updated_at timestamp
-		_, err := tx.Exec(`
-			UPDATE entities SET updated_at = CURRENT_TIMESTAMP WHERE name = $1
+		_, err = tx.Exec(`
+			UPDATE entities SET updated_at = now() WHERE name = $1
 		`, entityName)
 		
 		if err != nil {
@@ -286,11 +296,21 @@ func (ms *MemoryStore) CreateRelations(relations []Relation) error {
 	defer tx.Rollback()
 
 	for _, relation := range relations {
-		_, err := tx.Exec(`
-			INSERT INTO relations (from_entity, to_entity, relation_type) 
-			VALUES ($1, $2, $3) 
-			ON CONFLICT (from_entity, to_entity, relation_type) DO NOTHING
-		`, relation.From, relation.To, relation.RelationType)
+		// Get entity IDs
+		var fromEntityID, toEntityID int
+		err := tx.QueryRow("SELECT id FROM entities WHERE name = $1", relation.From).Scan(&fromEntityID)
+		if err != nil {
+			return fmt.Errorf("failed to get from entity ID for %s: %w", relation.From, err)
+		}
+		err = tx.QueryRow("SELECT id FROM entities WHERE name = $1", relation.To).Scan(&toEntityID)
+		if err != nil {
+			return fmt.Errorf("failed to get to entity ID for %s: %w", relation.To, err)
+		}
+
+		_, err = tx.Exec(`
+			INSERT INTO relations (from_entity_id, to_entity_id, relation_type) 
+			VALUES ($1, $2, $3)
+		`, fromEntityID, toEntityID, relation.RelationType)
 		
 		if err != nil {
 			return fmt.Errorf("failed to insert relation %s -> %s: %w", relation.From, relation.To, err)
@@ -309,10 +329,21 @@ func (ms *MemoryStore) DeleteRelations(relations []Relation) error {
 	defer tx.Rollback()
 
 	for _, relation := range relations {
-		_, err := tx.Exec(`
+		// Get entity IDs
+		var fromEntityID, toEntityID int
+		err := tx.QueryRow("SELECT id FROM entities WHERE name = $1", relation.From).Scan(&fromEntityID)
+		if err != nil {
+			return fmt.Errorf("failed to get from entity ID for %s: %w", relation.From, err)
+		}
+		err = tx.QueryRow("SELECT id FROM entities WHERE name = $1", relation.To).Scan(&toEntityID)
+		if err != nil {
+			return fmt.Errorf("failed to get to entity ID for %s: %w", relation.To, err)
+		}
+
+		_, err = tx.Exec(`
 			DELETE FROM relations 
-			WHERE from_entity = $1 AND to_entity = $2 AND relation_type = $3
-		`, relation.From, relation.To, relation.RelationType)
+			WHERE from_entity_id = $1 AND to_entity_id = $2 AND relation_type = $3
+		`, fromEntityID, toEntityID, relation.RelationType)
 		
 		if err != nil {
 			return fmt.Errorf("failed to delete relation %s -> %s: %w", relation.From, relation.To, err)
@@ -359,12 +390,13 @@ func (ms *MemoryStore) SearchNodes(query string) ([]SearchResult, error) {
 		),
 		observation_matches AS (
 			SELECT 
-				o.entity_name,
+				e.name as entity_name,
 				ts_rank(to_tsvector('english', o.content), plainto_tsquery('english', $1)) as content_rank,
 				array_agg(o.content) as matching_observations
 			FROM observations o
+			JOIN entities e ON o.entity_id = e.id
 			WHERE to_tsvector('english', o.content) @@ plainto_tsquery('english', $1)
-			GROUP BY o.entity_name
+			GROUP BY e.name
 		)
 		SELECT DISTINCT
 			e.name, e.entity_type, e.created_at, e.updated_at,
@@ -499,9 +531,11 @@ func (ms *MemoryStore) getAllEntities() ([]Entity, error) {
 
 func (ms *MemoryStore) getAllRelations() ([]Relation, error) {
 	rows, err := ms.db.Query(`
-		SELECT from_entity, to_entity, relation_type, created_at
-		FROM relations 
-		ORDER BY from_entity, to_entity
+		SELECT e1.name as from_entity, e2.name as to_entity, r.relation_type, r.created_at
+		FROM relations r
+		JOIN entities e1 ON r.from_entity_id = e1.id
+		JOIN entities e2 ON r.to_entity_id = e2.id
+		ORDER BY e1.name, e2.name
 	`)
 	if err != nil {
 		return nil, err
@@ -523,10 +557,11 @@ func (ms *MemoryStore) getAllRelations() ([]Relation, error) {
 
 func (ms *MemoryStore) getObservationsForEntity(entityName string) ([]string, error) {
 	rows, err := ms.db.Query(`
-		SELECT content 
-		FROM observations 
-		WHERE entity_name = $1 
-		ORDER BY created_at
+		SELECT o.content 
+		FROM observations o
+		JOIN entities e ON o.entity_id = e.id
+		WHERE e.name = $1 
+		ORDER BY o.created_at
 	`, entityName)
 	if err != nil {
 		return nil, err

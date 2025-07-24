@@ -673,15 +673,7 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 			}
 		}
 		
-		// Show function call execution in UI - Claude Code style
-		if uiProgram != nil {
-			// Show function name with formatted arguments and color
-			funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m", toolCall.Function.Name)
-			if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
-				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
-			}
-			uiProgram.Send(AiStreamMsg{Content: "\n" + funcCallMsg})
-		}
+		// Function call will be shown in the enhanced format after execution
 		
 		// Parse arguments
 		parsedArgs := tc.parseArguments(toolCall.Function.Arguments)
@@ -730,7 +722,9 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 					duration := time.Millisecond * 50 // Placeholder duration
 					statusMsg = tc.formatToolResult(toolCall.Function.Name, "native", result, duration)
 				} else {
-					statusMsg = fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+					// Use the enhanced Claude Code style formatting
+					duration := time.Millisecond * 50
+					statusMsg = tc.formatToolResult(toolCall.Function.Name, "native", result, duration)
 				}
 			}
 			uiProgram.Send(AiStreamMsg{Content: statusMsg + "\n"})
@@ -830,8 +824,6 @@ func (tc *TermChat) formatFunctionArgs(arguments, functionName string) string {
 
 // formatToolResult formats tool execution results in Claude Code style
 func (tc *TermChat) formatToolResult(toolName, serverName string, result interface{}, duration time.Duration) string {
-	// Debug: Always print when called
-	fmt.Printf("DEBUG: formatToolResult called - toolName=%s, serverName=%s\n", toolName, serverName)
 	
 	// Calculate token count estimate (rough approximation)
 	resultStr := fmt.Sprintf("%+v", result)
@@ -839,7 +831,6 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 	
 	// Check if this is a file editing tool result with diff preview
 	if tc.isFileEditingTool(toolName) {
-		fmt.Printf("DEBUG: Tool %s identified as file editing tool\n", toolName)
 		if resultMap, ok := result.(map[string]interface{}); ok {
 			if diffPreview, hasDiff := resultMap["diff_preview"].(string); hasDiff && diffPreview != "" {
 				// Show the visual diff for file editing tools
@@ -854,9 +845,6 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 				
 				formattedDiff := tc.formatEnhancedVisualDiff(diffPreview, filePath)
 				
-				// Debug: Print to see if this is being called
-				fmt.Printf("DEBUG: Enhanced diff generated:\n%s\n", formattedDiff)
-				
 				// Check if it's a dry run
 				if dryRun, isDryRun := resultMap["dry_run"].(bool); isDryRun && dryRun {
 					formattedDiff += "\n\x1b[33m[DRY RUN] Changes not applied\x1b[0m"
@@ -868,13 +856,577 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 		}
 	}
 	
-	// Claude Code style: just show the status line, no verbose output
-	statusLine := fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v | ~%d tokens\x1b[0m", 
-		toolName, serverName, duration.Truncate(time.Millisecond), tokenCount)
-	
-	// Return just the status line - no verbose content for intermediate function calls
-	return fmt.Sprintf("\n%s", statusLine)
+	// Claude Code style: show tool with key results
+	return tc.formatToolResultWithDetails(toolName, serverName, result, duration, tokenCount)
 }
+
+// formatToolResultWithDetails intelligently formats tool results based on tool type and content
+func (tc *TermChat) formatToolResultWithDetails(toolName, serverName string, result interface{}, duration time.Duration, tokenCount int) string {
+	bullet := "\x1b[32m*\x1b[0m"
+	statusLine := fmt.Sprintf("\n%s \x1b[32m%s\x1b[0m\x1b[90m(%s)\x1b[0m", bullet, toolName, serverName)
+	
+	summary := tc.extractAnyContent(result, toolName)
+	if summary != "" {
+		return statusLine + fmt.Sprintf("\n  \x1b[90m⎿\x1b[0m  %s", summary)
+	}
+	
+	return statusLine
+}
+
+// extractAnyContent tries to extract readable content from any result structure
+func (tc *TermChat) extractAnyContent(result interface{}, toolName string) string {
+	// Convert to string and try to parse it
+	resultStr := fmt.Sprintf("%+v", result)
+	
+	// Check if it looks like a Go struct with Content field
+	if strings.Contains(resultStr, "Content:[") && strings.Contains(resultStr, "Text:") {
+		// Extract the Text content using string parsing
+		return tc.parseGoStructContent(resultStr, toolName)
+	}
+	
+	return ""
+}
+
+// parseGoStructContent parses Go struct string representation to extract readable content
+func (tc *TermChat) parseGoStructContent(structStr, toolName string) string {
+	// Look for Text: pattern and extract the content
+	textStart := strings.Index(structStr, "Text:")
+	if textStart == -1 {
+		return ""
+	}
+	
+	// Find the content after "Text:"
+	textStart += 5 // Length of "Text:"
+	remaining := structStr[textStart:]
+	
+	// Find the end of the text content (either " map[" or end of meaningful content)
+	var textEnd int
+	if mapIndex := strings.Index(remaining, " map["); mapIndex != -1 {
+		textEnd = mapIndex
+	} else if braceIndex := strings.Index(remaining, "}"); braceIndex != -1 {
+		textEnd = braceIndex
+	} else {
+		textEnd = len(remaining)
+	}
+	
+	if textEnd > 0 {
+		content := strings.TrimSpace(remaining[:textEnd])
+		
+		// Clean up the extracted content
+		if strings.HasPrefix(content, "Knowledge graph:") {
+			// For memory tools, extract key information
+			return tc.extractMemoryInfo(content)
+		} else if strings.Contains(strings.ToLower(content), "phase:") && strings.Contains(strings.ToLower(content), "running") {
+			return "memory service: running"
+		} else if len(content) > 0 {
+			return tc.truncateString(content, 80)
+		}
+	}
+	
+	return ""
+}
+
+// extractMapSummary extracts a summary from a map result
+func (tc *TermChat) extractMapSummary(m map[string]interface{}, toolName string) string {
+	// Handle specific tools that return structured data
+	switch toolName {
+	// Web and search tools
+	case "search_web":
+		if query, ok := m["query"].(string); ok {
+			if count, ok := m["count"].(float64); ok {
+				return fmt.Sprintf("Found %d results for \"%s\"", int(count), tc.truncateString(query, 30))
+			}
+		}
+		return "Web search completed"
+	
+	// File operations
+	case "read_file", "read_workspace_file":
+		if path, ok := m["path"].(string); ok {
+			if lines, ok := m["lines"].(float64); ok {
+				return fmt.Sprintf("Read %d lines from %s", int(lines), tc.getFileName(path))
+			}
+			return fmt.Sprintf("Read file %s", tc.getFileName(path))
+		}
+		return "File read"
+	
+	case "list_files", "glob", "search_files", "list_workspace_files":
+		if count, ok := m["count"].(float64); ok {
+			return fmt.Sprintf("Found %d files", int(count))
+		}
+		if files, ok := m["files"].([]interface{}); ok {
+			return fmt.Sprintf("Found %d files", len(files))
+		}
+		return "Files listed"
+	
+	case "edit_file", "write_file", "create_file":
+		if path, ok := m["path"].(string); ok {
+			return fmt.Sprintf("Modified %s", tc.getFileName(path))
+		}
+		return "File modified"
+	
+	case "parse_code":
+		if language, ok := m["language"].(string); ok {
+			if count, ok := m["definitions_count"].(float64); ok {
+				return fmt.Sprintf("Parsed %s code: %d definitions", language, int(count))
+			}
+			return fmt.Sprintf("Parsed %s code", language)
+		}
+		return "Code parsed"
+	
+	// Command execution
+	case "execute_bash", "bash", "run_command":
+		if output, ok := m["output"].(string); ok {
+			// Show first line of output for bash commands
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			if len(lines) > 0 && lines[0] != "" {
+				return tc.truncateString(lines[0], 60)
+			}
+		}
+		if exitCode, ok := m["exit_code"].(float64); ok {
+			if int(exitCode) == 0 {
+				return "Command executed successfully"
+			}
+			return fmt.Sprintf("Command failed (exit %d)", int(exitCode))
+		}
+		return "Command executed"
+	
+	// Memory/Knowledge Graph tools
+	case "read_graph":
+		if entityCount, ok := m["entityCount"].(float64); ok {
+			if relationCount, ok := m["relationCount"].(float64); ok {
+				return fmt.Sprintf("Graph: %d entities, %d relations", int(entityCount), int(relationCount))
+			}
+		}
+		return "Knowledge graph retrieved"
+	
+	case "search_nodes":
+		if count, ok := m["count"].(float64); ok {
+			if query, ok := m["query"].(string); ok {
+				return fmt.Sprintf("Found %d nodes for \"%s\"", int(count), tc.truncateString(query, 30))
+			}
+		}
+		return "Node search completed"
+	
+	case "create_entities":
+		if entities, ok := m["entities"].([]interface{}); ok {
+			return fmt.Sprintf("Created %d entities", len(entities))
+		}
+		return "Entities created"
+	
+	case "delete_entities":
+		if count, ok := m["deletedEntities"].([]interface{}); ok {
+			return fmt.Sprintf("Deleted %d entities", len(count))
+		}
+		return "Entities deleted"
+	
+	case "add_observations":
+		if message, ok := m["message"].(string); ok {
+			return tc.truncateString(message, 80)
+		}
+		return "Observations added"
+	
+	case "delete_observations":
+		if message, ok := m["message"].(string); ok {
+			return tc.truncateString(message, 80)
+		}
+		return "Observations deleted"
+	
+	case "create_relations", "delete_relations":
+		if relations, ok := m["relations"].([]interface{}); ok {
+			action := "Created"
+			if toolName == "delete_relations" {
+				action = "Deleted"
+			}
+			return fmt.Sprintf("%s %d relations", action, len(relations))
+		}
+		return "Relations updated"
+	
+	case "open_nodes":
+		if entities, ok := m["entities"].([]interface{}); ok {
+			return fmt.Sprintf("Retrieved %d nodes", len(entities))
+		}
+		return "Nodes retrieved"
+	
+	case "memory_health_check":
+		if status, ok := m["status"].(string); ok {
+			return fmt.Sprintf("Memory system: %s", status)
+		}
+		return "Health check completed"
+	
+	case "memory_stats":
+		if entities, ok := m["entities"].(float64); ok {
+			if observations, ok := m["observations"].(float64); ok {
+				return fmt.Sprintf("Memory: %d entities, %d observations", int(entities), int(observations))
+			}
+		}
+		return "Memory statistics retrieved"
+	
+	// Cluster management tools
+	case "matey_ps":
+		if servers, ok := m["servers"].([]interface{}); ok {
+			return fmt.Sprintf("Found %d MCP servers", len(servers))
+		}
+		return "Server status retrieved"
+	
+	case "matey_up", "matey_down":
+		if services, ok := m["services"].([]interface{}); ok {
+			action := "Started"
+			if toolName == "matey_down" {
+				action = "Stopped"
+			}
+			return fmt.Sprintf("%s %d services", action, len(services))
+		}
+		return "Services updated"
+	
+	case "matey_logs":
+		if service, ok := m["service"].(string); ok {
+			return fmt.Sprintf("Logs from %s", service)
+		}
+		return "Logs retrieved"
+	
+	case "matey_inspect":
+		if resourceType, ok := m["type"].(string); ok {
+			if name, ok := m["name"].(string); ok {
+				return fmt.Sprintf("Inspected %s: %s", resourceType, name)
+			}
+			return fmt.Sprintf("Inspected %s", resourceType)
+		}
+		return "Resource inspected"
+	
+	case "get_cluster_state":
+		if resources, ok := m["resources"].(map[string]interface{}); ok {
+			return fmt.Sprintf("Cluster state: %d resource types", len(resources))
+		}
+		return "Cluster state retrieved"
+	
+	case "apply_config":
+		if applied, ok := m["applied"].([]interface{}); ok {
+			return fmt.Sprintf("Applied %d resources", len(applied))
+		}
+		return "Configuration applied"
+	
+	// Workflow management
+	case "create_workflow":
+		if name, ok := m["name"].(string); ok {
+			if schedule, ok := m["schedule"].(string); ok {
+				return fmt.Sprintf("Created workflow '%s' (%s)", name, schedule)
+			}
+			return fmt.Sprintf("Created workflow '%s'", name)
+		}
+		return "Workflow created"
+	
+	case "list_workflows":
+		if workflows, ok := m["workflows"].([]interface{}); ok {
+			if len(workflows) == 0 {
+				return "No workflows found"
+			}
+			// Extract first few workflow names for summary
+			var names []string
+			for i, wf := range workflows {
+				if i >= 3 { break } // Show max 3 workflow names
+				if wfMap, ok := wf.(map[string]interface{}); ok {
+					if name, ok := wfMap["name"].(string); ok {
+						names = append(names, name)
+					}
+				}
+			}
+			if len(names) > 0 {
+				nameList := strings.Join(names, ", ")
+				if len(workflows) > 3 {
+					nameList += fmt.Sprintf(" (+%d more)", len(workflows)-3)
+				}
+				return fmt.Sprintf("%d workflows: %s", len(workflows), nameList)
+			}
+			return fmt.Sprintf("Found %d workflows", len(workflows))
+		}
+		return "Workflows listed"
+	
+	case "get_workflow":
+		if name, ok := m["name"].(string); ok {
+			if status, ok := m["status"].(string); ok {
+				return fmt.Sprintf("Workflow '%s': %s", name, status)
+			}
+			return fmt.Sprintf("Retrieved workflow '%s'", name)
+		}
+		return "Workflow retrieved"
+	
+	case "delete_workflow":
+		if name, ok := m["name"].(string); ok {
+			return fmt.Sprintf("Deleted workflow '%s'", name)
+		}
+		return "Workflow deleted"
+	
+	case "execute_workflow":
+		if name, ok := m["workflow"].(string); ok {
+			return fmt.Sprintf("Executed workflow '%s'", name)
+		}
+		return "Workflow executed"
+	
+	case "workflow_logs":
+		if workflow, ok := m["workflow"].(string); ok {
+			return fmt.Sprintf("Logs from workflow '%s'", workflow)
+		}
+		return "Workflow logs retrieved"
+	
+	case "pause_workflow", "resume_workflow":
+		if name, ok := m["name"].(string); ok {
+			action := "Paused"
+			if toolName == "resume_workflow" {
+				action = "Resumed"
+			}
+			return fmt.Sprintf("%s workflow '%s'", action, name)
+		}
+		return "Workflow updated"
+	
+	case "workflow_templates":
+		if templates, ok := m["templates"].([]interface{}); ok {
+			return fmt.Sprintf("Found %d workflow templates", len(templates))
+		}
+		return "Workflow templates listed"
+	
+	// Service management
+	case "start_service", "stop_service":
+		if service, ok := m["service"].(string); ok {
+			action := "Started"
+			if toolName == "stop_service" {
+				action = "Stopped"
+			}
+			return fmt.Sprintf("%s service '%s'", action, service)
+		}
+		return "Service updated"
+	
+	case "reload_proxy":
+		if discovered, ok := m["discovered"].(float64); ok {
+			return fmt.Sprintf("Proxy reloaded, discovered %d servers", int(discovered))
+		}
+		return "Proxy configuration reloaded"
+	
+	// Status tools
+	case "memory_status", "task_scheduler_status":
+		if status, ok := m["status"].(string); ok {
+			service := "Memory"
+			if toolName == "task_scheduler_status" {
+				service = "Task scheduler"
+			}
+			return fmt.Sprintf("%s service: %s", service, status)
+		}
+		return "Status retrieved"
+	
+	case "memory_start", "memory_stop", "task_scheduler_start", "task_scheduler_stop":
+		service := "Memory"
+		action := "Started"
+		if strings.Contains(toolName, "task_scheduler") {
+			service = "Task scheduler"
+		}
+		if strings.Contains(toolName, "stop") {
+			action = "Stopped"
+		}
+		return fmt.Sprintf("%s service %s", service, strings.ToLower(action))
+	
+	// Toolbox management
+	case "list_toolboxes":
+		if toolboxes, ok := m["toolboxes"].([]interface{}); ok {
+			return fmt.Sprintf("Found %d toolboxes", len(toolboxes))
+		}
+		return "Toolboxes listed"
+	
+	case "get_toolbox":
+		if name, ok := m["name"].(string); ok {
+			return fmt.Sprintf("Retrieved toolbox '%s'", name)
+		}
+		return "Toolbox retrieved"
+	
+	// Configuration tools
+	case "validate_config":
+		if valid, ok := m["valid"].(bool); ok {
+			if valid {
+				return "Configuration is valid"
+			}
+			return "Configuration validation failed"
+		}
+		return "Configuration validated"
+	
+	case "create_config":
+		if servers, ok := m["servers"].([]interface{}); ok {
+			return fmt.Sprintf("Created config for %d servers", len(servers))
+		}
+		return "Configuration created"
+	
+	case "install_matey":
+		if installed, ok := m["installed"].([]interface{}); ok {
+			return fmt.Sprintf("Installed %d CRDs", len(installed))
+		}
+		return "Matey CRDs installed"
+	
+	// Resource inspection tools (inspect_*)
+	case "inspect_mcpserver", "inspect_mcpmemory", "inspect_mcptaskscheduler", "inspect_mcpproxy", "inspect_mcptoolbox":
+		if name, ok := m["name"].(string); ok {
+			resourceType := strings.TrimPrefix(toolName, "inspect_")
+			return fmt.Sprintf("Inspected %s: %s", resourceType, name)
+		}
+		return "Resource inspected"
+	
+	case "inspect_all":
+		if resources, ok := m["resources"].([]interface{}); ok {
+			return fmt.Sprintf("Inspected %d resources", len(resources))
+		}
+		return "All resources inspected"
+	
+	// Workspace management
+	case "mount_workspace":
+		if workspace, ok := m["workspace"].(string); ok {
+			return fmt.Sprintf("Mounted workspace '%s'", workspace)
+		}
+		return "Workspace mounted"
+	
+	case "unmount_workspace":
+		if workspace, ok := m["workspace"].(string); ok {
+			return fmt.Sprintf("Unmounted workspace '%s'", workspace)
+		}
+		return "Workspace unmounted"
+	
+	case "list_mounted_workspaces":
+		if workspaces, ok := m["workspaces"].([]interface{}); ok {
+			return fmt.Sprintf("Found %d mounted workspaces", len(workspaces))
+		}
+		return "Mounted workspaces listed"
+	
+	case "get_workspace_stats":
+		if pvcs, ok := m["total_pvcs"].(float64); ok {
+			return fmt.Sprintf("Workspace stats: %d PVCs", int(pvcs))
+		}
+		return "Workspace statistics retrieved"
+	
+	// Context management
+	case "get_context":
+		if items, ok := m["items"].([]interface{}); ok {
+			return fmt.Sprintf("Context: %d items", len(items))
+		}
+		return "Context retrieved"
+	
+	case "add_context":
+		if added, ok := m["added_items"].([]interface{}); ok {
+			return fmt.Sprintf("Added %d context items", len(added))
+		}
+		return "Context items added"
+	
+	case "process_mentions":
+		if mentions, ok := m["mentions"].([]interface{}); ok {
+			return fmt.Sprintf("Processed %d mentions", len(mentions))
+		}
+		return "Mentions processed"
+	
+	case "get_relevant_files":
+		if files, ok := m["files"].([]interface{}); ok {
+			return fmt.Sprintf("Found %d relevant files", len(files))
+		}
+		return "Relevant files retrieved"
+	
+	case "clear_context":
+		if cleared, ok := m["cleared_count"].(float64); ok {
+			return fmt.Sprintf("Cleared %d context items", int(cleared))
+		}
+		return "Context cleared"
+	
+	case "get_context_stats":
+		if totalItems, ok := m["total_items"].(float64); ok {
+			return fmt.Sprintf("Context stats: %d total items", int(totalItems))
+		}
+		return "Context statistics retrieved"
+	
+	default:
+		// Generic extraction for unknown tools
+		if message, ok := m["message"].(string); ok {
+			return tc.truncateString(message, 80)
+		}
+		if success, ok := m["success"].(bool); ok && success {
+			return "Completed successfully"
+		}
+		if err, ok := m["error"].(string); ok {
+			return fmt.Sprintf("Error: %s", tc.truncateString(err, 60))
+		}
+		return "Operation completed"
+	}
+}
+
+// extractArraySummary extracts a summary from an array result
+func (tc *TermChat) extractArraySummary(arr []interface{}, toolName string) string {
+	if len(arr) == 0 {
+		return "Empty result"
+	}
+	return fmt.Sprintf("Returned %d items", len(arr))
+}
+
+// extractFromString extracts meaningful content from string results
+func (tc *TermChat) extractFromString(s string, toolName string) string {
+	if s == "" {
+		return ""
+	}
+	
+	// For certain tools, extract key information
+	switch toolName {
+	case "execute_bash", "bash", "run_command":
+		lines := strings.Split(strings.TrimSpace(s), "\n")
+		if len(lines) > 0 && lines[0] != "" {
+			return tc.truncateString(lines[0], 60)
+		}
+		return "Command completed"
+	default:
+		return tc.truncateString(s, 80)
+	}
+}
+
+// truncateString truncates text to specified length with ellipsis
+func (tc *TermChat) truncateString(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen-3] + "..."
+}
+
+// getFileName extracts filename from a file path
+func (tc *TermChat) getFileName(path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return path
+}
+
+// extractMemoryInfo extracts key memory statistics from text
+func (tc *TermChat) extractMemoryInfo(text string) string {
+	// Look for patterns like "15 entities" or "4 relationships"
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		
+		// Look for entity/relationship counts
+		if strings.Contains(lower, "entities") && (strings.Contains(lower, "contains") || strings.Contains(lower, "found")) {
+			return tc.truncateString(line, 100)
+		}
+		if strings.Contains(lower, "knowledge graph") {
+			return tc.truncateString(line, 100)
+		}
+		if strings.Contains(lower, "phase:") && strings.Contains(lower, "running") {
+			return "memory service: running"
+		}
+	}
+	
+	// Fallback to first non-empty line
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" && len(line) > 10 {
+			return tc.truncateString(line, 100)
+		}
+	}
+	
+	return "completed"
+}
+
+
 
 // formatEnhancedVisualDiff creates a colored diff display that bypasses markdown
 func (tc *TermChat) formatEnhancedVisualDiff(diffPreview, filePath string) string {
@@ -1043,15 +1595,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 	var serverName string
 	
 	if tc.isNativeFunction(toolCall.Function.Name) {
-		// Show minimal function call progress like Claude Code
-		funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(native)\x1b[0m", toolCall.Function.Name)
-		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
-			funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
-		}
-		select {
-		case resultChan <- fmt.Sprintf("\n%s", funcCallMsg):
-		default:
-		}
+		// Function call will be shown in enhanced format after execution
 		
 		// Execute native function
 		result, err = tc.ExecuteNativeToolCall(toolCall, aiMsgIndex)
@@ -1071,15 +1615,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 			return
 		}
 		
-		// Show minimal function call progress like Claude Code
-		funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s)\x1b[0m", toolCall.Function.Name, serverName)
-		if formattedArgs := tc.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
-			funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
-		}
-		select {
-		case resultChan <- fmt.Sprintf("\n%s", funcCallMsg):
-		default:
-		}
+		// Function call will be shown in enhanced format after execution
 		
 		// Use the discovery endpoint structure for tool calls
 		result, err = tc.callDiscoveredTool(ctx, serverName, toolCall.Function.Name, parsedArgs)

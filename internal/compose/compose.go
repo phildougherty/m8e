@@ -1441,7 +1441,7 @@ func Restart(configFile string, serviceNames []string) error {
 
 // Status returns the status of all services using system approach
 func Status(configFile string) (*ComposeStatus, error) {
-	composer, err := NewK8sComposer(configFile, "default")
+	composer, err := NewK8sComposer(configFile, "matey")
 	if err != nil {
 		return nil, err
 	}
@@ -1467,7 +1467,7 @@ func List(configFile string) error {
 
 // Logs returns logs from services using kubectl logs on pods
 func Logs(configFile string, serviceNames []string, follow bool) error {
-	namespace := "default"
+	namespace := "matey"
 	
 	// If no service names specified, get all services from status
 	if len(serviceNames) == 0 {

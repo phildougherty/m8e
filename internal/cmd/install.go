@@ -130,6 +130,13 @@ func installCRDs(dryRun bool, namespace string) error {
 	}
 	fmt.Printf("✓ Matey MCP Server installed in namespace %s\n", namespace)
 
+	// Install shared matey-postgres resource
+	err = installSharedPostgres(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to install shared postgres: %w", err)
+	}
+	fmt.Printf("✓ Shared matey-postgres installed in namespace %s\n", namespace)
+
 	fmt.Println("\nMatey installation complete!")
 	fmt.Println("You can now run 'matey up' or 'matey proxy' to start your services.")
 
@@ -242,7 +249,7 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{""},
-				Resources: []string{"pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "namespaces"},
+				Resources: []string{"pods", "services", "endpoints", "configmaps", "secrets", "persistentvolumeclaims", "namespaces"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
@@ -558,6 +565,60 @@ func installMateaMCPServer(ctx context.Context, k8sClient client.Client, namespa
 			return fmt.Errorf("failed to create resource %s/%s: %w", 
 				unstructuredObj.GetKind(), unstructuredObj.GetName(), err)
 		}
+	}
+
+	return nil
+}
+
+// installSharedPostgres creates the shared matey-postgres MCPPostgres resource and required ConfigMap
+func installSharedPostgres(ctx context.Context, k8sClient client.Client, namespace string) error {
+	// Create the init scripts ConfigMap first
+	initConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-postgres-init",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "postgres",
+				"app.kubernetes.io/managed-by": "matey",
+			},
+		},
+		Data: map[string]string{
+			"01-create-memory-db.sql": `-- Create memory_graph database for memory service
+CREATE DATABASE memory_graph;
+GRANT ALL PRIVILEGES ON DATABASE memory_graph TO postgres;`,
+		},
+	}
+
+	err := k8sClient.Create(ctx, initConfigMap)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create matey-postgres-init ConfigMap: %w", err)
+	}
+
+	// Create the MCPPostgres resource
+	mateyPostgres := &crd.MCPPostgres{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-postgres",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "postgres",
+				"app.kubernetes.io/managed-by": "matey",
+			},
+		},
+		Spec: crd.MCPPostgresSpec{
+			Replicas:    1,
+			Port:        5432,
+			Database:    "matey",
+			User:        "postgres",
+			Password:    "password",
+			StorageSize: "10Gi",
+		},
+	}
+
+	err = k8sClient.Create(ctx, mateyPostgres)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create matey-postgres: %w", err)
 	}
 
 	return nil

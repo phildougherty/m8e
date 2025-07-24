@@ -334,14 +334,7 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		}
 		
 		// In silent mode, show function call execution in UI
-		if t.silentMode && GetUIProgram() != nil {
-			// Show function call start - Claude Code style with color
-			funcCallMsg := fmt.Sprintf("\x1b[90m→\x1b[0m \x1b[32m%s\x1b[0m", toolCall.Function.Name)
-			if formattedArgs := t.formatFunctionArgs(toolCall.Function.Arguments, toolCall.Function.Name); formattedArgs != "" {
-				funcCallMsg += fmt.Sprintf(" %s", formattedArgs)
-			}
-			GetUIProgram().Send(aiStreamMsg{content: funcCallMsg})
-		}
+		// Function call will be shown in enhanced format after execution
 		
 		// Parse arguments and validate for specific functions
 		parsedArgs := t.parseArguments(toolCall.Function.Arguments)
@@ -424,7 +417,9 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 					duration := time.Millisecond * 50 // Placeholder duration
 					statusMsg = t.chat.formatToolResult(toolCall.Function.Name, "native", result, duration)
 				} else {
-					statusMsg = fmt.Sprintf("\x1b[32m+\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mcompleted\x1b[0m", toolCall.Function.Name)
+					// Use the enhanced Claude Code style formatting
+					duration := time.Millisecond * 50
+					statusMsg = t.chat.formatToolResult(toolCall.Function.Name, "native", result, duration)
 				}
 			}
 			GetUIProgram().Send(aiStreamMsg{content: statusMsg})
