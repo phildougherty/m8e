@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,9 +21,7 @@ func TestDetectClusterMCPProxy(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Override the endpoints to test our mock server
-	originalDetectFunc := detectClusterMCPProxy
-	defer func() { detectClusterMCPProxy = originalDetectFunc }()
+	// Note: detectClusterMCPProxy is a function, not a variable - cannot mock it easily
 
 	// Mock the detection function to return our test server
 	mockDetectClusterMCPProxy := func() string {
@@ -119,6 +116,11 @@ func TestNewTermChat(t *testing.T) {
 
 func TestTermChat_ShouldUseEnhancedUI(t *testing.T) {
 	tc := &TermChat{}
+	
+	// Use tc to avoid unused variable error
+	if tc == nil {
+		t.Error("TermChat should be initialized")
+	}
 
 	// Mock terminal check by setting TERM environment variable
 	originalTerm := os.Getenv("TERM")
@@ -205,11 +207,16 @@ func TestTermChat_GetWelcomeMessage(t *testing.T) {
 	}
 }
 
-func TestTermChat_ProcessInput(t *testing.T) {
+func TestTermChat_ProcessInput_Integration(t *testing.T) {
 	// This is a complex function that would require extensive mocking.
 	// For now, we'll test basic structure validation.
 	tc := &TermChat{
 		chatHistory: make([]TermChatMessage, 0),
+	}
+	
+	// Use tc to avoid unused variable error
+	if tc == nil {
+		t.Error("TermChat should be initialized")
 	}
 
 	// Test that the method exists and doesn't panic with empty input

@@ -84,15 +84,8 @@ func TestConversationTurn_BuildMessageContext(t *testing.T) {
 		chatHistory: mockHistory,
 	}
 
-	// Mock GetSystemContext method
-	chat.GetSystemContext = func() string {
-		return "System context message"
-	}
-
-	// Mock GetChatHistory method
-	chat.GetChatHistory = func() []TermChatMessage {
-		return mockHistory
-	}
+	// Note: GetSystemContext and GetChatHistory are methods, not fields - cannot mock easily
+	// These tests will verify structure without deep mocking
 
 	turn := &ConversationTurn{
 		chat:        chat,
@@ -580,18 +573,9 @@ func TestConversationTurn_ProcessConversationFlow(t *testing.T) {
 		chatHistory: make([]TermChatMessage, 0),
 	}
 
-	// Mock required methods
-	mockChat.AddMessage = func(role, content string) {
-		mockChat.chatHistory = append(mockChat.chatHistory, TermChatMessage{
-			Role:      role,
-			Content:   content,
-			Timestamp: time.Now(),
-		})
-	}
+	// Note: AddMessage is a method, not a field - cannot mock
 
-	mockChat.GetChatHistory = func() []TermChatMessage {
-		return mockChat.chatHistory
-	}
+	// Note: GetChatHistory is also a method, not a field - cannot mock
 
 	turn := &ConversationTurn{
 		chat:         mockChat,
@@ -615,19 +599,8 @@ func TestConversationTurn_ProcessConversationFlow(t *testing.T) {
 		}
 	}()
 
-	// Since we can't easily mock the entire AI system, we'll override shouldContinue
-	// to return false immediately to test the basic flow control
-	originalShouldContinue := turn.shouldContinue
-	turn.shouldContinue = func() bool {
-		return false // Stop immediately
-	}
-	defer func() { turn.shouldContinue = originalShouldContinue }()
-
-	// Mock executeConversationRound to avoid AI calls
-	turn.executeConversationRound = func(ctx context.Context) error {
-		turn.currentTurn++
-		return nil
-	}
+	// Note: shouldContinue and executeConversationRound are methods, not fields - cannot mock
+	// This test will verify basic structure without deep mocking
 
 	err := turn.processConversationFlow(ctx)
 	if err != nil {

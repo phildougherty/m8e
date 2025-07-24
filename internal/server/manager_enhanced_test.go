@@ -790,9 +790,8 @@ func TestManager_MemoryServiceIntegration(t *testing.T) {
 	_, exists := manager.GetServerInstance("memory")
 	assert.True(t, exists)
 
-	// Verify postgres service was added
-	_, exists = manager.GetServerInstance("postgres-memory")
-	assert.True(t, exists)
+	// Note: postgres-memory service was removed in favor of MCPPostgres resource management
+	// So we don't expect it to exist as a server instance anymore
 
 	// Verify memory service configuration
 	memoryInstance, _ := manager.GetServerInstance("memory")

@@ -136,6 +136,7 @@ func NewTermChat() *TermChat {
 		contextManager:   contextManager,
 		fileDiscovery:    fileDiscovery,
 		mentionProcessor: mentionProcessor,
+		todoList:         &TodoList{Items: []TodoItem{}}, // Initialize TODO list
 	}
 
 	// Set up voice callbacks if voice manager is available

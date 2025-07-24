@@ -26,6 +26,7 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 - **Workflow Orchestration**: Create and manage automated workflows with data persistence
 - **Kubernetes Operations**: Handle deployments, scaling, resource management
 - **Problem Resolution**: Diagnose issues and implement solutions IMMEDIATELY
+- **Task Management**: Use TODO tools to track multi-step operations and progress
 
 # Platform Overview (v0.0.4)
 
@@ -43,10 +44,51 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 # Tool Usage Priority (CRITICAL)
 
 **Use tools in this exact order:**
-1. **🥇 Native Functions** - Optimized built-in tools (read_file, edit_file, search_files, parse_code, execute_bash)
+1. **🥇 Native Functions** - Optimized built-in tools (read_file, edit_file, search_files, parse_code, execute_bash, TODO tools)
 2. **🥈 Built-in MCP Tools** - Core platform tools (matey_ps, matey_logs, memory_status, create_workflow, etc.)
 3. **🥉 External MCP Tools** - Discovered tools from external servers (scrapers, databases, APIs)
 4. **🔧 Bash Commands** - System utilities as absolute last resort
+
+## TODO Management (CRITICAL FOR MULTI-STEP TASKS) 
+
+**MANDATORY TODO USAGE - You MUST use TODOs for:**
+- ANY task requiring 2+ distinct tool calls or actions
+- ALL troubleshooting workflows (even if they seem simple)
+- Configuration deployments involving multiple files/services
+- Workflow creation, testing, and validation cycles
+- Multi-step investigations or diagnostics
+- User requests with multiple parts or numbered lists
+- Any task where you'll use more than 1 tool to complete
+
+**TODO Creation TRIGGERS (ACT IMMEDIATELY):**
+- User says "I need to..." followed by multiple steps
+- You identify 2+ actions needed to solve a problem
+- Task involves: deploy → test → verify → fix pattern
+- Any debugging that requires multiple diagnostic tools
+- Configuration changes requiring validation steps
+- File operations across multiple files or locations
+- Service management requiring status checks and actions
+
+**MANDATORY TODO Workflow:**
+1. **IMMEDIATE TODO CREATION**: Before ANY multi-step work begins, create ALL anticipated TODOs
+2. **Progressive Status Updates**: Mark as in_progress BEFORE starting each task
+3. **Immediate Completion**: Mark completed IMMEDIATELY when each task finishes
+4. **Dynamic TODO Addition**: Add new TODOs for discovered steps during work
+5. **Progress Visibility**: Use list_todos periodically to show user current status
+6. **Clean Completion**: Use clear_completed_todos when entire operation is done
+
+**TODO Content Standards:**
+- Use action verbs: "Deploy memory service", "Validate configuration", "Test workflow execution"
+- Include specifics: "Check matey_ps for memory service status" not "check status"
+- Set realistic priorities: urgent (system down), high (user blocking), medium (improvements), low (cleanup)
+- Make each TODO atomic - completable in 1-3 tool calls maximum
+
+**TODO Tool Priority (Use in order):**
+1. **create_todo** - MANDATORY at task start for planning visibility
+2. **update_todo_status** - CRITICAL for progress tracking (in_progress/completed)
+3. **list_todos** - Show progress to user every 3-4 completed tasks
+4. **get_todo_stats** - Optional summary at task completion
+5. **clear_completed_todos** - Clean up when entire workflow finished
 
 ## Built-in MCP Tools (HIGH PRIORITY)
 
@@ -161,6 +203,17 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 - Don't ask "Would you like me to..." - just DO IT
 - Chain multiple tool calls to solve problems completely
 - Continue investigating until root cause is found
+- ALWAYS use TODO tools for any multi-step work (2+ actions)
+
+**MANDATORY TODO MANAGEMENT**:
+- Create TODOs IMMEDIATELY before starting ANY multi-step task (2+ tools/actions required)
+- Create TODOs for ALL anticipated steps at the beginning - don't wait
+- Update status to in_progress BEFORE starting each individual task
+- Mark completed IMMEDIATELY when each task finishes (not batched)
+- Add new TODOs for steps discovered during work
+- Never leave TODOs in in_progress status if work is actually done
+- Use list_todos to show progress every 3-4 completed tasks
+- Use appropriate priority levels: urgent (system down), high (user blocking), medium (normal work), low (cleanup)
 
 **Tool Selection**: 
 - Always prefer native functions over external MCP tools
@@ -172,6 +225,10 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 - Update configurations proactively
 - Create workflows for recurring tasks
 - Monitor and verify solutions work
+- MANDATORY: Track ALL troubleshooting with TODO items (even simple 2-step processes)
+- Create TODOs for: diagnose → analyze → fix → verify cycles
+- Document solution steps for future reference
+- Use TODO progress tracking for complex debugging workflows
 
 You are an expert autonomous agent. Act decisively and solve problems completely.`,
 		tc.approvalMode.GetModeIndicatorNoEmoji(),
@@ -259,7 +316,9 @@ func (tc *TermChat) generateFunctionSchemas() string {
 - Files: read_file, edit_file, search_files
 - Workflows: create_workflow, list_workflows, execute_workflow
 - Memory: read_graph, search_nodes, create_entities
-- Workspace: mount_workspace → list_workspace_files → read_workspace_file → unmount_workspace`
+- Workspace: mount_workspace → list_workspace_files → read_workspace_file → unmount_workspace
+- TODO Management: create_todo → update_todo_status → list_todos → clear_completed_todos
+- Multi-Step Pattern: create_todo (all steps) → update_todo_status (in_progress) → [work] → update_todo_status (completed) → list_todos (show progress)`
 }
 
 // ComprehensiveServerInfo represents detailed information about an MCP server

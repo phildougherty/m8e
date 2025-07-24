@@ -375,15 +375,8 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		var result interface{}
 		var err error
 		
-		// Check if this is a native function
-		nativeFunctions := []string{"execute_bash", "bash", "run_command", "deploy_service", "scale_service", "restart_service", "get_logs", "get_metrics", "check_health", "edit_file", "editfile", "edit-file"}
-		isNative := false
-		for _, nativeFunc := range nativeFunctions {
-			if toolCall.Function.Name == nativeFunc {
-				isNative = true
-				break
-			}
-		}
+		// Check if this is a native function using the chat's isNativeFunction method
+		isNative := t.chat.isNativeFunction(toolCall.Function.Name)
 		
 		if isNative {
 			// Execute native function
@@ -412,14 +405,17 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			if err != nil {
 				statusMsg = fmt.Sprintf("\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
+				// Parse arguments for enhanced formatting
+				args := t.parseArguments(toolCall.Function.Arguments)
+				
 				// Use enhanced formatting for file editing tools
 				if t.isFileEditingTool(toolCall.Function.Name) && result != nil {
 					duration := time.Millisecond * 50 // Placeholder duration
-					statusMsg = t.chat.formatToolResult(toolCall.Function.Name, "native", result, duration)
+					statusMsg = t.chat.formatToolResultWithArgs(toolCall.Function.Name, "native", result, duration, args)
 				} else {
 					// Use the enhanced Claude Code style formatting
 					duration := time.Millisecond * 50
-					statusMsg = t.chat.formatToolResult(toolCall.Function.Name, "native", result, duration)
+					statusMsg = t.chat.formatToolResultWithArgs(toolCall.Function.Name, "native", result, duration, args)
 				}
 			}
 			GetUIProgram().Send(aiStreamMsg{content: statusMsg})

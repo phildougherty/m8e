@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/charmbracelet/glamour"
@@ -12,6 +13,85 @@ import (
 	"github.com/phildougherty/m8e/internal/mcp"
 	appcontext "github.com/phildougherty/m8e/internal/context"
 )
+
+// TodoStatus represents the status of a TODO item
+type TodoStatus string
+
+const (
+	TodoStatusPending    TodoStatus = "pending"
+	TodoStatusInProgress TodoStatus = "in_progress"
+	TodoStatusCompleted  TodoStatus = "completed"
+	TodoStatusCancelled  TodoStatus = "cancelled"
+)
+
+// TodoPriority represents the priority level of a TODO item
+type TodoPriority string
+
+const (
+	TodoPriorityLow    TodoPriority = "low"
+	TodoPriorityMedium TodoPriority = "medium"
+	TodoPriorityHigh   TodoPriority = "high"
+	TodoPriorityUrgent TodoPriority = "urgent"
+)
+
+// TodoItem represents a single TODO item in the AI's task list
+type TodoItem struct {
+	ID          string       `json:"id"`
+	Content     string       `json:"content"`
+	Status      TodoStatus   `json:"status"`
+	Priority    TodoPriority `json:"priority"`
+	CreatedAt   time.Time    `json:"createdAt"`
+	UpdatedAt   time.Time    `json:"updatedAt"`
+	CompletedAt *time.Time   `json:"completedAt,omitempty"`
+}
+
+// TodoList manages a collection of TODO items for the AI agent
+type TodoList struct {
+	Items []TodoItem `json:"items"`
+}
+
+// AddItem adds a new TODO item to the list
+func (tl *TodoList) AddItem(content string, priority TodoPriority) string {
+	now := time.Now()
+	id := fmt.Sprintf("todo_%d", now.UnixNano())
+	item := TodoItem{
+		ID:        id,
+		Content:   content,
+		Status:    TodoStatusPending,
+		Priority:  priority,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	tl.Items = append(tl.Items, item)
+	return id
+}
+
+// UpdateItemStatus updates the status of a TODO item
+func (tl *TodoList) UpdateItemStatus(id string, status TodoStatus) bool {
+	for i, item := range tl.Items {
+		if item.ID == id {
+			tl.Items[i].Status = status
+			tl.Items[i].UpdatedAt = time.Now()
+			if status == TodoStatusCompleted {
+				now := time.Now()
+				tl.Items[i].CompletedAt = &now
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveItem removes a TODO item from the list
+func (tl *TodoList) RemoveItem(id string) bool {
+	for i, item := range tl.Items {
+		if item.ID == id {
+			tl.Items = append(tl.Items[:i], tl.Items[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
 
 // ApprovalMode defines the level of autonomous behavior
 type ApprovalMode int
@@ -105,6 +185,7 @@ type TermChat struct {
 	contextManager         *appcontext.ContextManager // Context management for AI workflows
 	fileDiscovery          *appcontext.FileDiscovery   // File discovery system
 	mentionProcessor       *appcontext.MentionProcessor // @-mention processing
+	todoList               *TodoList                    // TODO list for task management
 }
 
 // TermChatMessage represents a chat message

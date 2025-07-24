@@ -235,6 +235,154 @@ func (tc *TermChat) getMCPFunctions() []ai.Function {
 				},
 			},
 		},
+		// TODO Management Tools
+		{
+			Name:        "create_todo",
+			Description: "Create a new TODO item for tracking tasks and progress",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "TODO item description",
+					},
+					"priority": map[string]interface{}{
+						"type":        "string",
+						"description": "Priority level: low, medium, high, urgent",
+						"enum":        []string{"low", "medium", "high", "urgent"},
+						"default":     "medium",
+					},
+				},
+				"required": []string{"content"},
+			},
+		},
+		{
+			Name:        "create_todos",
+			Description: "Create multiple TODO items in a single call for multi-step tasks",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"todos": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of TODO items to create",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"content": map[string]interface{}{
+									"type":        "string",
+									"description": "TODO item description",
+								},
+								"priority": map[string]interface{}{
+									"type":        "string",
+									"description": "Priority level: low, medium, high, urgent",
+									"enum":        []string{"low", "medium", "high", "urgent"},
+									"default":     "medium",
+								},
+							},
+							"required": []string{"content"},
+						},
+					},
+				},
+				"required": []string{"todos"},
+			},
+		},
+		{
+			Name:        "list_todos",
+			Description: "List all TODO items with optional filtering by status or priority",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"status": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by status: pending, in_progress, completed, cancelled",
+						"enum":        []string{"pending", "in_progress", "completed", "cancelled"},
+					},
+					"priority": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by priority: low, medium, high, urgent",
+						"enum":        []string{"low", "medium", "high", "urgent"},
+					},
+				},
+			},
+		},
+		{
+			Name:        "update_todo_status",
+			Description: "Update the status of a TODO item",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{
+						"type":        "string",
+						"description": "TODO item ID",
+					},
+					"status": map[string]interface{}{
+						"type":        "string",
+						"description": "New status: pending, in_progress, completed, cancelled",
+						"enum":        []string{"pending", "in_progress", "completed", "cancelled"},
+					},
+				},
+				"required": []string{"id", "status"},
+			},
+		},
+		{
+			Name:        "update_todos",
+			Description: "Update multiple TODO items in a single call for efficient bulk status changes",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"updates": map[string]interface{}{
+						"type":        "array",
+						"description": "Array of TODO status updates",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id": map[string]interface{}{
+									"type":        "string",
+									"description": "TODO item ID",
+								},
+								"status": map[string]interface{}{
+									"type":        "string",
+									"description": "New status: pending, in_progress, completed, cancelled",
+									"enum":        []string{"pending", "in_progress", "completed", "cancelled"},
+								},
+							},
+							"required": []string{"id", "status"},
+						},
+					},
+				},
+				"required": []string{"updates"},
+			},
+		},
+		{
+			Name:        "remove_todo",
+			Description: "Remove a TODO item from the list",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{
+						"type":        "string",
+						"description": "TODO item ID",
+					},
+				},
+				"required": []string{"id"},
+			},
+		},
+		{
+			Name:        "clear_completed_todos",
+			Description: "Remove all completed TODO items from the list",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "get_todo_stats",
+			Description: "Get statistics about TODO items (counts by status and priority)",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 		// File Management Tools
 		{
 			Name:        "edit_file",
@@ -683,7 +831,12 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 		var err error
 		
 		// Check if this is a native function
-		nativeFunctions := []string{"execute_bash", "bash", "run_command", "deploy_service", "scale_service", "restart_service", "get_logs", "get_metrics", "check_health"}
+		nativeFunctions := []string{
+			"execute_bash", "bash", "run_command", 
+			"deploy_service", "scale_service", "restart_service", 
+			"get_logs", "get_metrics", "check_health",
+			"create_todo", "create_todos", "list_todos", "update_todo_status", "update_todos", "remove_todo", "clear_completed_todos", "get_todo_stats",
+		}
 		isNative := false
 		for _, nativeFunc := range nativeFunctions {
 			if toolCall.Function.Name == nativeFunc {
@@ -717,14 +870,20 @@ func (tc *TermChat) executeUITools(pendingTools []ai.ToolCall) ([]ai.Message, er
 			if err != nil {
 				statusMsg = fmt.Sprintf("\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90mfailed |\x1b[0m \x1b[31m%v\x1b[0m", toolCall.Function.Name, err)
 			} else {
+				// Parse arguments for enhanced formatting
+				var args map[string]interface{}
+				if toolCall.Function.Arguments != "" {
+					json.Unmarshal([]byte(toolCall.Function.Arguments), &args)
+				}
+				
 				// Use our enhanced formatting for file editing tools
 				if tc.isFileEditingTool(toolCall.Function.Name) && result != nil {
 					duration := time.Millisecond * 50 // Placeholder duration
-					statusMsg = tc.formatToolResult(toolCall.Function.Name, "native", result, duration)
+					statusMsg = tc.formatToolResultWithArgs(toolCall.Function.Name, "native", result, duration, args)
 				} else {
 					// Use the enhanced Claude Code style formatting
 					duration := time.Millisecond * 50
-					statusMsg = tc.formatToolResult(toolCall.Function.Name, "native", result, duration)
+					statusMsg = tc.formatToolResultWithArgs(toolCall.Function.Name, "native", result, duration, args)
 				}
 			}
 			uiProgram.Send(AiStreamMsg{Content: statusMsg + "\n"})
@@ -824,6 +983,16 @@ func (tc *TermChat) formatFunctionArgs(arguments, functionName string) string {
 
 // formatToolResult formats tool execution results in Claude Code style
 func (tc *TermChat) formatToolResult(toolName, serverName string, result interface{}, duration time.Duration) string {
+	return tc.formatToolResultWithArgs(toolName, serverName, result, duration, nil)
+}
+
+// FormatToolResultWithArgs formats tool execution results with access to original arguments (exported for testing)
+func (tc *TermChat) FormatToolResultWithArgs(toolName, serverName string, result interface{}, duration time.Duration, args map[string]interface{}) string {
+	return tc.formatToolResultWithArgs(toolName, serverName, result, duration, args)
+}
+
+// formatToolResultWithArgs formats tool execution results with access to original arguments
+func (tc *TermChat) formatToolResultWithArgs(toolName, serverName string, result interface{}, duration time.Duration, args map[string]interface{}) string {
 	
 	// Calculate token count estimate (rough approximation)
 	resultStr := fmt.Sprintf("%+v", result)
@@ -857,13 +1026,30 @@ func (tc *TermChat) formatToolResult(toolName, serverName string, result interfa
 	}
 	
 	// Claude Code style: show tool with key results
-	return tc.formatToolResultWithDetails(toolName, serverName, result, duration, tokenCount)
+	return tc.formatToolResultWithDetailsAndArgs(toolName, serverName, result, duration, tokenCount, args)
 }
 
-// formatToolResultWithDetails intelligently formats tool results based on tool type and content
-func (tc *TermChat) formatToolResultWithDetails(toolName, serverName string, result interface{}, duration time.Duration, tokenCount int) string {
+// formatToolResultWithDetailsAndArgs intelligently formats tool results based on tool type and content
+func (tc *TermChat) formatToolResultWithDetailsAndArgs(toolName, serverName string, result interface{}, duration time.Duration, tokenCount int, args map[string]interface{}) string {
 	bullet := "\x1b[32m*\x1b[0m"
-	statusLine := fmt.Sprintf("\n%s \x1b[32m%s\x1b[0m\x1b[90m(%s)\x1b[0m", bullet, toolName, serverName)
+	
+	// Special handling for execute_bash to show the command
+	var displayName string
+	if (toolName == "execute_bash" || toolName == "bash" || toolName == "run_command") && args != nil {
+		if command, ok := args["command"].(string); ok {
+			// Truncate long commands
+			if len(command) > 50 {
+				command = command[:47] + "..."
+			}
+			displayName = fmt.Sprintf("%s(%s)", toolName, command)
+		} else {
+			displayName = fmt.Sprintf("%s(%s)", toolName, serverName)
+		}
+	} else {
+		displayName = fmt.Sprintf("%s(%s)", toolName, serverName)
+	}
+	
+	statusLine := fmt.Sprintf("\n%s \x1b[32m%s\x1b[0m", bullet, displayName)
 	
 	summary := tc.extractAnyContent(result, toolName)
 	if summary != "" {
@@ -875,6 +1061,11 @@ func (tc *TermChat) formatToolResultWithDetails(toolName, serverName string, res
 
 // extractAnyContent tries to extract readable content from any result structure
 func (tc *TermChat) extractAnyContent(result interface{}, toolName string) string {
+	// First check if it's a map - use extractMapSummary for structured data
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		return tc.extractMapSummary(resultMap, toolName)
+	}
+	
 	// Convert to string and try to parse it
 	resultStr := fmt.Sprintf("%+v", result)
 	
@@ -975,16 +1166,23 @@ func (tc *TermChat) extractMapSummary(m map[string]interface{}, toolName string)
 	
 	// Command execution
 	case "execute_bash", "bash", "run_command":
-		if output, ok := m["output"].(string); ok {
+		if stdout, ok := m["stdout"].(string); ok {
 			// Show first line of output for bash commands
-			lines := strings.Split(strings.TrimSpace(output), "\n")
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
 			if len(lines) > 0 && lines[0] != "" {
-				return tc.truncateString(lines[0], 60)
+				return tc.truncateString(lines[0], 80)
 			}
 		}
 		if exitCode, ok := m["exit_code"].(float64); ok {
 			if int(exitCode) == 0 {
 				return "Command executed successfully"
+			}
+			// Show stderr if available on failure
+			if stderr, ok := m["stderr"].(string); ok && stderr != "" {
+				lines := strings.Split(strings.TrimSpace(stderr), "\n")
+				if len(lines) > 0 {
+					return fmt.Sprintf("Failed (exit %d): %s", int(exitCode), tc.truncateString(lines[0], 60))
+				}
 			}
 			return fmt.Sprintf("Command failed (exit %d)", int(exitCode))
 		}
@@ -1060,6 +1258,164 @@ func (tc *TermChat) extractMapSummary(m map[string]interface{}, toolName string)
 			}
 		}
 		return "Memory statistics retrieved"
+	
+	// TODO system case handling
+	case "create_todo":
+		if content, ok := m["content"].(string); ok {
+			if id, ok := m["id"].(string); ok {
+				return fmt.Sprintf("Created TODO: %s (ID: %s)", tc.truncateString(content, 50), id)
+			}
+			return fmt.Sprintf("Created TODO: %s", tc.truncateString(content, 50))
+		}
+		return "TODO created"
+	
+	case "create_todos":
+		if count, ok := m["created_count"].(float64); ok {
+			if items, ok := m["items"].([]interface{}); ok {
+				var summaries []string
+				for i, item := range items {
+					if i >= 3 {
+						summaries = append(summaries, "...")
+						break
+					}
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						if content, ok := itemMap["content"].(string); ok {
+							summaries = append(summaries, tc.truncateString(content, 30))
+						}
+					}
+				}
+				return fmt.Sprintf("Created %d TODOs: %s", int(count), strings.Join(summaries, ", "))
+			}
+			return fmt.Sprintf("Created %d TODOs", int(count))
+		}
+		return "Bulk TODO creation completed"
+	
+	case "list_todos":
+		if items, ok := m["items"].([]interface{}); ok {
+			if len(items) == 0 {
+				return "No TODO items found"
+			}
+			
+			// Format the full list of TODO items
+			var result strings.Builder
+			result.WriteString(fmt.Sprintf("TODO List (%d items):\n", len(items)))
+			
+			for i, item := range items {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					id, _ := itemMap["id"].(string)
+					content, _ := itemMap["content"].(string)
+					status, _ := itemMap["status"].(string)
+					priority, _ := itemMap["priority"].(string)
+					
+					// Format status with color/symbol
+					var statusIcon string
+					switch status {
+					case "pending":
+						statusIcon = "⏸️"
+					case "in_progress":
+						statusIcon = "▶️"
+					case "completed":
+						statusIcon = "✅"
+					case "cancelled":
+						statusIcon = "❌"
+					default:
+						statusIcon = "❓"
+					}
+					
+					// Format priority
+					var priorityLabel string
+					switch priority {
+					case "urgent":
+						priorityLabel = "🔴 URGENT"
+					case "high":
+						priorityLabel = "🟠 HIGH"
+					case "medium":
+						priorityLabel = "🟡 MED"
+					case "low":
+						priorityLabel = "🟢 LOW"
+					default:
+						priorityLabel = "⚪ UNK"
+					}
+					
+					result.WriteString(fmt.Sprintf("%d. %s [%s] %s - %s\n", 
+						i+1, statusIcon, priorityLabel, tc.truncateString(content, 60), id[:8]))
+				}
+			}
+			
+			return strings.TrimSuffix(result.String(), "\n")
+		}
+		return "TODO list retrieved"
+	
+	case "update_todo_status":
+		if status, ok := m["status"].(string); ok {
+			if id, ok := m["id"].(string); ok {
+				// Find the TODO item to show its content instead of ID
+				if tc.todoList != nil {
+					for _, item := range tc.todoList.Items {
+						if item.ID == id {
+							return fmt.Sprintf("Updated TODO (%s) to %s", tc.truncateString(item.Content, 50), status)
+						}
+					}
+				}
+				return fmt.Sprintf("Updated TODO %s to %s", id, status)
+			}
+			return fmt.Sprintf("Updated TODO status to %s", status)
+		}
+		return "TODO status updated"
+	
+	case "update_todos":
+		if count, ok := m["updated_count"].(float64); ok {
+			if updates, ok := m["updates"].([]interface{}); ok {
+				var summaries []string
+				for i, update := range updates {
+					if i >= 3 {
+						summaries = append(summaries, "...")
+						break
+					}
+					if updateMap, ok := update.(map[string]interface{}); ok {
+						if id, ok := updateMap["id"].(string); ok {
+							if status, ok := updateMap["status"].(string); ok {
+								// Find the TODO content to show instead of ID
+								content := id // fallback to ID
+								if tc.todoList != nil {
+									for _, item := range tc.todoList.Items {
+										if item.ID == id {
+											content = tc.truncateString(item.Content, 20)
+											break
+										}
+									}
+								}
+								summaries = append(summaries, fmt.Sprintf("(%s)→%s", content, status))
+							}
+						}
+					}
+				}
+				return fmt.Sprintf("Updated %d TODOs: %s", int(count), strings.Join(summaries, ", "))
+			}
+			return fmt.Sprintf("Updated %d TODOs", int(count))
+		}
+		return "Bulk TODO updates completed"
+	
+	case "remove_todo":
+		if id, ok := m["id"].(string); ok {
+			return fmt.Sprintf("Removed TODO: %s", id)
+		}
+		return "TODO removed"
+	
+	case "clear_completed_todos":
+		if count, ok := m["cleared_count"].(float64); ok {
+			return fmt.Sprintf("Cleared %d completed TODOs", int(count))
+		}
+		return "Completed TODOs cleared"
+	
+	case "get_todo_stats":
+		if totalCount, ok := m["total_count"].(float64); ok {
+			if pendingCount, ok := m["pending_count"].(float64); ok {
+				return fmt.Sprintf("TODO stats: %d total, %d pending", int(totalCount), int(pendingCount))
+			}
+			return fmt.Sprintf("TODO stats: %d total items", int(totalCount))
+		}
+		return "TODO statistics retrieved"
 	
 	// Cluster management tools
 	case "matey_ps":
@@ -1629,8 +1985,14 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 		resultContent = fmt.Sprintf("\n\x1b[31mx\x1b[0m \x1b[32m%s\x1b[0m \x1b[90m(%s) | %v |\x1b[0m \x1b[31m%s\x1b[0m", 
 			toolCall.Function.Name, serverName, duration.Truncate(time.Millisecond), err.Error())
 	} else {
+		// Parse arguments for enhanced formatting
+		var args map[string]interface{}
+		if toolCall.Function.Arguments != "" {
+			json.Unmarshal([]byte(toolCall.Function.Arguments), &args)
+		}
+		
 		// Parse and format the actual tool result
-		resultContent = tc.formatToolResult(toolCall.Function.Name, serverName, result, duration)
+		resultContent = tc.formatToolResultWithArgs(toolCall.Function.Name, serverName, result, duration, args)
 	}
 	
 	// Send result to UI
@@ -1651,6 +2013,7 @@ func (tc *TermChat) isNativeFunction(functionName string) bool {
 		"read_file", "readfile", "read-file", // File reading tools as native
 		"search_files", "searchfiles", "search-files", // File search tools as native
 		"parse_code", "parsecode", "parse-code", // Code parsing tools as native
+		"create_todo", "create_todos", "list_todos", "update_todo_status", "update_todos", "remove_todo", "clear_completed_todos", "get_todo_stats", // TODO tools
 	}
 	
 	for _, nativeFunc := range nativeFunctions {

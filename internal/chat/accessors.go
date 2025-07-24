@@ -113,6 +113,22 @@ func (tc *TermChat) ExecuteNativeToolCall(toolCall interface{}, index int) (inte
 		return tc.executeSearchFiles(call.Function.Arguments)
 	case "parse_code", "parsecode", "parse-code":
 		return tc.executeParseCode(call.Function.Arguments)
+	case "create_todo":
+		return tc.executeCreateTodo(call.Function.Arguments)
+	case "create_todos":
+		return tc.executeCreateTodos(call.Function.Arguments)
+	case "list_todos":
+		return tc.executeListTodos(call.Function.Arguments)
+	case "update_todo_status":
+		return tc.executeUpdateTodoStatus(call.Function.Arguments)
+	case "update_todos":
+		return tc.executeUpdateTodos(call.Function.Arguments)
+	case "remove_todo":
+		return tc.executeRemoveTodo(call.Function.Arguments)
+	case "clear_completed_todos":
+		return tc.executeClearCompletedTodos(call.Function.Arguments)
+	case "get_todo_stats":
+		return tc.executeGetTodoStats(call.Function.Arguments)
 	default:
 		return nil, fmt.Errorf("unknown native function: %s", call.Function.Name)
 	}
@@ -795,5 +811,382 @@ func getIntArg(args map[string]interface{}, key string, defaultValue int) int {
 		return int(val)
 	}
 	return defaultValue
+}
+
+// TODO Management Functions
+
+// executeCreateTodo creates a new TODO item
+func (tc *TermChat) executeCreateTodo(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %v", err)
+	}
+
+	content, ok := args["content"].(string)
+	if !ok || content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+
+	// Parse priority with default
+	priorityStr := "medium"
+	if p, ok := args["priority"].(string); ok {
+		priorityStr = p
+	}
+
+	var priority TodoPriority
+	switch priorityStr {
+	case "low":
+		priority = TodoPriorityLow
+	case "medium":
+		priority = TodoPriorityMedium
+	case "high":
+		priority = TodoPriorityHigh
+	case "urgent":
+		priority = TodoPriorityUrgent
+	default:
+		priority = TodoPriorityMedium
+	}
+
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+	}
+
+	// Add the TODO item
+	id := tc.todoList.AddItem(content, priority)
+
+	return map[string]interface{}{
+		"success":  true,
+		"id":       id,
+		"content":  content,
+		"priority": string(priority),
+		"status":   string(TodoStatusPending),
+	}, nil
+}
+
+// executeListTodos lists TODO items with optional filtering
+func (tc *TermChat) executeListTodos(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %v", err)
+	}
+
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+	}
+
+	// Get filter parameters
+	var statusFilter TodoStatus
+	var priorityFilter TodoPriority
+	var hasStatusFilter, hasPriorityFilter bool
+
+	if statusStr, ok := args["status"].(string); ok {
+		statusFilter = TodoStatus(statusStr)
+		hasStatusFilter = true
+	}
+
+	if priorityStr, ok := args["priority"].(string); ok {
+		priorityFilter = TodoPriority(priorityStr)
+		hasPriorityFilter = true
+	}
+
+	// Filter items
+	var filteredItems []TodoItem
+	for _, item := range tc.todoList.Items {
+		if hasStatusFilter && item.Status != statusFilter {
+			continue
+		}
+		if hasPriorityFilter && item.Priority != priorityFilter {
+			continue
+		}
+		filteredItems = append(filteredItems, item)
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"items":   filteredItems,
+		"count":   len(filteredItems),
+		"total":   len(tc.todoList.Items),
+	}, nil
+}
+
+// executeUpdateTodoStatus updates the status of a TODO item
+func (tc *TermChat) executeUpdateTodoStatus(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %v", err)
+	}
+
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+
+	statusStr, ok := args["status"].(string)
+	if !ok || statusStr == "" {
+		return nil, fmt.Errorf("status is required")
+	}
+
+	status := TodoStatus(statusStr)
+
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+		return nil, fmt.Errorf("TODO item not found: %s", id)
+	}
+
+	// Update the status
+	if !tc.todoList.UpdateItemStatus(id, status) {
+		return nil, fmt.Errorf("TODO item not found: %s", id)
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"id":      id,
+		"status":  string(status),
+	}, nil
+}
+
+// executeRemoveTodo removes a TODO item from the list
+func (tc *TermChat) executeRemoveTodo(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %v", err)
+	}
+
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+		return nil, fmt.Errorf("TODO item not found: %s", id)
+	}
+
+	// Remove the item
+	if !tc.todoList.RemoveItem(id) {
+		return nil, fmt.Errorf("TODO item not found: %s", id)
+	}
+
+	return map[string]interface{}{
+		"success": true,
+		"id":      id,
+	}, nil
+}
+
+// executeClearCompletedTodos removes all completed TODO items
+func (tc *TermChat) executeClearCompletedTodos(argumentsJSON string) (interface{}, error) {
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+	}
+
+	// Count and remove completed items
+	var remainingItems []TodoItem
+	clearedCount := 0
+	for _, item := range tc.todoList.Items {
+		if item.Status == TodoStatusCompleted {
+			clearedCount++
+		} else {
+			remainingItems = append(remainingItems, item)
+		}
+	}
+
+	tc.todoList.Items = remainingItems
+
+	return map[string]interface{}{
+		"success":       true,
+		"cleared_count": clearedCount,
+		"remaining":     len(remainingItems),
+	}, nil
+}
+
+// executeGetTodoStats gets statistics about TODO items
+func (tc *TermChat) executeGetTodoStats(argumentsJSON string) (interface{}, error) {
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+	}
+
+	// Count by status
+	statusCounts := map[string]int{
+		"pending":     0,
+		"in_progress": 0,
+		"completed":   0,
+		"cancelled":   0,
+	}
+
+	// Count by priority
+	priorityCounts := map[string]int{
+		"low":    0,
+		"medium": 0,
+		"high":   0,
+		"urgent": 0,
+	}
+
+	for _, item := range tc.todoList.Items {
+		statusCounts[string(item.Status)]++
+		priorityCounts[string(item.Priority)]++
+	}
+
+	return map[string]interface{}{
+		"success":         true,
+		"total_count":     len(tc.todoList.Items),
+		"pending_count":   statusCounts["pending"],
+		"in_progress_count": statusCounts["in_progress"],
+		"completed_count": statusCounts["completed"],
+		"cancelled_count": statusCounts["cancelled"],
+		"status_counts":   statusCounts,
+		"priority_counts": priorityCounts,
+	}, nil
+}
+
+// executeCreateTodos creates multiple TODO items in bulk
+func (tc *TermChat) executeCreateTodos(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %v", err)
+	}
+
+	todosInterface, ok := args["todos"]
+	if !ok {
+		return nil, fmt.Errorf("todos array is required")
+	}
+
+	todosArray, ok := todosInterface.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("todos must be an array")
+	}
+
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+	}
+
+	var createdItems []map[string]interface{}
+	var createdCount int
+
+	for _, todoInterface := range todosArray {
+		todoMap, ok := todoInterface.(map[string]interface{})
+		if !ok {
+			continue // Skip invalid items
+		}
+
+		content, ok := todoMap["content"].(string)
+		if !ok || content == "" {
+			continue // Skip items without content
+		}
+
+		// Parse priority with default
+		priorityStr := "medium"
+		if p, ok := todoMap["priority"].(string); ok {
+			priorityStr = p
+		}
+
+		var priority TodoPriority
+		switch priorityStr {
+		case "low":
+			priority = TodoPriorityLow
+		case "medium":
+			priority = TodoPriorityMedium
+		case "high":
+			priority = TodoPriorityHigh
+		case "urgent":
+			priority = TodoPriorityUrgent
+		default:
+			priority = TodoPriorityMedium
+		}
+
+		// Add the TODO item
+		id := tc.todoList.AddItem(content, priority)
+		createdCount++
+
+		createdItems = append(createdItems, map[string]interface{}{
+			"id":       id,
+			"content":  content,
+			"priority": string(priority),
+			"status":   string(TodoStatusPending),
+		})
+	}
+
+	return map[string]interface{}{
+		"success":       true,
+		"created_count": createdCount,
+		"items":         createdItems,
+	}, nil
+}
+
+// executeUpdateTodos updates multiple TODO items in bulk
+func (tc *TermChat) executeUpdateTodos(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse arguments: %v", err)
+	}
+
+	updatesInterface, ok := args["updates"]
+	if !ok {
+		return nil, fmt.Errorf("updates array is required")
+	}
+
+	updatesArray, ok := updatesInterface.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("updates must be an array")
+	}
+
+	// Initialize TODO list if it doesn't exist
+	if tc.todoList == nil {
+		tc.todoList = &TodoList{Items: []TodoItem{}}
+		return nil, fmt.Errorf("no TODO items exist")
+	}
+
+	var updatedItems []map[string]interface{}
+	var updatedCount int
+	var failedUpdates []string
+
+	for _, updateInterface := range updatesArray {
+		updateMap, ok := updateInterface.(map[string]interface{})
+		if !ok {
+			continue // Skip invalid items
+		}
+
+		id, ok := updateMap["id"].(string)
+		if !ok || id == "" {
+			continue // Skip items without ID
+		}
+
+		statusStr, ok := updateMap["status"].(string)
+		if !ok || statusStr == "" {
+			continue // Skip items without status
+		}
+
+		status := TodoStatus(statusStr)
+
+		// Update the status
+		if tc.todoList.UpdateItemStatus(id, status) {
+			updatedCount++
+			updatedItems = append(updatedItems, map[string]interface{}{
+				"id":     id,
+				"status": string(status),
+			})
+		} else {
+			failedUpdates = append(failedUpdates, id)
+		}
+	}
+
+	result := map[string]interface{}{
+		"success":       true,
+		"updated_count": updatedCount,
+		"updates":       updatedItems,
+	}
+
+	if len(failedUpdates) > 0 {
+		result["failed_updates"] = failedUpdates
+		result["failed_count"] = len(failedUpdates)
+	}
+
+	return result, nil
 }
 

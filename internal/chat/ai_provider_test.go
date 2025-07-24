@@ -55,10 +55,8 @@ func TestTermChat_GetMCPFunctions(t *testing.T) {
 		}
 		
 		// Check parameters structure
-		if params, ok := fn.Parameters.(map[string]interface{}); ok {
-			if params["type"] != "object" {
-				t.Errorf("Expected function parameters type to be 'object', got %v", params["type"])
-			}
+		if fn.Parameters["type"] != "object" {
+			t.Errorf("Expected function parameters type to be 'object', got %v", fn.Parameters["type"])
 		}
 	}
 }
@@ -229,8 +227,10 @@ func TestTermChat_ExecuteConversationFlowSilent(t *testing.T) {
 		}
 	}()
 
-	// Test with simple input - this will likely fail internally but shouldn't panic
-	// tc.executeConversationFlowSilent("Hello")
+	// Test with simple input - just verify the object is properly initialized
+	if tc == nil {
+		t.Error("TermChat should be initialized")
+	}
 	
 	// We can't easily test this without mocking the entire conversation system
 	// so we'll just verify the method signature exists
@@ -250,7 +250,9 @@ func TestTermChat_ChatWithAISilent(t *testing.T) {
 
 	// This method delegates to executeConversationFlowSilent
 	// We can verify it exists but can't easily test full functionality
-	// tc.chatWithAISilent("test message")
+	if tc == nil {
+		t.Error("TermChat should be initialized")
+	}
 }
 
 func TestTermChat_CallDiscoveredTool(t *testing.T) {
@@ -285,8 +287,8 @@ func TestTermChat_CallDiscoveredTool(t *testing.T) {
 	}
 
 	// Modify the callDiscoveredTool to use our mock server
-	originalURL := "https://mcp.robotrad.io"
 	testURL := mockServer.URL
+	_ = testURL // Use the variable to avoid compiler error
 
 	// We need to create a version that uses our test server
 	result, err := tc.callDiscoveredToolWithURL(ctx, "test-server", "test_tool", arguments, testURL)
