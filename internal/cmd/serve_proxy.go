@@ -38,7 +38,7 @@ For creating proxy deployments, use 'matey proxy' instead.`,
 	}
 
 	cmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to run the proxy server on")
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace to discover services in")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace to discover services in")
 	cmd.Flags().StringVarP(&apiKey, "api-key", "k", "", "API key for proxy authentication (optional)")
 
 	return cmd
@@ -300,7 +300,7 @@ func handleDiscoveryInfo(w http.ResponseWriter, r *http.Request, handler *server
 	
 	writeJSONResponse(w, map[string]interface{}{
 		"discovery_type":    "kubernetes-native",
-		"namespace":         "default", // This should be configurable
+		"namespace":         "matey", // This should be configurable
 		"discovered_servers": servers,
 		"connection_status": connections,
 		"last_updated":     time.Now(),

@@ -76,6 +76,11 @@ func (m *MateyMCPServer) initializeK8sComponents() {
 	} else {
 		m.clientset = clientset
 		fmt.Printf("DEBUG: Kubernetes clientset created successfully\n")
+		
+		// Initialize workspace manager if clientset is available
+		logger := logr.Discard() // Simple logger for now, could be improved
+		m.workspaceManager = NewWorkspaceManager(m.clientset, m.namespace, logger)
+		fmt.Printf("DEBUG: Workspace manager created successfully\n")
 	}
 	
 	// Create composer (less critical, can still function without it)
@@ -272,6 +277,35 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 		}
 		return m.inspectAllResources(ctx, outputFormat)
 
+		
+	// Workspace Access Tools
+	case "mount_workspace":
+		workflowName, _ := arguments["workflowName"].(string)
+		executionID, _ := arguments["executionID"].(string)
+		return m.mountWorkspace(ctx, workflowName, executionID)
+	case "list_workspace_files":
+		workflowName, _ := arguments["workflowName"].(string)
+		executionID, _ := arguments["executionID"].(string)
+		subPath, _ := arguments["subPath"].(string)
+		return m.listWorkspaceFiles(ctx, workflowName, executionID, subPath)
+	case "read_workspace_file":
+		workflowName, _ := arguments["workflowName"].(string)
+		executionID, _ := arguments["executionID"].(string)
+		filePath, _ := arguments["filePath"].(string)
+		maxSize, _ := arguments["maxSize"].(int)
+		if maxSize == 0 {
+			maxSize = 1024 * 1024 // 1MB default
+		}
+		return m.readWorkspaceFile(ctx, workflowName, executionID, filePath, maxSize)
+	case "unmount_workspace":
+		workflowName, _ := arguments["workflowName"].(string)
+		executionID, _ := arguments["executionID"].(string)
+		return m.unmountWorkspace(ctx, workflowName, executionID)
+	case "list_mounted_workspaces":
+		return m.listMountedWorkspaces(ctx)
+	case "get_workspace_stats":
+		return m.getWorkspaceStats(ctx)
+		
 	default:
 		return &ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -302,15 +336,43 @@ func (m *MateyMCPServer) initializeMemoryStore() {
 		return
 	}
 	
-	// Use the main matey-postgres database with a separate database for internal memory
-	internalDatabaseURL := "postgresql://postgres:password@matey-postgres:5432/matey_memory?sslmode=disable"
+	// Check if the memory service is running
+	if memoryResource.Status.Phase != crd.MCPMemoryPhaseRunning || memoryResource.Status.ReadyReplicas == 0 {
+		fmt.Printf("DEBUG: Memory service is not running (phase: %s, ready: %d), memory graph tools will not be available\n", 
+			memoryResource.Status.Phase, memoryResource.Status.ReadyReplicas)
+		return
+	}
 	
-	fmt.Printf("DEBUG: Using internal memory database URL: %s\n", internalDatabaseURL)
+	// Get the database URL from the MCPMemory resource
+	var databaseURL string
+	if memoryResource.Spec.DatabaseURL != "" {
+		databaseURL = memoryResource.Spec.DatabaseURL
+	} else if memoryResource.Spec.PostgresEnabled {
+		// Build database URL from MCPMemory spec components
+		databaseURL = fmt.Sprintf("postgresql://%s:%s@%s-postgres:%d/%s?sslmode=disable",
+			memoryResource.Spec.PostgresUser,
+			memoryResource.Spec.PostgresPassword,
+			memoryResource.Name,
+			memoryResource.Spec.PostgresPort,
+			memoryResource.Spec.PostgresDB)
+	} else {
+		fmt.Printf("DEBUG: MCPMemory resource has no database configuration\n")
+		return
+	}
 	
-	// Initialize memory store with internal database
-	memoryStore, err := memory.NewMemoryStore(internalDatabaseURL, logr.Discard())
+	fmt.Printf("DEBUG: Using memory database URL: %s\n", databaseURL)
+	
+	// Initialize memory store with the correct database URL
+	memoryStore, err := memory.NewMemoryStore(databaseURL, logr.Discard())
 	if err != nil {
-		fmt.Printf("DEBUG: Failed to initialize memory store: %v\n", err)
+		fmt.Printf("DEBUG: Failed to initialize memory store: %v (this is expected if memory service is not ready)\n", err)
+		return
+	}
+	
+	// Test the connection
+	if err := memoryStore.HealthCheck(); err != nil {
+		fmt.Printf("DEBUG: Memory store health check failed: %v (this is expected if memory service is not ready)\n", err)
+		memoryStore.Close() // Clean up the failed connection
 		return
 	}
 	

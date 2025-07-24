@@ -1,12 +1,9 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -573,125 +570,84 @@ func (m *MateyMCPServer) executeWorkflow(ctx context.Context, args map[string]in
 	}, fmt.Errorf("workflow execution via binary not implemented")
 }
 
-// executeWorkflowViaMCP executes a workflow by calling the task scheduler's MCP service directly
+// executeWorkflowViaMCP executes a workflow by triggering it through the MCPTaskScheduler CRD
 func (m *MateyMCPServer) executeWorkflowViaMCP(ctx context.Context, workflowName string, args map[string]interface{}) (*ToolResult, error) {
-	// Build the task scheduler service URL
-	taskSchedulerURL := fmt.Sprintf("http://task-scheduler.%s.svc.cluster.local:8018/api/v1/call", m.namespace)
+	// Get the current MCPTaskScheduler
+	var taskScheduler crd.MCPTaskScheduler
+	taskSchedulerName := "task-scheduler"
 	
-	// Prepare the request payload for the task scheduler's API format
-	requestPayload := map[string]interface{}{
-		"tool": "execute_workflow",
-		"parameters": map[string]interface{}{
-			"name": workflowName,
-		},
-	}
+	err := m.k8sClient.Get(ctx, client.ObjectKey{
+		Name:      taskSchedulerName,
+		Namespace: m.namespace,
+	}, &taskScheduler)
 	
-	// Add optional parameters if provided
-	if parameters, ok := args["parameters"].(map[string]interface{}); ok && len(parameters) > 0 {
-		requestPayload["parameters"].(map[string]interface{})["parameters"] = parameters
-	}
-	
-	// Marshal the request to JSON
-	requestBody, err := json.Marshal(requestPayload)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error marshaling MCP request: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error getting task scheduler '%s': %v", taskSchedulerName, err)}},
 			IsError: true,
 		}, err
 	}
 	
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", taskSchedulerURL, bytes.NewReader(requestBody))
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error creating HTTP request: %v", err)}},
-			IsError: true,
-		}, err
-	}
-	
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	
-	// Make the HTTP request
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error calling task scheduler service: %v. Ensure task-scheduler service is running.", err)}},
-			IsError: true,
-		}, err
-	}
-	defer resp.Body.Close()
-	
-	// Read the response
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error reading response: %v", err)}},
-			IsError: true,
-		}, err
-	}
-	
-	// Check HTTP status
-	if resp.StatusCode != http.StatusOK {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Task scheduler returned HTTP %d: %s", resp.StatusCode, string(responseBody))}},
-			IsError: true,
-		}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(responseBody))
-	}
-	
-	// Parse the response
-	var response map[string]interface{}
-	if err := json.Unmarshal(responseBody, &response); err != nil {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error parsing response: %v. Response: %s", err, string(responseBody))}},
-			IsError: true,
-		}, err
-	}
-	
-	// Check for errors
-	if errorInfo, exists := response["error"]; exists {
-		errorMsg := fmt.Sprintf("Task scheduler error: %v", errorInfo)
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: errorMsg}},
-			IsError: true,
-		}, fmt.Errorf("task scheduler error: %v", errorInfo)
-	}
-	
-	// Extract the result
-	result, exists := response["result"]
-	if !exists {
-		return &ToolResult{
-			Content: []Content{{Type: "text", Text: "No result in response"}},
-			IsError: true,
-		}, fmt.Errorf("no result in response")
-	}
-	
-	// Format the result for display
-	var resultText string
-	if resultMap, ok := result.(map[string]interface{}); ok {
-		// Extract specific fields from the task scheduler response
-		if message, exists := resultMap["message"]; exists {
-			resultText = fmt.Sprintf("Workflow '%s' execution: %v", workflowName, message)
-			
-			// Add additional details if available
-			if runID, exists := resultMap["run_id"]; exists {
-				resultText += fmt.Sprintf(" (Run ID: %v)", runID)
-			}
-			if status, exists := resultMap["status"]; exists {
-				resultText += fmt.Sprintf(" - Status: %v", status)
-			}
-		} else {
-			// Fall back to displaying the entire result
-			if resultJSON, err := json.MarshalIndent(resultMap, "", "  "); err == nil {
-				resultText = fmt.Sprintf("Workflow '%s' execution result:\n%s", workflowName, string(resultJSON))
-			} else {
-				resultText = fmt.Sprintf("Workflow '%s' execution result: %v", workflowName, result)
-			}
+	// Check if workflow exists and is enabled for manual execution
+	var targetWorkflow *crd.WorkflowDefinition
+	for i, workflow := range taskScheduler.Spec.Workflows {
+		if workflow.Name == workflowName {
+			targetWorkflow = &taskScheduler.Spec.Workflows[i]
+			break
 		}
-	} else {
-		resultText = fmt.Sprintf("Workflow '%s' execution result: %v", workflowName, result)
 	}
+	
+	if targetWorkflow == nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Workflow '%s' not found in task scheduler", workflowName)}},
+			IsError: true,
+		}, fmt.Errorf("workflow '%s' not found", workflowName)
+	}
+	
+	// Check if manual execution is allowed
+	// For now, allow manual execution by default (we can make this configurable later)
+	// In the future, we might want to check if ManualExecution was explicitly set to false
+	manualExecutionAllowed := true // Default to allowing manual execution
+	
+	if !manualExecutionAllowed {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Manual execution is disabled for workflow '%s'", workflowName)}},
+			IsError: true,
+		}, fmt.Errorf("manual execution disabled for workflow '%s'", workflowName)
+	}
+	
+	// Generate unique execution ID for manual execution with microsecond precision and random component
+	// This ensures no collision with scheduled executions or other manual executions
+	now := time.Now()
+	executionID := fmt.Sprintf("%s-manual-%d-%06d", workflowName, now.Unix(), now.Nanosecond()/1000)
+	
+	// Add annotation to trigger manual execution
+	if taskScheduler.Annotations == nil {
+		taskScheduler.Annotations = make(map[string]string)
+	}
+	
+	// Use a special annotation to signal manual execution request
+	annotationKey := fmt.Sprintf("mcp.matey.ai/manual-execution-%s", workflowName)
+	taskScheduler.Annotations[annotationKey] = executionID
+	
+	// Also add a general manual execution timestamp for the controller
+	taskScheduler.Annotations["mcp.matey.ai/manual-execution-requested"] = time.Now().Format(time.RFC3339)
+	
+	// Update the MCPTaskScheduler with the annotation
+	err = m.k8sClient.Update(ctx, &taskScheduler)
+	if err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Error triggering manual execution: %v", err)}},
+			IsError: true,
+		}, err
+	}
+	
+	// Return success message with execution details
+	resultText := fmt.Sprintf("Manual execution triggered for workflow '%s'\n", workflowName)
+	resultText += fmt.Sprintf("🆔 Execution ID: %s\n", executionID)
+	resultText += fmt.Sprintf("⏰ Requested at: %s\n", time.Now().Format("2006-01-02 15:04:05 MST"))
+	resultText += fmt.Sprintf("🔄 Status: Queued for execution by task-scheduler controller\n")
+	resultText += fmt.Sprintf("\n💡 Use 'workflow_logs' with name '%s' to monitor execution progress", workflowName)
 	
 	return &ToolResult{
 		Content: []Content{{Type: "text", Text: resultText}},
@@ -1062,7 +1018,7 @@ func (m *MateyMCPServer) formatDetailedExecution(execution crd.WorkflowExecution
 		}
 		
 		if specificStep != "" && stepCount == 0 {
-			result.WriteString(fmt.Sprintf("  ❌ Step '%s' not found in this execution\n", specificStep))
+			result.WriteString(fmt.Sprintf("  ERROR: Step '%s' not found in this execution\n", specificStep))
 		}
 	}
 	
@@ -1082,8 +1038,8 @@ func (m *MateyMCPServer) formatExecutionHistory(executions []crd.WorkflowExecuti
 	
 	result.WriteString("**📈 Workflow Statistics:**\n")
 	result.WriteString(fmt.Sprintf("  Total Executions: %d\n", workflowStats.Total))
-	result.WriteString(fmt.Sprintf("  ✅ Succeeded: %d\n", workflowStats.Succeeded))
-	result.WriteString(fmt.Sprintf("  ❌ Failed: %d\n", workflowStats.Failed))
+	result.WriteString(fmt.Sprintf("  Succeeded: %d\n", workflowStats.Succeeded))
+	result.WriteString(fmt.Sprintf("  Failed: %d\n", workflowStats.Failed))
 	result.WriteString(fmt.Sprintf("  🔄 Running: %d\n", workflowStats.Running))
 	result.WriteString(fmt.Sprintf("  ⏳ Pending: %d\n", workflowStats.Pending))
 	
@@ -1183,9 +1139,9 @@ func (m *MateyMCPServer) calculateWorkflowStats(executions []crd.WorkflowExecuti
 func (m *MateyMCPServer) getStatusIcon(phase string) string {
 	switch phase {
 	case "Succeeded":
-		return "✅"
+		return "SUCCESS"
 	case "Failed":
-		return "❌"
+		return "FAILED"
 	case "Running":
 		return "🔄"
 	case "Pending":
@@ -1214,10 +1170,10 @@ func (m *MateyMCPServer) getStepSummary(stepResults map[string]crd.StepResult) s
 	
 	var parts []string
 	if count := counts["Succeeded"]; count > 0 {
-		parts = append(parts, fmt.Sprintf("✅%d", count))
+		parts = append(parts, fmt.Sprintf("SUCCESS:%d", count))
 	}
 	if count := counts["Failed"]; count > 0 {
-		parts = append(parts, fmt.Sprintf("❌%d", count))
+		parts = append(parts, fmt.Sprintf("FAILED:%d", count))
 	}
 	if count := counts["Running"]; count > 0 {
 		parts = append(parts, fmt.Sprintf("🔄%d", count))

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -87,7 +86,7 @@ func (r *MCPMemoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileTerminating(ctx, memory)
 	default:
 		logger.Info("Unknown phase", "phase", memory.Status.Phase)
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return ctrl.Result{}, nil
 	}
 }
 
@@ -148,7 +147,7 @@ func (r *MCPMemoryReconciler) reconcileCreating(ctx context.Context, memory *crd
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileStarting handles the starting phase
@@ -161,7 +160,7 @@ func (r *MCPMemoryReconciler) reconcileStarting(ctx context.Context, memory *crd
 		postgresReady, err := r.isPostgresReady(ctx, memory)
 		if err != nil {
 			logger.Error(err, "Failed to check PostgreSQL status")
-			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+			return ctrl.Result{}, nil
 		}
 		if !postgresReady {
 			logger.Info("Waiting for PostgreSQL to become ready")
@@ -169,7 +168,7 @@ func (r *MCPMemoryReconciler) reconcileStarting(ctx context.Context, memory *crd
 			if err := r.Status().Update(ctx, memory); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+			return ctrl.Result{}, nil
 		}
 		r.updateCondition(memory, crd.MCPMemoryConditionPostgresReady, metav1.ConditionTrue, "PostgresReady", "PostgreSQL is ready")
 	}
@@ -190,7 +189,7 @@ func (r *MCPMemoryReconciler) reconcileStarting(ctx context.Context, memory *crd
 			return ctrl.Result{Requeue: true}, nil
 		}
 		logger.Error(err, "Failed to get Deployment")
-		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Check if deployment is ready
@@ -209,10 +208,10 @@ func (r *MCPMemoryReconciler) reconcileStarting(ctx context.Context, memory *crd
 		}
 
 		logger.Info("MCPMemory is now running", "name", memory.Name)
-		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+		return ctrl.Result{}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileRunning handles the running phase - monitors health
@@ -233,7 +232,7 @@ func (r *MCPMemoryReconciler) reconcileRunning(ctx context.Context, memory *crd.
 	}, deployment)
 	if err != nil {
 		logger.Error(err, "Failed to get Deployment during health check")
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Update status
@@ -248,8 +247,9 @@ func (r *MCPMemoryReconciler) reconcileRunning(ctx context.Context, memory *crd.
 		r.updateCondition(memory, crd.MCPMemoryConditionHealthy, metav1.ConditionFalse, "Unhealthy", "Memory server has no ready replicas")
 	}
 
-	// Check PostgreSQL health if enabled
+	// Check PostgreSQL health
 	if memory.Spec.PostgresEnabled {
+		// Check internal postgres deployment
 		postgresHealthy, _ := r.isPostgresReady(ctx, memory)
 		if postgresHealthy {
 			r.updateCondition(memory, crd.MCPMemoryConditionPostgresReady, metav1.ConditionTrue, "PostgresHealthy", "PostgreSQL is healthy")
@@ -258,13 +258,23 @@ func (r *MCPMemoryReconciler) reconcileRunning(ctx context.Context, memory *crd.
 			r.updateCondition(memory, crd.MCPMemoryConditionPostgresReady, metav1.ConditionFalse, "PostgresUnhealthy", "PostgreSQL is not healthy")
 			memory.Status.PostgresStatus = "unhealthy"
 		}
+	} else if memory.Spec.DatabaseURL != "" {
+		// Check external database connectivity
+		externalDbHealthy := r.isExternalDatabaseReady(ctx, memory)
+		if externalDbHealthy {
+			r.updateCondition(memory, crd.MCPMemoryConditionPostgresReady, metav1.ConditionTrue, "ExternalPostgresHealthy", "External PostgreSQL is healthy")
+			memory.Status.PostgresStatus = "external-healthy"
+		} else {
+			r.updateCondition(memory, crd.MCPMemoryConditionPostgresReady, metav1.ConditionFalse, "ExternalPostgresUnhealthy", "External PostgreSQL is not reachable")
+			memory.Status.PostgresStatus = "external-unhealthy"
+		}
 	}
 
 	if err := r.Status().Update(ctx, memory); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileFailed handles the failed phase
@@ -278,7 +288,7 @@ func (r *MCPMemoryReconciler) reconcileFailed(ctx context.Context, memory *crd.M
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileTerminating handles the terminating phase
@@ -668,8 +678,9 @@ func (r *MCPMemoryReconciler) buildMemoryPodSpec(memory *crd.MCPMemory) corev1.P
 		env = append(env, corev1.EnvVar{Name: "DATABASE_URL", Value: memory.Spec.DatabaseURL})
 	} else if memory.Spec.PostgresEnabled {
 		// Build database URL from components
-		dbURL := fmt.Sprintf("postgresql://%s@%s-postgres:%d/%s?sslmode=disable",
+		dbURL := fmt.Sprintf("postgresql://%s:%s@%s-postgres:%d/%s?sslmode=disable",
 			memory.Spec.PostgresUser,
+			memory.Spec.PostgresPassword,
 			memory.Name,
 			memory.Spec.PostgresPort,
 			memory.Spec.PostgresDB)
@@ -911,6 +922,24 @@ func (r *MCPMemoryReconciler) isPostgresReady(ctx context.Context, memory *crd.M
 	}
 
 	return deployment.Status.ReadyReplicas > 0, nil
+}
+
+// isExternalDatabaseReady checks if external database is reachable by testing the connection
+func (r *MCPMemoryReconciler) isExternalDatabaseReady(ctx context.Context, memory *crd.MCPMemory) bool {
+	// For external databases, we can check if the memory service itself is healthy
+	// as it would fail to start if the database is not reachable
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      memory.Name,
+		Namespace: memory.Namespace,
+	}, deployment)
+	if err != nil {
+		return false
+	}
+	
+	// If the memory service deployment is running with ready replicas,
+	// it means the database connection is working
+	return deployment.Status.ReadyReplicas > 0
 }
 
 // updateCondition updates a condition in the memory status

@@ -34,7 +34,7 @@ var (
 func init() {
 	schedulerExecuteWorkflowCmd.Flags().StringVar(&workflowNameFlag, "workflow-name", "", "Name of the workflow to execute")
 	schedulerExecuteWorkflowCmd.Flags().StringVar(&executionIDFlag, "execution-id", "", "Execution ID for this workflow run")
-	schedulerExecuteWorkflowCmd.Flags().StringVar(&workflowNamespace, "namespace", "default", "Kubernetes namespace")
+	schedulerExecuteWorkflowCmd.Flags().StringVar(&workflowNamespace, "namespace", "matey", "Kubernetes namespace")
 	
 	schedulerExecuteWorkflowCmd.MarkFlagRequired("workflow-name")
 	schedulerExecuteWorkflowCmd.MarkFlagRequired("execution-id")

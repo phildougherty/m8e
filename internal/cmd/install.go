@@ -38,17 +38,22 @@ Examples:
   matey install --dry-run          # Show what would be installed`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			namespace, _ := cmd.Flags().GetString("namespace")
 
-			return installCRDs(dryRun)
+			return installCRDs(dryRun, namespace)
 		},
 	}
 
 	cmd.Flags().Bool("dry-run", false, "Print the resources that would be installed without actually installing them")
+	cmd.Flags().String("namespace", "matey", "Namespace to install resources into")
 
 	return cmd
 }
 
-func installCRDs(dryRun bool) error {
+func installCRDs(dryRun bool, namespace string) error {
+	if namespace == "" {
+		namespace = "matey" // Default to matey namespace
+	}
 	ctx := context.Background()
 
 	if dryRun {
@@ -58,9 +63,16 @@ func installCRDs(dryRun bool) error {
 		fmt.Println("✓ MCPTaskScheduler CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ MCPProxy CRD (mcp.matey.ai/v1)")
 		fmt.Println("✓ MCPPostgres CRD (mcp.matey.ai/v1)")
-		fmt.Println("✓ ServiceAccount: matey-controller")
+		fmt.Printf("✓ ServiceAccount: matey-controller (namespace: %s)\n", namespace)
 		fmt.Println("✓ ClusterRole: matey-controller")
-		fmt.Println("✓ ClusterRoleBinding: matey-controller")
+		fmt.Printf("✓ ClusterRoleBinding: matey-controller (namespace: %s)\n", namespace)
+		fmt.Printf("✓ ServiceAccount: matey-mcp-server (namespace: %s)\n", namespace)
+		fmt.Println("✓ ClusterRole: matey-mcp-server")
+		fmt.Printf("✓ ClusterRoleBinding: matey-mcp-server (namespace: %s)\n", namespace)
+		fmt.Printf("✓ ServiceAccount: task-scheduler (namespace: %s)\n", namespace)
+		fmt.Println("✓ ClusterRole: matey-task-scheduler")
+		fmt.Printf("✓ ClusterRoleBinding: matey-task-scheduler (namespace: %s)\n", namespace)
+		fmt.Printf("✓ Matey MCP Server deployment (namespace: %s)\n", namespace)
 		return nil
 	}
 
@@ -79,11 +91,11 @@ func installCRDs(dryRun bool) error {
 	}
 
 	// Install RBAC resources
-	err = installServiceAccount(ctx, k8sClient)
+	err = installServiceAccount(ctx, k8sClient, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to install ServiceAccount: %w", err)
 	}
-	fmt.Println("✓ ServiceAccount installed")
+	fmt.Printf("✓ ServiceAccount installed in namespace %s\n", namespace)
 
 	err = installClusterRole(ctx, k8sClient)
 	if err != nil {
@@ -91,18 +103,32 @@ func installCRDs(dryRun bool) error {
 	}
 	fmt.Println("✓ ClusterRole installed")
 
-	err = installClusterRoleBinding(ctx, k8sClient)
+	err = installClusterRoleBinding(ctx, k8sClient, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to install ClusterRoleBinding: %w", err)
 	}
 	fmt.Println("✓ ClusterRoleBinding installed")
 
+	// Install MCP Server RBAC
+	err = installMCPServerRBAC(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to install MCP Server RBAC: %w", err)
+	}
+	fmt.Printf("✓ MCP Server RBAC installed in namespace %s\n", namespace)
+
+	// Install Task Scheduler RBAC
+	err = installTaskSchedulerRBAC(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to install Task Scheduler RBAC: %w", err)
+	}
+	fmt.Printf("✓ Task Scheduler RBAC installed in namespace %s\n", namespace)
+
 	// Install built-in matey-mcp-server
-	err = installMateaMCPServer(ctx, k8sClient)
+	err = installMateaMCPServer(ctx, k8sClient, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to install Matey MCP Server: %w", err)
 	}
-	fmt.Println("✓ Matey MCP Server installed")
+	fmt.Printf("✓ Matey MCP Server installed in namespace %s\n", namespace)
 
 	fmt.Println("\nMatey installation complete!")
 	fmt.Println("You can now run 'matey up' or 'matey proxy' to start your services.")
@@ -192,11 +218,11 @@ func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
 }
 
 // installServiceAccount installs the matey-controller service account
-func installServiceAccount(ctx context.Context, k8sClient client.Client) error {
+func installServiceAccount(ctx context.Context, k8sClient client.Client, namespace string) error {
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "matey-controller",
-			Namespace: "default",
+			Namespace: namespace,
 		},
 	}
 
@@ -216,17 +242,12 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{""},
-				Resources: []string{"pods", "services", "endpoints", "persistentvolumeclaims", "events", "configmaps", "secrets", "serviceaccounts"},
+				Resources: []string{"pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "namespaces"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"apps"},
-				Resources: []string{"deployments", "daemonsets", "replicasets", "statefulsets"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
-			},
-			{
-				APIGroups: []string{"networking.k8s.io"},
-				Resources: []string{"ingresses"},
+				Resources: []string{"deployments", "replicasets"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
@@ -235,19 +256,34 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
+				APIGroups: []string{"networking.k8s.io"},
+				Resources: []string{"ingresses", "networkpolicies"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
 				APIGroups: []string{"policy"},
 				Resources: []string{"poddisruptionbudgets"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
+				APIGroups: []string{""},
+				Resources: []string{"events"},
+				Verbs:     []string{"get", "list", "watch", "create"},
+			},
+			{
+				APIGroups: []string{"metrics.k8s.io"},
+				Resources: []string{"pods", "nodes"},
+				Verbs:     []string{"get", "list"},
+			},
+			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcptoolboxes", "mcppostgres"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres", "mcptoolboxes"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcptoolboxes/status", "mcppostgres/status"},
-				Verbs:     []string{"get", "update", "patch"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"},
+				Verbs:     []string{"get", "list", "watch", "update", "patch"},
 			},
 		},
 	}
@@ -260,7 +296,7 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 }
 
 // installClusterRoleBinding installs the matey-controller cluster role binding
-func installClusterRoleBinding(ctx context.Context, k8sClient client.Client) error {
+func installClusterRoleBinding(ctx context.Context, k8sClient client.Client, namespace string) error {
 	crb := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "matey-controller",
@@ -269,7 +305,7 @@ func installClusterRoleBinding(ctx context.Context, k8sClient client.Client) err
 			{
 				Kind:      "ServiceAccount",
 				Name:      "matey-controller",
-				Namespace: "default",
+				Namespace: namespace,
 			},
 		},
 		RoleRef: rbacv1.RoleRef{
@@ -286,8 +322,199 @@ func installClusterRoleBinding(ctx context.Context, k8sClient client.Client) err
 	return nil
 }
 
+// installMCPServerRBAC installs RBAC resources for the MCP server
+func installMCPServerRBAC(ctx context.Context, k8sClient client.Client, namespace string) error {
+	// Create MCP Server ServiceAccount
+	mcpSA := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-mcp-server",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "mcp-server",
+			},
+		},
+	}
+	
+	err := k8sClient.Create(ctx, mcpSA)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Create MCP Server ClusterRole
+	mcpCR := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "matey-mcp-server",
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "mcp-server",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"services", "endpoints", "pods", "configmaps", "secrets", "namespaces", "persistentvolumeclaims"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"apps"},
+				Resources: []string{"deployments", "replicasets", "daemonsets", "statefulsets"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres", "mcptoolboxes"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"},
+				Verbs:     []string{"get", "update", "patch"},
+			},
+			{
+				APIGroups: []string{"batch"},
+				Resources: []string{"jobs", "cronjobs"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"networking.k8s.io"},
+				Resources: []string{"ingresses"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+		},
+	}
+
+	err = k8sClient.Create(ctx, mcpCR)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Create MCP Server ClusterRoleBinding
+	mcpCRB := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "matey-mcp-server",
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "mcp-server",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "matey-mcp-server",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "matey-mcp-server",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	err = k8sClient.Create(ctx, mcpCRB)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	return nil
+}
+
+// installTaskSchedulerRBAC installs RBAC resources for the Task Scheduler
+func installTaskSchedulerRBAC(ctx context.Context, k8sClient client.Client, namespace string) error {
+	// Create Task Scheduler ServiceAccount
+	taskSchedulerSA := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "task-scheduler",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "task-scheduler",
+			},
+		},
+	}
+	
+	err := k8sClient.Create(ctx, taskSchedulerSA)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Create Task Scheduler ClusterRole
+	taskSchedulerCR := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "matey-task-scheduler",
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "task-scheduler",
+			},
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"persistentvolumeclaims"},
+				Verbs:     []string{"get", "list", "watch", "create", "delete"},
+			},
+			{
+				APIGroups: []string{"batch"},
+				Resources: []string{"jobs"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcptaskschedulers"},
+				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+			},
+			{
+				APIGroups: []string{"mcp.matey.ai"},
+				Resources: []string{"mcptaskschedulers/status"},
+				Verbs:     []string{"get", "update", "patch"},
+			},
+		},
+	}
+
+	err = k8sClient.Create(ctx, taskSchedulerCR)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	// Create Task Scheduler ClusterRoleBinding
+	taskSchedulerCRB := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "matey-task-scheduler",
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "matey",
+				"app.kubernetes.io/component": "task-scheduler",
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "task-scheduler",
+				Namespace: namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "matey-task-scheduler",
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+
+	err = k8sClient.Create(ctx, taskSchedulerCRB)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	return nil
+}
+
 // installMateaMCPServer installs the built-in Matey MCP Server deployment
-func installMateaMCPServer(ctx context.Context, k8sClient client.Client) error {
+func installMateaMCPServer(ctx context.Context, k8sClient client.Client, namespace string) error {
 	// Read the YAML file
 	yamlData, err := os.ReadFile("k8s/matey-mcp-server-deployment.yaml")
 	if err != nil {
@@ -312,6 +539,18 @@ func installMateaMCPServer(ctx context.Context, k8sClient client.Client) error {
 
 		// Convert to unstructured object
 		unstructuredObj := &unstructured.Unstructured{Object: obj}
+		
+		// Override namespace for namespaced resources
+		if unstructuredObj.GetKind() != "ClusterRole" && unstructuredObj.GetKind() != "ClusterRoleBinding" {
+			unstructuredObj.SetNamespace(namespace)
+		}
+		
+		// Skip creating RBAC resources as they're handled separately
+		if unstructuredObj.GetKind() == "ServiceAccount" || 
+		   unstructuredObj.GetKind() == "ClusterRole" || 
+		   unstructuredObj.GetKind() == "ClusterRoleBinding" {
+			continue
+		}
 		
 		// Apply the resource
 		err = k8sClient.Create(ctx, unstructuredObj)

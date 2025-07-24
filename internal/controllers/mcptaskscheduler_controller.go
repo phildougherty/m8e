@@ -104,7 +104,7 @@ func (r *MCPTaskSchedulerReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return r.reconcileTerminating(ctx, taskScheduler)
 	default:
 		logger.Info("Unknown phase", "phase", taskScheduler.Status.Phase)
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return ctrl.Result{}, nil
 	}
 }
 
@@ -147,7 +147,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileCreating(ctx context.Context, task
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileStarting handles the starting phase
@@ -163,7 +163,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileStarting(ctx context.Context, task
 	}, deployment)
 	if err != nil {
 		logger.Error(err, "Failed to get Deployment")
-		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Check if deployment is ready
@@ -181,10 +181,10 @@ func (r *MCPTaskSchedulerReconciler) reconcileStarting(ctx context.Context, task
 		}
 
 		logger.Info("MCPTaskScheduler is now running", "name", taskScheduler.Name)
-		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+		return ctrl.Result{}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileRunning handles the running phase - monitors health and manages tasks
@@ -209,10 +209,13 @@ func (r *MCPTaskSchedulerReconciler) reconcileRunning(ctx context.Context, taskS
 		// Don't fail reconciliation for stats update errors
 	}
 
-	// Handle workflow scheduling
-	if err := r.reconcileWorkflows(ctx, taskScheduler); err != nil {
-		logger.Error(err, "Failed to reconcile workflows")
-		// Don't fail reconciliation for workflow errors
+	// Handle workflow scheduling only when fully running
+	// Skip during Creating/Starting phases to avoid disrupting cron schedules
+	if taskScheduler.Status.Phase == crd.MCPTaskSchedulerPhaseRunning {
+		if err := r.reconcileWorkflows(ctx, taskScheduler); err != nil {
+			logger.Error(err, "Failed to reconcile workflows")
+			// Don't fail reconciliation for workflow errors
+		}
 	}
 	
 	// Handle auto-scaling if enabled
@@ -231,7 +234,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileRunning(ctx context.Context, taskS
 	}, deployment)
 	if err != nil {
 		logger.Error(err, "Failed to get Deployment during health check")
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Update status
@@ -250,7 +253,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileRunning(ctx context.Context, taskS
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	return ctrl.Result{}, nil // Event-driven reconciliation
 }
 
 // reconcileFailed handles the failed phase
@@ -264,7 +267,7 @@ func (r *MCPTaskSchedulerReconciler) reconcileFailed(ctx context.Context, taskSc
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	return ctrl.Result{}, nil
 }
 
 // reconcileTerminating handles the terminating phase
@@ -630,9 +633,12 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		podSpec.NodeSelector = taskScheduler.Spec.NodeSelector
 	}
 
-	// Apply service account
+	// Apply service account - default to task-scheduler if not specified
 	if taskScheduler.Spec.ServiceAccount != "" {
 		podSpec.ServiceAccountName = taskScheduler.Spec.ServiceAccount
+	} else {
+		// Default to dedicated task-scheduler service account with proper RBAC
+		podSpec.ServiceAccountName = "task-scheduler"
 	}
 
 	return podSpec
@@ -1252,6 +1258,12 @@ func (r *MCPTaskSchedulerReconciler) reconcileWorkflows(ctx context.Context, tas
 		// Don't fail reconciliation for status update errors
 	}
 	
+	// Handle manual execution requests from annotations
+	if err := r.handleManualExecutions(ctx, taskScheduler, workflowScheduler); err != nil {
+		logger.Error(err, "Failed to handle manual executions")
+		// Don't fail reconciliation for manual execution errors
+	}
+	
 	return nil
 }
 
@@ -1321,6 +1333,98 @@ func (r *MCPTaskSchedulerReconciler) cleanupWorkflowScheduler(ctx context.Contex
 	if workflowScheduler, exists := r.workflowSchedulers[schedulerKey]; exists {
 		workflowScheduler.Stop()
 		delete(r.workflowSchedulers, schedulerKey)
+	}
+	
+	return nil
+}
+
+// handleManualExecutions processes manual execution requests from annotations
+func (r *MCPTaskSchedulerReconciler) handleManualExecutions(ctx context.Context, taskScheduler *crd.MCPTaskScheduler, workflowScheduler *scheduler.WorkflowScheduler) error {
+	logger := log.FromContext(ctx)
+	
+	if taskScheduler.Annotations == nil {
+		return nil
+	}
+	
+	// Look for manual execution annotations
+	var annotationsToRemove []string
+	for key, executionID := range taskScheduler.Annotations {
+		if !strings.HasPrefix(key, "mcp.matey.ai/manual-execution-") {
+			continue
+		}
+		
+		// Extract workflow name from annotation key
+		workflowName := strings.TrimPrefix(key, "mcp.matey.ai/manual-execution-")
+		if workflowName == "" {
+			continue
+		}
+		
+		logger.Info("Processing manual execution request", "workflow", workflowName, "executionID", executionID)
+		
+		// Find the workflow definition
+		var targetWorkflow *crd.WorkflowDefinition
+		for i, workflow := range taskScheduler.Spec.Workflows {
+			if workflow.Name == workflowName {
+				targetWorkflow = &taskScheduler.Spec.Workflows[i]
+				break
+			}
+		}
+		
+		if targetWorkflow == nil {
+			logger.Error(fmt.Errorf("workflow not found"), "Cannot execute workflow", "workflow", workflowName)
+			annotationsToRemove = append(annotationsToRemove, key)
+			continue
+		}
+		
+		// Check if manual execution is allowed (default to true for now)
+		// In the future, we can check the ManualExecution flag properly
+		manualExecutionAllowed := true
+		if !manualExecutionAllowed {
+			logger.Error(fmt.Errorf("manual execution disabled"), "Manual execution not allowed", "workflow", workflowName)
+			annotationsToRemove = append(annotationsToRemove, key)
+			continue
+		}
+		
+		// Execute the workflow manually using the workflow scheduler
+		if err := workflowScheduler.ExecuteWorkflowManually(ctx, targetWorkflow, executionID); err != nil {
+			logger.Error(err, "Failed to execute workflow manually", "workflow", workflowName, "executionID", executionID)
+			// Don't remove annotation yet - retry on next reconcile
+			continue
+		}
+		
+		logger.Info("Successfully triggered manual workflow execution", "workflow", workflowName, "executionID", executionID)
+		
+		// Mark annotation for removal after successful execution
+		annotationsToRemove = append(annotationsToRemove, key)
+	}
+	
+	// Remove processed annotations
+	if len(annotationsToRemove) > 0 {
+		// Create a copy to avoid modifying during iteration
+		updatedTaskScheduler := taskScheduler.DeepCopy()
+		for _, key := range annotationsToRemove {
+			delete(updatedTaskScheduler.Annotations, key)
+		}
+		
+		// Also remove the general manual execution timestamp if no more manual executions are pending
+		hasManualExecutions := false
+		for key := range updatedTaskScheduler.Annotations {
+			if strings.HasPrefix(key, "mcp.matey.ai/manual-execution-") {
+				hasManualExecutions = true
+				break
+			}
+		}
+		if !hasManualExecutions {
+			delete(updatedTaskScheduler.Annotations, "mcp.matey.ai/manual-execution-requested")
+		}
+		
+		// Update the resource
+		if err := r.Update(ctx, updatedTaskScheduler); err != nil {
+			logger.Error(err, "Failed to remove manual execution annotations")
+			return err
+		}
+		
+		logger.Info("Removed processed manual execution annotations", "count", len(annotationsToRemove))
 	}
 	
 	return nil

@@ -103,7 +103,7 @@ func enableTaskScheduler(configFile string, cfg *config.ComposeConfig) error {
 		cfg.TaskScheduler.PostgresEnabled = true
 	}
 	if cfg.TaskScheduler.DatabaseURL == "" {
-		cfg.TaskScheduler.DatabaseURL = "postgresql://postgres:password@matey-postgres:5432/matey?sslmode=disable"
+		cfg.TaskScheduler.DatabaseURL = "postgresql://postgres:password@matey-postgres.matey.svc.cluster.local:5432/matey?sslmode=disable"
 	}
 	// Keep SQLite as fallback
 	if cfg.TaskScheduler.DatabasePath == "" {
@@ -164,8 +164,13 @@ func enableTaskScheduler(configFile string, cfg *config.ComposeConfig) error {
 			OptionalAuth:  false,
 			AllowAPIKey:   &[]bool{true}[0],
 		},
-		DependsOn: []string{"matey-postgres"},
+		// DependsOn removed - postgres should be managed as MCPPostgres resource
 		Volumes: cfg.TaskScheduler.Volumes,
+	}
+
+	// Ensure postgres resource exists (don't add to servers config)
+	if err := EnsurePostgresResource(); err != nil {
+		fmt.Printf("Warning: Failed to ensure postgres resource: %v\n", err)
 	}
 
 	fmt.Printf("Task scheduler enabled in both built-in config and servers list (port: %d).\n", cfg.TaskScheduler.Port)
@@ -266,7 +271,7 @@ Examples:
 
 	cmd.Flags().StringVarP(&filename, "file", "f", "", "Workflow definition file")
 	cmd.Flags().StringVar(&template, "template", "", "Template name to use")
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 	cmd.Flags().StringArrayVar(&parameters, "param", []string{}, "Template parameters (key=value)")
 	cmd.Flags().StringVar(&schedule, "schedule", "", "Cron schedule expression")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "Timezone for schedule")
@@ -291,7 +296,7 @@ func newWorkflowListCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format (table, json, yaml)")
 	cmd.Flags().BoolVar(&allNamespaces, "all-namespaces", false, "List workflows from all namespaces")
 
@@ -313,7 +318,7 @@ func newWorkflowGetCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 	cmd.Flags().StringVarP(&output, "output", "o", "yaml", "Output format (table, json, yaml)")
 
 	return cmd
@@ -331,7 +336,7 @@ func newWorkflowDeleteCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 
 	return cmd
 }
@@ -348,7 +353,7 @@ func newWorkflowPauseCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 
 	return cmd
 }
@@ -365,7 +370,7 @@ func newWorkflowResumeCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 
 	return cmd
 }
@@ -387,7 +392,7 @@ func newWorkflowLogsCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 	cmd.Flags().StringVar(&step, "step", "", "Get logs for specific step")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().IntVar(&tail, "tail", 100, "Number of lines to show from the end")
@@ -431,7 +436,7 @@ func newWorkflowExecuteCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for execution to complete")
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "Timeout for waiting")
 
@@ -788,7 +793,7 @@ func printWorkflowTable(workflows []crd.WorkflowDefinition) {
 		}
 
 		// Namespace would need to be passed separately or tracked in context
-		namespace := "default" // Placeholder for display
+		namespace := "matey" // Placeholder for display
 		if len(namespace) > 15 {
 			namespace = namespace[:12] + "..."
 		}
@@ -824,7 +829,7 @@ func printWorkflowTable(workflows []crd.WorkflowDefinition) {
 
 func printWorkflowDetails(workflow *crd.WorkflowDefinition, taskScheduler *crd.MCPTaskScheduler) {
 	fmt.Printf("Name:        %s\n", workflow.Name)
-	fmt.Printf("Namespace:   %s\n", "default") // Namespace tracked separately
+	fmt.Printf("Namespace:   %s\n", "matey") // Namespace tracked separately
 	fmt.Printf("Template:    %s\n", "Custom")   // Template field not available in WorkflowDefinition
 	fmt.Printf("Schedule:    %s\n", workflow.Schedule)
 	fmt.Printf("Timezone:    %s\n", workflow.Timezone)

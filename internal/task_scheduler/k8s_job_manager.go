@@ -472,8 +472,34 @@ func (jm *K8sJobManager) createJobSpec(ctx context.Context, task *TaskRequest) (
 		case "pvc":
 			pvcName := volConfig.Source.PVC.ClaimName
 			if pvcName == "" {
-				// Auto-generate PVC name
-				pvcName = fmt.Sprintf("%s-%s", jobName, volConfig.Name)
+				// Auto-generate PVC name using a deterministic but reusable identifier
+				// Priority: 1) explicit workflow metadata, 2) task name + image hash, 3) task name only
+				workflowName := ""
+				if workflow, ok := task.Metadata["workflow"]; ok {
+					if workflowStr, ok := workflow.(string); ok {
+						workflowName = workflowStr
+					}
+				}
+				
+				if workflowName == "" {
+					// Create a stable identifier based on task characteristics
+					// This allows reuse for tasks with same name/image but prevents collisions with different images
+					if task.Image != "" {
+						// Use task name + short hash of image for uniqueness while allowing reuse
+						imageHash := fmt.Sprintf("%x", md5.Sum([]byte(task.Image)))[:8]
+						workflowName = fmt.Sprintf("%s-%s", task.Name, imageHash)
+					} else {
+						// Fallback to just task name (less ideal but better than "default")
+						workflowName = task.Name
+					}
+				}
+				
+				// Ensure we have a valid name
+				if workflowName == "" {
+					workflowName = "unnamed-task"
+				}
+				
+				pvcName = fmt.Sprintf("workflow-%s-%s", workflowName, volConfig.Name)
 			}
 
 			volume = corev1.Volume{
@@ -682,8 +708,24 @@ func (jm *K8sJobManager) createPVCForTask(ctx context.Context, pvcName string, c
 		pvc.ObjectMeta.Annotations["mcp.matey.ai/auto-delete"] = "true"
 	}
 
-	_, err := jm.client.CoreV1().PersistentVolumeClaims(jm.namespace).Create(ctx, pvc, metav1.CreateOptions{})
+	// Check if PVC already exists before creating
+	existingPVC, err := jm.client.CoreV1().PersistentVolumeClaims(jm.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err == nil {
+		// PVC already exists, check if it's compatible
+		if existingPVC.Status.Phase == corev1.ClaimBound || existingPVC.Status.Phase == corev1.ClaimPending {
+			jm.logger.Info("Reusing existing PVC %s", pvcName)
+			return nil
+		}
+	}
+
+	// Create PVC only if it doesn't exist or isn't usable
+	_, err = jm.client.CoreV1().PersistentVolumeClaims(jm.namespace).Create(ctx, pvc, metav1.CreateOptions{})
 	if err != nil {
+		// If creation fails due to AlreadyExists, that's okay - another process created it
+		if strings.Contains(err.Error(), "already exists") {
+			jm.logger.Info("PVC %s already exists, continuing", pvcName)
+			return nil
+		}
 		return fmt.Errorf("failed to create PVC: %w", err)
 	}
 

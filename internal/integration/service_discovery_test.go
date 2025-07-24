@@ -23,7 +23,7 @@ func TestServiceDiscoveryIntegration(t *testing.T) {
 	// Create service discovery manager with fake client integration
 	serviceDiscovery := &discovery.K8sServiceDiscovery{
 		Client:    fakeClient,
-		Namespace: "default",
+		Namespace: "matey",
 		Logger:    nil,
 	}
 
@@ -35,7 +35,7 @@ func TestServiceDiscoveryIntegration(t *testing.T) {
 		httpService := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "http-mcp-server",
-				Namespace: "default",
+				Namespace: "matey",
 				Labels: map[string]string{
 					"mcp.matey.ai/role":         "server",
 					"mcp.matey.ai/protocol":     "http",
@@ -60,7 +60,7 @@ func TestServiceDiscoveryIntegration(t *testing.T) {
 		sseService := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "sse-mcp-server",
-				Namespace: "default",
+				Namespace: "matey",
 				Labels: map[string]string{
 					"mcp.matey.ai/role":         "server",
 					"mcp.matey.ai/protocol":     "sse",
@@ -118,8 +118,8 @@ func TestServiceDiscoveryIntegration(t *testing.T) {
 				if service.Port != 8080 {
 					t.Errorf("Expected port 8080, got %d", service.Port)
 				}
-				if service.Endpoint != "http-mcp-server.default.svc.cluster.local:8080" {
-					t.Errorf("Expected endpoint http-mcp-server.default.svc.cluster.local:8080, got %s", service.Endpoint)
+				if service.Endpoint != "http-mcp-server.matey.svc.cluster.local:8080" {
+					t.Errorf("Expected endpoint http-mcp-server.matey.svc.cluster.local:8080, got %s", service.Endpoint)
 				}
 				expectedCaps := []string{"tools", "resources"}
 				if len(service.Capabilities) != len(expectedCaps) {
@@ -244,7 +244,7 @@ func TestServiceDiscoveryWatcher(t *testing.T) {
 	// Create service discovery manager
 	serviceDiscovery := &discovery.K8sServiceDiscovery{
 		Client:    fakeClient,
-		Namespace: "default",
+		Namespace: "matey",
 		Logger:    nil,
 	}
 
@@ -259,7 +259,7 @@ func TestServiceDiscoveryWatcher(t *testing.T) {
 		service := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "watched-mcp-server",
-				Namespace: "default",
+				Namespace: "matey",
 				Labels: map[string]string{
 					"mcp.matey.ai/role":        "server",
 					"mcp.matey.ai/protocol":    "http",
@@ -343,7 +343,7 @@ func TestConnectionManagerHealthCheck(t *testing.T) {
 		// Add a healthy connection
 		healthyConn := &discovery.MCPConnection{
 			Name:         "healthy-server",
-			Endpoint:     "healthy-server.default.svc.cluster.local:8080",
+			Endpoint:     "healthy-server.matey.svc.cluster.local:8080",
 			Protocol:     "http",
 			Port:         8080,
 			Capabilities: []string{"tools"},
@@ -359,7 +359,7 @@ func TestConnectionManagerHealthCheck(t *testing.T) {
 		// Add an unhealthy connection (old LastSeen)
 		unhealthyConn := &discovery.MCPConnection{
 			Name:         "unhealthy-server",
-			Endpoint:     "unhealthy-server.default.svc.cluster.local:8080",
+			Endpoint:     "unhealthy-server.matey.svc.cluster.local:8080",
 			Protocol:     "http",
 			Port:         8080,
 			Capabilities: []string{"tools"},
@@ -434,7 +434,7 @@ func TestEndToEndServiceDiscovery(t *testing.T) {
 		mcpServer := &mcpv1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "discoverable-server",
-				Namespace: "default",
+				Namespace: "matey",
 			},
 			Spec: mcpv1.MCPServerSpec{
 				Image:        "discoverable-server:latest",

@@ -10,15 +10,16 @@ import (
 
 // MateyMCPServer provides MCP tools for interacting with Matey and the cluster
 type MateyMCPServer struct {
-	mateyBinary string
-	configFile  string
-	namespace   string
-	k8sClient   client.Client
-	clientset   kubernetes.Interface
-	composer    *compose.K8sComposer
-	config      *rest.Config
-	memoryStore *memory.MemoryStore
-	memoryTools *memory.MCPMemoryTools
+	mateyBinary      string
+	configFile       string
+	namespace        string
+	k8sClient        client.Client
+	clientset        kubernetes.Interface
+	composer         *compose.K8sComposer
+	config           *rest.Config
+	memoryStore      *memory.MemoryStore
+	memoryTools      *memory.MCPMemoryTools
+	workspaceManager *WorkspaceManager
 }
 
 // Tool represents an MCP tool

@@ -4,7 +4,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
@@ -286,6 +285,11 @@ func (r *MCPPostgresReconciler) reconcileDeployment(ctx context.Context, postgre
 									Name:      "postgres-data",
 									MountPath: "/var/lib/postgresql/data",
 								},
+								{
+									Name:      "init-scripts",
+									MountPath: "/docker-entrypoint-initdb.d",
+									ReadOnly:  true,
+								},
 							},
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
@@ -309,7 +313,8 @@ func (r *MCPPostgresReconciler) reconcileDeployment(ctx context.Context, postgre
 								TimeoutSeconds:      1,
 								FailureThreshold:    3,
 							},
-							Resources: r.getResourceRequirements(postgres),
+							Resources:      r.getResourceRequirements(postgres),
+							SecurityContext: r.getSecurityContext(postgres),
 						},
 					},
 					Volumes: []corev1.Volume{
@@ -318,6 +323,17 @@ func (r *MCPPostgresReconciler) reconcileDeployment(ctx context.Context, postgre
 							VolumeSource: corev1.VolumeSource{
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 									ClaimName: postgres.Name + "-data",
+								},
+							},
+						},
+						{
+							Name: "init-scripts",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: postgres.Name + "-init",
+									},
+									DefaultMode: &[]int32{0755}[0],
 								},
 							},
 						},
@@ -411,10 +427,10 @@ func (r *MCPPostgresReconciler) checkAndUpdateStatus(ctx context.Context, postgr
 
 	// Requeue if not fully ready
 	if phase != crd.PostgresPhaseRunning {
-		return ctrl.Result{RequeueAfter: time.Second * 30}, nil
+		return ctrl.Result{}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+	return ctrl.Result{}, nil
 }
 
 func (r *MCPPostgresReconciler) updateCondition(postgres *crd.MCPPostgres, conditionType crd.PostgresConditionType, status bool, reason, message string, now metav1.Time) {
@@ -456,7 +472,7 @@ func (r *MCPPostgresReconciler) updateStatusAndRequeue(ctx context.Context, post
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: time.Second * 30}, nil
+	return ctrl.Result{}, nil
 }
 
 func (r *MCPPostgresReconciler) handleDeletion(ctx context.Context, postgres *crd.MCPPostgres, log logr.Logger) (ctrl.Result, error) {
@@ -555,6 +571,55 @@ func (r *MCPPostgresReconciler) getResourceRequirements(postgres *crd.MCPPostgre
 	}
 
 	return resources
+}
+
+// getSecurityContext returns the security context for the postgres container
+func (r *MCPPostgresReconciler) getSecurityContext(postgres *crd.MCPPostgres) *corev1.SecurityContext {
+	securityContext := &corev1.SecurityContext{
+		// Postgres needs to run as root by default
+		RunAsNonRoot:             &[]bool{false}[0],
+		AllowPrivilegeEscalation: &[]bool{false}[0],
+		ReadOnlyRootFilesystem:   &[]bool{false}[0],
+	}
+
+	// Apply custom security settings if specified
+	if postgres.Spec.SecurityContext != nil {
+		if postgres.Spec.SecurityContext.RunAsUser != nil {
+			securityContext.RunAsUser = postgres.Spec.SecurityContext.RunAsUser
+		}
+		if postgres.Spec.SecurityContext.RunAsGroup != nil {
+			securityContext.RunAsGroup = postgres.Spec.SecurityContext.RunAsGroup
+		}
+		if postgres.Spec.SecurityContext.ReadOnlyRootFS {
+			securityContext.ReadOnlyRootFilesystem = &postgres.Spec.SecurityContext.ReadOnlyRootFS
+		}
+
+		// Set capabilities if specified
+		if len(postgres.Spec.SecurityContext.CapAdd) > 0 || len(postgres.Spec.SecurityContext.CapDrop) > 0 {
+			securityContext.Capabilities = &corev1.Capabilities{}
+			
+			for _, cap := range postgres.Spec.SecurityContext.CapAdd {
+				securityContext.Capabilities.Add = append(
+					securityContext.Capabilities.Add, 
+					corev1.Capability(cap),
+				)
+			}
+			
+			for _, cap := range postgres.Spec.SecurityContext.CapDrop {
+				securityContext.Capabilities.Drop = append(
+					securityContext.Capabilities.Drop, 
+					corev1.Capability(cap),
+				)
+			}
+		}
+
+		// Override runAsNonRoot only if allowing privileged operations
+		if postgres.Spec.SecurityContext.AllowPrivilegedOps {
+			securityContext.AllowPrivilegeEscalation = &[]bool{true}[0]
+		}
+	}
+
+	return securityContext
 }
 
 // SetupWithManager sets up the controller with the Manager

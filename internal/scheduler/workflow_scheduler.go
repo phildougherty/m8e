@@ -30,6 +30,8 @@ type WorkflowScheduler struct {
 	watchCancel     context.CancelFunc    // NEW: Cancel function for watch
 	watchMutex      sync.RWMutex          // NEW: Mutex for watch operations
 	enableDeletionSync bool               // NEW: Whether to delete workflows from PostgreSQL when removed from CRD
+	started         bool                  // NEW: Track if scheduler has been started
+	startMutex      sync.Mutex            // NEW: Mutex for start/stop operations
 }
 
 // NewWorkflowScheduler creates a new workflow scheduler
@@ -65,6 +67,15 @@ func (ws *WorkflowScheduler) EnableDeletionSync() {
 
 // Start starts the workflow scheduler
 func (ws *WorkflowScheduler) Start() error {
+	ws.startMutex.Lock()
+	defer ws.startMutex.Unlock()
+	
+	// Check if already started - make this method idempotent
+	if ws.started {
+		ws.logger.V(1).Info("Workflow scheduler already started, skipping")
+		return nil
+	}
+	
 	ws.logger.Info("Starting workflow scheduler")
 	
 	// Start the cron engine
@@ -91,11 +102,22 @@ func (ws *WorkflowScheduler) Start() error {
 		go ws.watchCRDChanges()
 	}
 	
+	// Mark as started
+	ws.started = true
+	
 	return nil
 }
 
 // Stop stops the workflow scheduler
 func (ws *WorkflowScheduler) Stop() {
+	ws.startMutex.Lock()
+	defer ws.startMutex.Unlock()
+	
+	if !ws.started {
+		ws.logger.V(1).Info("Workflow scheduler already stopped, skipping")
+		return
+	}
+	
 	ws.logger.Info("Stopping workflow scheduler")
 	
 	// Cancel the watch context to stop watching CRD changes
@@ -104,6 +126,9 @@ func (ws *WorkflowScheduler) Stop() {
 	}
 	
 	ws.cronEngine.Stop()
+	
+	// Mark as stopped
+	ws.started = false
 }
 
 // syncWorkflowsFromCRD loads workflows from the MCPTaskScheduler CRD and schedules them
@@ -448,19 +473,47 @@ func (ws *WorkflowScheduler) updateWorkflowExecutionStatus(ctx context.Context, 
 func (ws *WorkflowScheduler) SyncWorkflow(workflow *crd.WorkflowDefinition) error {
 	jobID := fmt.Sprintf("%s/%s", ws.namespace, workflow.Name)
 	
-	// Remove existing job if it exists
-	if _, exists := ws.cronEngine.GetJob(jobID); exists {
+	// Check if job already exists and if it needs updating
+	existingJob, exists := ws.cronEngine.GetJob(jobID)
+	needsUpdate := false
+	
+	if exists {
+		// Compare existing job with new workflow definition to see if anything changed
+		if existingJob.Schedule != workflow.Schedule ||
+		   existingJob.Enabled != workflow.Enabled ||
+		   existingJob.Name != workflow.Name {
+			needsUpdate = true
+			ws.logger.Info("Workflow definition changed, updating job", 
+				"jobID", jobID,
+				"oldSchedule", existingJob.Schedule, 
+				"newSchedule", workflow.Schedule,
+				"oldEnabled", existingJob.Enabled,
+				"newEnabled", workflow.Enabled)
+		} else {
+			// Job exists and hasn't changed - no action needed
+			ws.logger.V(1).Info("Job already exists with same configuration, skipping sync", "jobID", jobID)
+			return nil
+		}
+	}
+	
+	// Remove existing job only if it needs updating
+	if exists && needsUpdate {
 		if err := ws.cronEngine.RemoveJob(jobID); err != nil {
-			ws.logger.Error(err, "Failed to remove existing job", "jobID", jobID)
+			ws.logger.Error(err, "Failed to remove existing job for update", "jobID", jobID)
 		}
 	}
 
 	// Schedule the workflow if it has a schedule and is enabled
 	if workflow.Schedule != "" && workflow.Enabled {
 		return ws.scheduleWorkflow(workflow)
+	} else if exists {
+		// Workflow is disabled or has no schedule, remove it if it exists
+		if err := ws.cronEngine.RemoveJob(jobID); err != nil {
+			ws.logger.Error(err, "Failed to remove disabled job", "jobID", jobID)
+		}
+		ws.logger.Info("Workflow disabled or no schedule, removed job", "workflow", workflow.Name)
 	}
 
-	ws.logger.Info("Workflow not scheduled (no schedule or disabled)", "workflow", workflow.Name)
 	return nil
 }
 
@@ -655,6 +708,61 @@ func (ws *WorkflowScheduler) syncWorkflowsFromPostgreSQLToCRD() error {
 			}
 			return names
 		}())
+	
+	return nil
+}
+
+// ExecuteWorkflowManually executes a workflow manually with a specific execution ID
+func (ws *WorkflowScheduler) ExecuteWorkflowManually(ctx context.Context, workflowDef *crd.WorkflowDefinition, executionID string) error {
+	if workflowDef == nil {
+		return fmt.Errorf("workflow definition is nil")
+	}
+	
+	ws.logger.Info("Executing workflow manually", 
+		"workflow", workflowDef.Name, 
+		"executionID", executionID)
+	
+	// Check if manual execution is allowed (allow by default for now)
+	// In the future, we can implement proper ManualExecution flag checking
+	manualExecutionAllowed := true
+	if !manualExecutionAllowed {
+		return fmt.Errorf("manual execution is disabled for workflow '%s'", workflowDef.Name)
+	}
+	
+	// Use K8s executor if available, otherwise fall back to in-process execution
+	if ws.k8sExecutor != nil {
+		ws.logger.Info("Executing workflow as Kubernetes Job", 
+			"workflow", workflowDef.Name, 
+			"executionID", executionID)
+		
+		// Execute workflow as a Kubernetes Job
+		_, err := ws.k8sExecutor.ExecuteWorkflowAsJob(ctx, workflowDef, workflowDef.Name, executionID)
+		if err != nil {
+			return fmt.Errorf("failed to execute workflow '%s' as K8s Job: %w", workflowDef.Name, err)
+		}
+		
+		ws.logger.Info("Successfully submitted workflow for execution as K8s Job", 
+			"workflow", workflowDef.Name, 
+			"executionID", executionID)
+		
+		return nil
+	}
+	
+	// Fall back to in-process execution via workflow engine
+	ws.logger.Info("Executing workflow in-process via workflow engine", 
+		"workflow", workflowDef.Name, 
+		"executionID", executionID)
+	
+	execution, err := ws.workflowEngine.ExecuteWorkflow(ctx, workflowDef, workflowDef.Name, ws.namespace)
+	if err != nil {
+		return fmt.Errorf("failed to execute workflow '%s' in-process: %w", workflowDef.Name, err)
+	}
+	
+	ws.logger.Info("Successfully executed workflow in-process", 
+		"workflow", workflowDef.Name, 
+		"executionID", executionID,
+		"actualExecutionID", execution.ID,
+		"status", execution.Status)
 	
 	return nil
 }

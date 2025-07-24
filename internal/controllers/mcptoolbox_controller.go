@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -104,7 +103,7 @@ func (r *MCPToolboxReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	logger.Info("Successfully reconciled MCPToolbox", "name", toolbox.Name, "phase", toolbox.Status.Phase)
-	return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	return ctrl.Result{}, nil
 }
 
 // handleDeletion handles MCPToolbox deletion
@@ -145,7 +144,7 @@ func (r *MCPToolboxReconciler) handleDeletion(ctx context.Context, toolbox *mcpv
 	// Wait for all servers to be deleted before removing finalizer
 	if len(serverList.Items) > 0 {
 		logger.Info("Waiting for MCPServers to be deleted", "count", len(serverList.Items))
-		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Remove finalizer to allow deletion
@@ -553,7 +552,7 @@ func (r *MCPToolboxReconciler) updateStatusWithError(ctx context.Context, toolbo
 		log.FromContext(ctx).Error(statusErr, "Failed to update error status")
 	}
 
-	return ctrl.Result{RequeueAfter: time.Minute}, err
+	return ctrl.Result{}, err
 }
 
 // Helper functions for template and dependency management

@@ -300,10 +300,10 @@ func (m *K8sManager) createMemoryResource() *crd.MCPMemory {
 		if mem.DatabaseURL != "" {
 			memory.Spec.DatabaseURL = mem.DatabaseURL
 		} else {
-			// Build database URL from components
+			// Use the main matey-postgres database for consistency
 			memory.Spec.DatabaseURL = fmt.Sprintf(
-				"postgresql://%s:%s@%s-postgres:%d/%s?sslmode=disable",
-				postgresUser, postgresPassword, memory.Name, postgresPort, postgresDB)
+				"postgresql://%s:%s@matey-postgres:%d/%s?sslmode=disable",
+				postgresUser, postgresPassword, postgresPort, postgresDB)
 		}
 
 		// Add resource limits

@@ -156,7 +156,7 @@ Features:
 
 func runTop(configFile string, refreshRate time.Duration) error {
 	// Create composer
-	composer, err := compose.NewK8sComposer(configFile, "default")
+	composer, err := compose.NewK8sComposer(configFile, "matey")
 	if err != nil {
 		return fmt.Errorf("failed to create composer: %w", err)
 	}
@@ -667,12 +667,12 @@ func (m *TopModel) getServerInfo() ([]ServerInfo, error) {
 
 	// Get detailed information from Kubernetes
 	ctx := context.Background()
-	deployments, err := m.k8sClient.AppsV1().Deployments("default").List(ctx, metav1.ListOptions{})
+	deployments, err := m.k8sClient.AppsV1().Deployments("matey").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	pods, err := m.k8sClient.CoreV1().Pods("default").List(ctx, metav1.ListOptions{})
+	pods, err := m.k8sClient.CoreV1().Pods("matey").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}

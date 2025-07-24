@@ -80,6 +80,14 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 - **enable_task, disable_task, run_task** - Task control
 - **list_run_status, get_run_output** - Execution monitoring
 
+**Workspace Management Tools (6 tools):**
+- **mount_workspace** - Mount workspace PVC for chat agent file access
+- **list_workspace_files** - List files in mounted workspace directory
+- **read_workspace_file** - Read content from workspace files  
+- **unmount_workspace** - Unmount workspace PVC to free resources
+- **list_mounted_workspaces** - Show all currently mounted workspaces
+- **get_workspace_stats** - Get workspace PVC statistics and retention policies
+
 ## Workflow & Workspace Management
 
 **Workspace Rules:**
@@ -89,6 +97,20 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 - Reclaim policy: Delete (cleanup) vs Retain (persist data)
 
 **Data Flow:** Files persist between steps, use WORKFLOW_WORKSPACE_PATH, set reclaim_policy: "Retain" for artifacts
+
+**Workspace Access Tools (HIGH PRIORITY):**
+- **mount_workspace** - Mount workspace PVC for chat agent access to workflow files
+- **list_workspace_files** - List files in mounted workspace directory (with optional subPath)
+- **read_workspace_file** - Read content from workspace files (supports maxSize parameter)
+- **unmount_workspace** - Unmount workspace PVC to free resources
+- **list_mounted_workspaces** - Show all currently mounted workspaces
+- **get_workspace_stats** - Get statistics about workspace PVCs and retention policies
+
+**Workspace Management:**
+- Mount path: /tmp/matey-workspaces/workflowName-executionID/
+- Use mount_workspace before accessing files from completed workflows
+- Always unmount_workspace when done to prevent resource leaks
+- Supports workspace inspection, debugging, and artifact retrieval
 
 ## Function Call Behavior (%s): %s
 
@@ -114,6 +136,13 @@ You are an AUTONOMOUS agent. Take immediate action without asking permission. Yo
 3. Plan data flow with workspace for multi-step
 4. Set cron schedule if recurring
 5. Configure retry policies for reliability
+
+**For workspace/workflow file inspection requests:**
+1. **Mount First**: Use mount_workspace with workflowName and executionID
+2. **Explore**: Use list_workspace_files to see directory structure  
+3. **Read Files**: Use read_workspace_file to examine specific files
+4. **Cleanup**: Always use unmount_workspace when finished
+5. **Monitor**: Use get_workspace_stats to check storage usage
 
 # Available Tools & Functions
 
@@ -229,7 +258,8 @@ func (tc *TermChat) generateFunctionSchemas() string {
 - Logs: matey_logs, workflow_logs  
 - Files: read_file, edit_file, search_files
 - Workflows: create_workflow, list_workflows, execute_workflow
-- Memory: read_graph, search_nodes, create_entities`
+- Memory: read_graph, search_nodes, create_entities
+- Workspace: mount_workspace → list_workspace_files → read_workspace_file → unmount_workspace`
 }
 
 // ComprehensiveServerInfo represents detailed information about an MCP server

@@ -15,7 +15,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	rootCmd.PersistentFlags().StringP("file", "c", "matey.yaml", "Specify matey configuration file")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().StringP("namespace", "n", "default", "Kubernetes namespace")
+	rootCmd.PersistentFlags().StringP("namespace", "n", "matey", "Kubernetes namespace")
 
 	// Add installation command
 	rootCmd.AddCommand(NewInstallCommand())

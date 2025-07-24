@@ -2,13 +2,10 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/logging"
@@ -17,27 +14,23 @@ import (
 )
 
 func NewSchedulerServerCommand() *cobra.Command {
-	var port string
-	var host string
-
 	cmd := &cobra.Command{
 		Use:   "scheduler-server",
-		Short: "Run the built-in task scheduler MCP server",
-		Long: `Run the built-in task scheduler MCP server that provides intelligent task automation.
+		Short: "Run the built-in task scheduler engine",
+		Long: `Run the built-in task scheduler engine that provides intelligent task automation.
 
-The scheduler server provides MCP tools for:
-- Creating and managing scheduled tasks
-- AI-powered cron expression generation  
-- Workflow orchestration and dependency management
+The scheduler engine provides:
+- Automated workflow execution based on CRD schedules
+- AI-powered workflow orchestration and dependency management
 - Task execution with Kubernetes Jobs
 - OpenRouter and Ollama integration for LLM-powered workflows
+- 2-way sync between Kubernetes CRDs and PostgreSQL
 
-This server runs as an HTTP service with MCP protocol support including SSE and WebSocket endpoints.
+MCP tools for scheduler management are now provided by the MateyMCPServer.
 
 Examples:
-  matey scheduler-server                    # Run with default settings
-  matey scheduler-server --port 8084       # Run on specific port
-  matey scheduler-server --host 0.0.0.0    # Bind to all interfaces`,
+  matey scheduler-server                    # Run scheduler engine
+  matey scheduler-server --namespace prod   # Run in specific namespace`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configFile, _ := cmd.Flags().GetString("file")
 			
@@ -47,13 +40,6 @@ Examples:
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			// Use config values if not overridden by flags
-			if !cmd.Flags().Changed("port") && cfg.TaskScheduler != nil && cfg.TaskScheduler.Port > 0 {
-				port = fmt.Sprintf("%d", cfg.TaskScheduler.Port)
-			}
-			if !cmd.Flags().Changed("host") && cfg.TaskScheduler != nil && cfg.TaskScheduler.Host != "" {
-				host = cfg.TaskScheduler.Host
-			}
 
 			// Set up logging
 			logLevel := "info"
@@ -79,7 +65,7 @@ Examples:
 			if mcpProxyURL == "" {
 				namespace, _ := cmd.Flags().GetString("namespace")
 				if namespace == "" {
-					namespace = "default"
+					namespace = "matey"
 				}
 				// Use Kubernetes service DNS for proxy discovery
 				mcpProxyURL = fmt.Sprintf("http://matey-proxy.%s.svc.cluster.local:9876", namespace)
@@ -88,9 +74,6 @@ Examples:
 			
 			workflowEngine := scheduler.NewWorkflowEngine(mcpProxyURL, mcpProxyAPIKey, logr.WithName("workflow"))
 			
-			// Create the MCP tool server
-			toolServer := scheduler.NewMCPToolServer(cronEngine, workflowEngine, logr.WithName("scheduler"))
-
 			// Set up PostgreSQL workflow store if database is available
 			var workflowStore *scheduler.WorkflowStore
 			if cfg != nil && cfg.TaskScheduler != nil && cfg.TaskScheduler.DatabaseURL != "" {
@@ -99,7 +82,6 @@ Examples:
 					logger.Warning("Failed to create workflow store, falling back to CRD storage: %v", err)
 				} else {
 					workflowStore = store
-					toolServer.SetWorkflowStore(workflowStore)
 					logger.Info("PostgreSQL workflow store initialized successfully")
 				}
 			} else {
@@ -110,7 +92,6 @@ Examples:
 					logger.Warning("Failed to create default workflow store, falling back to CRD storage: %v", err)
 				} else {
 					workflowStore = store
-					toolServer.SetWorkflowStore(workflowStore)
 					logger.Info("Default PostgreSQL workflow store initialized successfully")
 				}
 			}
@@ -118,7 +99,7 @@ Examples:
 			// Set up Kubernetes client for CRD access
 			namespace, _ := cmd.Flags().GetString("namespace")
 			if namespace == "" {
-				namespace = "default"
+				namespace = "matey"
 			}
 
 			k8sClient, err := createK8sClientWithScheme()
@@ -126,7 +107,6 @@ Examples:
 			if err != nil {
 				logger.Warning("Failed to create Kubernetes client, workflow CRD management will be disabled: %v", err)
 			} else {
-				toolServer.SetK8sClient(k8sClient, namespace)
 				logger.Info("Kubernetes client configured for workflow management")
 				
 				// Create and start workflow scheduler for automated workflow execution with K8s Job execution
@@ -144,44 +124,17 @@ Examples:
 				} else {
 					logger.Info("Workflow scheduler started successfully")
 				}
-				
-				// Connect the toolServer to the workflowScheduler for synchronization
-				toolServer.SetWorkflowScheduler(workflowScheduler)
-				logger.Info("Connected MCP tool server to workflow scheduler for live sync")
 			}
 			
-			// Create the MCP server
-			mcpServer := scheduler.NewMCPServer(toolServer, logr.WithName("mcp"))
-			
-			// Set up HTTP server
-			mux := http.NewServeMux()
-			mcpServer.SetupRoutes(mux)
-			
-			server := &http.Server{
-				Addr:    fmt.Sprintf("%s:%s", host, port),
-				Handler: mux,
-			}
-			
-			// Start server in goroutine
-			go func() {
-				logger.Info("Starting task scheduler MCP server")
-				logger.Info("Server address: %s", server.Addr)
-				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					logger.Error("Failed to start server: %v", err)
-					os.Exit(1)
-				}
-			}()
+			logger.Info("Task scheduler engine running (MCP tools now provided by MateyMCPServer)")
+			logger.Info("Workflow scheduler will automatically execute scheduled workflows")
 			
 			// Wait for interrupt signal
 			quit := make(chan os.Signal, 1)
 			signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 			<-quit
 			
-			logger.Info("Shutting down task scheduler MCP server...")
-			
-			// Graceful shutdown
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+			logger.Info("Shutting down task scheduler engine...")
 			
 			// Stop workflow scheduler if it was started
 			if workflowScheduler != nil {
@@ -189,18 +142,10 @@ Examples:
 				workflowScheduler.Stop()
 			}
 			
-			if err := server.Shutdown(ctx); err != nil {
-				logger.Error("Failed to gracefully shutdown server: %v", err)
-				return err
-			}
-			
-			logger.Info("Task scheduler MCP server stopped")
+			logger.Info("Task scheduler engine stopped")
 			return nil
 		},
 	}
-
-	cmd.Flags().StringVarP(&port, "port", "p", "8084", "Port to run the scheduler server on")
-	cmd.Flags().StringVarP(&host, "host", "H", "0.0.0.0", "Host to bind the scheduler server to")
 
 	return cmd
 }

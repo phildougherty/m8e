@@ -12,9 +12,9 @@ import (
 func TestMCPConnection_Basic(t *testing.T) {
 	endpoint := ServiceEndpoint{
 		Name:      "test-service",
-		Namespace: "default",
+		Namespace: "matey",
 		Protocol:  "http",
-		URL:       "http://test-service.default.svc.cluster.local:8080/mcp",
+		URL:       "http://test-service.matey.svc.cluster.local:8080/mcp",
 		Port:      8080,
 	}
 
@@ -137,7 +137,7 @@ func TestMCPSSEConnection(t *testing.T) {
 func TestMCPConnection_StatusManagement(t *testing.T) {
 	connection := &MCPConnection{
 		Name:       "test-service",
-		Endpoint:   "http://test-service.default.svc.cluster.local:8080/mcp",
+		Endpoint:   "http://test-service.matey.svc.cluster.local:8080/mcp",
 		Protocol:   "http",
 		Port:       8080,
 		LastUsed:   time.Now(),
@@ -265,9 +265,9 @@ func TestDynamicConnectionManager_ServiceDiscoveryCallbacks(t *testing.T) {
 	// Test service discovery callbacks
 	endpoint := ServiceEndpoint{
 		Name:      "test-service",
-		Namespace: "default",
+		Namespace: "matey",
 		Protocol:  "http",
-		URL:       "http://test-service.default.svc.cluster.local:8080/mcp",
+		URL:       "http://test-service.matey.svc.cluster.local:8080/mcp",
 		Port:      8080,
 	}
 

@@ -44,7 +44,7 @@ Key features:
 	}
 
 	cmd.Flags().IntVarP(&port, "port", "p", 9876, "Port to run the proxy server on")
-	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Kubernetes namespace to discover services in")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace to discover services in")
 	cmd.Flags().StringVarP(&apiKey, "api-key", "k", "", "API key for proxy authentication (optional)")
 
 	return cmd

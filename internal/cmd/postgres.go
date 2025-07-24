@@ -4,9 +4,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/phildougherty/m8e/internal/config"
@@ -65,44 +71,151 @@ Examples:
 func enablePostgresService(configFile string, cfg *config.ComposeConfig) error {
 	fmt.Println("Enabling built-in PostgreSQL service...")
 
-	// Add matey-postgres to servers config
-	if cfg.Servers == nil {
-		cfg.Servers = make(map[string]config.ServerConfig)
-	}
-
-	cfg.Servers["matey-postgres"] = config.ServerConfig{
-		Image:       "postgres:15-alpine",
-		ReadOnly:    false,
-		Privileged:  false, // Don't need privileged
-		Env: map[string]string{
-			"POSTGRES_DB":       "matey",
-			"POSTGRES_USER":     "postgres",
-			"POSTGRES_PASSWORD": "password",
-			"PGDATA":           "/var/lib/postgresql/data/pgdata",
+	// Create MCPPostgres resource instead of adding to servers config
+	postgres := &crd.MCPPostgres{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-postgres",
+			Namespace: "matey",
+			Labels: map[string]string{
+				"app.kubernetes.io/component":  "postgres",
+				"app.kubernetes.io/managed-by": "matey",
+				"app.kubernetes.io/name":       "postgres",
+				"mcp.matey.ai/role":           "database",
+			},
 		},
-		Volumes:       []string{"matey-postgres-data:/var/lib/postgresql/data"},
-		Networks:      []string{"mcp-net"},
-		RestartPolicy: "unless-stopped",
-		HealthCheck: &config.HealthCheck{
-			Test:        []string{"CMD-SHELL", "pg_isready -U postgres"},
-			Interval:    "10s",
-			Timeout:     "5s",
-			Retries:     3,
-			StartPeriod: "30s",
+		Spec: crd.MCPPostgresSpec{
+			Database:         "matey",
+			User:             "postgres",
+			Password:         "password",
+			Port:             5432,
+			Version:          "15",
+			StorageSize:      "10Gi",
+			StorageClassName: "",
+			Resources: &crd.ResourceRequirements{
+				Requests: map[string]string{
+					"cpu":    "100m",
+					"memory": "256Mi",
+				},
+				Limits: map[string]string{
+					"cpu":    "500m",
+					"memory": "512Mi",
+				},
+			},
+			SecurityContext: &crd.SecurityConfig{
+				RunAsUser:          nil, // Allow postgres to run as root
+				RunAsGroup:         nil,
+				ReadOnlyRootFS:     false,
+				AllowPrivilegedOps: false,
+				TrustedImage:       true,
+			},
 		},
-		// Resources managed by controller
 	}
 
-	// Add volume definition
-	if cfg.Volumes == nil {
-		cfg.Volumes = make(map[string]config.VolumeConfig)
-	}
-	cfg.Volumes["matey-postgres-data"] = config.VolumeConfig{
-		Driver: "local",
+	// Apply the MCPPostgres resource to Kubernetes
+	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
 	}
 
-	fmt.Println("Built-in PostgreSQL service enabled in configuration.")
-	return config.SaveConfig(configFile, cfg)
+	scheme := runtime.NewScheme()
+	if err := crd.AddToScheme(scheme); err != nil {
+		return fmt.Errorf("failed to add CRD scheme: %w", err)
+	}
+
+	client, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	ctx := context.Background()
+	err = client.Create(ctx, postgres)
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			fmt.Println("PostgreSQL service already exists, updating...")
+			existing := &crd.MCPPostgres{}
+			if err := client.Get(ctx, types.NamespacedName{Name: "matey-postgres", Namespace: "matey"}, existing); err != nil {
+				return fmt.Errorf("failed to get existing postgres: %w", err)
+			}
+			existing.Spec = postgres.Spec
+			if err := client.Update(ctx, existing); err != nil {
+				return fmt.Errorf("failed to update postgres: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to create postgres resource: %w", err)
+		}
+	}
+
+	fmt.Println("Built-in PostgreSQL service enabled as MCPPostgres resource.")
+	return nil
+}
+
+// EnsurePostgresResource ensures the MCPPostgres resource exists without adding to servers config
+func EnsurePostgresResource() error {
+	// Create MCPPostgres resource if it doesn't exist
+	postgres := &crd.MCPPostgres{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-postgres",
+			Namespace: "matey",
+			Labels: map[string]string{
+				"app.kubernetes.io/component":  "postgres",
+				"app.kubernetes.io/managed-by": "matey",
+				"app.kubernetes.io/name":       "postgres",
+				"mcp.matey.ai/role":           "database",
+			},
+		},
+		Spec: crd.MCPPostgresSpec{
+			Database:         "matey",
+			User:             "postgres",
+			Password:         "password",
+			Port:             5432,
+			Version:          "15",
+			StorageSize:      "10Gi",
+			StorageClassName: "",
+			Resources: &crd.ResourceRequirements{
+				Requests: map[string]string{
+					"cpu":    "100m",
+					"memory": "256Mi",
+				},
+				Limits: map[string]string{
+					"cpu":    "500m",
+					"memory": "512Mi",
+				},
+			},
+			SecurityContext: &crd.SecurityConfig{
+				RunAsUser:          nil, // Allow postgres to run as root
+				RunAsGroup:         nil,
+				ReadOnlyRootFS:     false,
+				AllowPrivilegedOps: false,
+				TrustedImage:       true,
+			},
+		},
+	}
+
+	// Apply the MCPPostgres resource to Kubernetes
+	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to build kubeconfig: %w", err)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := crd.AddToScheme(scheme); err != nil {
+		return fmt.Errorf("failed to add CRD scheme: %w", err)
+	}
+
+	client, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	ctx := context.Background()
+	err = client.Create(ctx, postgres)
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create postgres resource: %w", err)
+	}
+
+	return nil
 }
 
 func disablePostgresService(configFile string, cfg *config.ComposeConfig, namespace string) error {

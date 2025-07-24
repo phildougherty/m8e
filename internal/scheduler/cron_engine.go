@@ -12,10 +12,11 @@ import (
 )
 
 type CronEngine struct {
-	cron   *cron.Cron
-	jobs   map[string]*JobSpec
-	logger logr.Logger
-	mu     sync.RWMutex
+	cron    *cron.Cron
+	jobs    map[string]*JobSpec
+	logger  logr.Logger
+	mu      sync.RWMutex
+	started bool
 }
 
 type JobSpec struct {
@@ -57,14 +58,32 @@ func NewCronEngine(logger logr.Logger) *CronEngine {
 }
 
 func (e *CronEngine) Start() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	
+	if e.started {
+		e.logger.V(1).Info("Cron engine already started, skipping")
+		return
+	}
+	
 	e.logger.Info("Starting cron engine")
 	e.cron.Start()
+	e.started = true
 }
 
 func (e *CronEngine) Stop() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	
+	if !e.started {
+		e.logger.V(1).Info("Cron engine already stopped, skipping")
+		return
+	}
+	
 	e.logger.Info("Stopping cron engine")
 	ctx := e.cron.Stop()
 	<-ctx.Done()
+	e.started = false
 }
 
 func (e *CronEngine) AddJob(jobSpec *JobSpec) error {

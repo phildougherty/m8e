@@ -75,11 +75,13 @@ func (r *MCPProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	// Update status to show we're processing
-	mcpProxy.Status.Phase = crd.MCPProxyPhaseCreating
-	if err := r.Status().Update(ctx, &mcpProxy); err != nil {
-		logger.Error(err, "Failed to update MCPProxy status")
-		return ctrl.Result{}, err
+	// Only update status if it's not already in a processing state
+	if mcpProxy.Status.Phase != crd.MCPProxyPhaseCreating && mcpProxy.Status.Phase != crd.MCPProxyPhaseRunning {
+		mcpProxy.Status.Phase = crd.MCPProxyPhaseCreating
+		if err := r.Status().Update(ctx, &mcpProxy); err != nil {
+			logger.Error(err, "Failed to update MCPProxy status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Reconcile Deployment
@@ -135,11 +137,11 @@ func (r *MCPProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	// Check deployment status and update ReadyReplicas
 	if err := r.updateDeploymentStatus(ctx, &mcpProxy); err != nil {
 		logger.Error(err, "Failed to update deployment status")
-		return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		return ctrl.Result{}, err // Let controller-runtime handle retry
 	}
 
 	logger.V(1).Info("Successfully reconciled MCPProxy")
-	return ctrl.Result{RequeueAfter: time.Minute * 2}, nil // More frequent checks for dynamic updates
+	return ctrl.Result{}, nil // Event-driven: only reconcile when resources change
 }
 
 func (r *MCPProxyReconciler) reconcileDeployment(ctx context.Context, mcpProxy *crd.MCPProxy) error {
@@ -255,12 +257,31 @@ func (r *MCPProxyReconciler) reconcileDeployment(ctx context.Context, mcpProxy *
 
 	// Update the found object and write the result back if there are any changes
 	if !r.deploymentEqual(deployment, found) {
-		found.Spec = deployment.Spec
-		found.ObjectMeta.Labels = deployment.ObjectMeta.Labels
-		logger.Info("Updating Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
-		if err := r.Update(ctx, found); err != nil {
-			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
-			return err
+		// Retry update with exponential backoff on conflicts
+		retries := 3
+		for i := 0; i < retries; i++ {
+			// Get fresh copy of the deployment to ensure we have the latest resource version
+			if i > 0 {
+				if err := r.Get(ctx, client.ObjectKey{Name: deployment.Name, Namespace: deployment.Namespace}, found); err != nil {
+					logger.Error(err, "Failed to get fresh Deployment for retry", "attempt", i+1)
+					return err
+				}
+			}
+			
+			found.Spec = deployment.Spec
+			found.ObjectMeta.Labels = deployment.ObjectMeta.Labels
+			logger.Info("Updating Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name, "attempt", i+1)
+			
+			if err := r.Update(ctx, found); err != nil {
+				if errors.IsConflict(err) && i < retries-1 {
+					logger.Info("Deployment update conflict, retrying", "attempt", i+1, "error", err)
+					time.Sleep(time.Duration(i+1) * 100 * time.Millisecond) // Exponential backoff
+					continue
+				}
+				logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
+				return err
+			}
+			break // Success
 		}
 	}
 
@@ -281,22 +302,35 @@ func (r *MCPProxyReconciler) updateDeploymentStatus(ctx context.Context, mcpProx
 		return err
 	}
 
-	// Update status based on deployment state
-	mcpProxy.Status.Replicas = deployment.Status.Replicas
-	mcpProxy.Status.ReadyReplicas = deployment.Status.ReadyReplicas
-	mcpProxy.Status.ObservedGeneration = mcpProxy.Generation
-
-	// Update phase based on readiness
+	// Check if status needs updating to avoid unnecessary updates
+	newReplicas := deployment.Status.Replicas
+	newReadyReplicas := deployment.Status.ReadyReplicas
+	newObservedGeneration := mcpProxy.Generation
+	
+	var newPhase crd.MCPProxyPhase
 	if deployment.Status.ReadyReplicas > 0 {
-		mcpProxy.Status.Phase = crd.MCPProxyPhaseRunning
+		newPhase = crd.MCPProxyPhaseRunning
 	} else {
-		mcpProxy.Status.Phase = crd.MCPProxyPhaseStarting
+		newPhase = crd.MCPProxyPhaseStarting
 	}
 
-	// Update status
-	if err := r.Status().Update(ctx, mcpProxy); err != nil {
-		logger.Error(err, "Failed to update MCPProxy status")
-		return err
+	// Only update status if something actually changed
+	statusChanged := mcpProxy.Status.Replicas != newReplicas ||
+		mcpProxy.Status.ReadyReplicas != newReadyReplicas ||
+		mcpProxy.Status.ObservedGeneration != newObservedGeneration ||
+		mcpProxy.Status.Phase != newPhase
+
+	if statusChanged {
+		mcpProxy.Status.Replicas = newReplicas
+		mcpProxy.Status.ReadyReplicas = newReadyReplicas
+		mcpProxy.Status.ObservedGeneration = newObservedGeneration
+		mcpProxy.Status.Phase = newPhase
+
+		if err := r.Status().Update(ctx, mcpProxy); err != nil {
+			logger.Error(err, "Failed to update MCPProxy status")
+			return err
+		}
+		logger.V(1).Info("Updated MCPProxy status", "phase", newPhase, "readyReplicas", newReadyReplicas)
 	}
 
 	return nil

@@ -59,7 +59,7 @@ This command is typically used when deploying the controller manager as a Kubern
 	}
 	
 	cmd.Flags().StringVar(&configFile, "config", "matey.yaml", "Path to configuration file")
-	cmd.Flags().StringVar(&namespace, "namespace", "default", "Kubernetes namespace to operate in")
+	cmd.Flags().StringVar(&namespace, "namespace", "matey", "Kubernetes namespace to operate in")
 	cmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	
 	return cmd

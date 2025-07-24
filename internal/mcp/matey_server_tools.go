@@ -804,5 +804,108 @@ func (m *MateyMCPServer) GetTools() []Tool {
 				},
 			},
 		},
+		// Workspace Access Tools
+		{
+			Name:        "mount_workspace",
+			Description: "Mount workspace PVC for a workflow execution to enable file access",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the workflow",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Execution ID of the workflow run",
+					},
+				},
+				"required": []string{"workflowName", "executionID"},
+			},
+		},
+		{
+			Name:        "list_workspace_files",
+			Description: "List files in a mounted workspace directory",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the workflow",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Execution ID of the workflow run",
+					},
+					"subPath": map[string]interface{}{
+						"type":        "string",
+						"description": "Subdirectory path within the workspace (optional)",
+						"default":     "",
+					},
+				},
+				"required": []string{"workflowName", "executionID"},
+			},
+		},
+		{
+			Name:        "read_workspace_file",
+			Description: "Read content of a file from a mounted workspace",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the workflow",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Execution ID of the workflow run",
+					},
+					"filePath": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the file within the workspace",
+					},
+					"maxSize": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum file size to read in bytes (default: 1MB)",
+						"default":     1048576,
+					},
+				},
+				"required": []string{"workflowName", "executionID", "filePath"},
+			},
+		},
+		{
+			Name:        "unmount_workspace",
+			Description: "Unmount a workspace PVC to free resources",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workflowName": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the workflow",
+					},
+					"executionID": map[string]interface{}{
+						"type":        "string",
+						"description": "Execution ID of the workflow run",
+					},
+				},
+				"required": []string{"workflowName", "executionID"},
+			},
+		},
+		{
+			Name:        "list_mounted_workspaces",
+			Description: "List all currently mounted workspaces",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "get_workspace_stats",
+			Description: "Get statistics about workspace PVCs and retention policies",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 	}
 }

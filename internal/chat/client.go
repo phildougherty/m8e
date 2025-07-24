@@ -29,7 +29,7 @@ func detectClusterMCPProxy() string {
 		// 3. Try port-forward (kubectl port-forward)
 		"http://localhost:9876",
 		// 4. Try in-cluster service (if running in cluster)
-		"http://matey-proxy.default.svc.cluster.local:9876",
+		"http://matey-proxy.matey.svc.cluster.local:9876",
 		// 5. Fallback to localhost (development)
 		"http://localhost:8080",
 	}

@@ -736,15 +736,15 @@ type ToolCallResult struct {
 func (c *MCPClient) ExecuteToolCall(ctx context.Context, serverName, toolName string, arguments map[string]interface{}) string {
 	result, err := c.CallTool(ctx, serverName, toolName, arguments)
 	if err != nil {
-		return fmt.Sprintf("❌ Error calling %s.%s: %v", serverName, toolName, err)
+		return fmt.Sprintf("ERROR calling %s.%s: %v", serverName, toolName, err)
 	}
 	
 	if result.IsError {
-		return fmt.Sprintf("❌ Tool error from %s.%s: %s", serverName, toolName, result.Content[0].Text)
+		return fmt.Sprintf("Tool error from %s.%s: %s", serverName, toolName, result.Content[0].Text)
 	}
 	
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("✅ **%s.%s** executed successfully:\n\n", serverName, toolName))
+	output.WriteString(fmt.Sprintf("**%s.%s** executed successfully:\n\n", serverName, toolName))
 	
 	for _, content := range result.Content {
 		output.WriteString(content.Text)
@@ -758,7 +758,7 @@ func (c *MCPClient) ExecuteToolCall(ctx context.Context, serverName, toolName st
 func (c *MCPClient) GetAvailableTools(ctx context.Context) string {
 	servers, err := c.ListServers(ctx)
 	if err != nil {
-		return fmt.Sprintf("❌ Error listing servers: %v", err)
+		return fmt.Sprintf("ERROR listing servers: %v", err)
 	}
 	
 	var output strings.Builder
@@ -767,7 +767,7 @@ func (c *MCPClient) GetAvailableTools(ctx context.Context) string {
 	for _, server := range servers {
 		tools, err := c.GetServerTools(ctx, server.Name)
 		if err != nil {
-			output.WriteString(fmt.Sprintf("❌ Error getting tools for %s: %v\n", server.Name, err))
+			output.WriteString(fmt.Sprintf("ERROR getting tools for %s: %v\n", server.Name, err))
 			continue
 		}
 		

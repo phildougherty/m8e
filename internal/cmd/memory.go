@@ -77,11 +77,10 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 		cfg.Memory.Host = "0.0.0.0"
 	}
 	if cfg.Memory.DatabaseURL == "" {
-		cfg.Memory.DatabaseURL = "postgresql://postgres:password@matey-postgres:5432/memory_graph?sslmode=disable"
+		cfg.Memory.DatabaseURL = "postgresql://postgres:password@matey-postgres.matey.svc.cluster.local:5432/memory_graph?sslmode=disable"
 	}
-	if !cfg.Memory.PostgresEnabled {
-		cfg.Memory.PostgresEnabled = true
-	}
+	// Use shared matey-postgres by default, don't create separate postgres instance
+	cfg.Memory.PostgresEnabled = false
 	if cfg.Memory.PostgresPort == 0 {
 		cfg.Memory.PostgresPort = 5432
 	}
@@ -152,7 +151,12 @@ func enableMemoryServer(configFile string, cfg *config.ComposeConfig) error {
 			OptionalAuth:  false,
 			AllowAPIKey:   &allowAPIKey,
 		},
-		DependsOn: []string{"matey-postgres"},
+		// DependsOn removed - postgres should be managed as MCPPostgres resource
+	}
+
+	// Ensure postgres resource exists (don't add to servers config)
+	if err := EnsurePostgresResource(); err != nil {
+		fmt.Printf("Warning: Failed to ensure postgres resource: %v\n", err)
 	}
 
 	fmt.Printf("Memory server enabled in both built-in config and servers list (port: %d).\n", cfg.Memory.Port)

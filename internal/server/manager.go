@@ -165,32 +165,17 @@ func NewManager(cfg *config.ComposeConfig) (*Manager, error) {
 			},
 			// Networks handled by Kubernetes
 			Authentication: cfg.Memory.Authentication,
-			DependsOn:      []string{"postgres-memory"},
+			// DependsOn removed - postgres should be managed as MCPPostgres resource
 		}
 
-		// Add postgres-memory config too
-		postgresMemoryConfig := config.ServerConfig{
-			Image:       "postgres:15-alpine",
-			User:        "postgres",
-			ReadOnly:    false,
-			Privileged:  false,
-			SecurityOpt: []string{"no-new-privileges:true"},
-			Env: map[string]string{
-				"POSTGRES_DB":       cfg.Memory.PostgresDB,
-				"POSTGRES_USER":     cfg.Memory.PostgresUser,
-				"POSTGRES_PASSWORD": cfg.Memory.PostgresPassword,
-			},
-			Volumes:       cfg.Memory.Volumes,
-			// Networks handled by Kubernetes
-			RestartPolicy: "unless-stopped",
-		}
+		// postgres-memory config removed - postgres should be managed as MCPPostgres resource
 
 		// Add to servers map
 		if cfg.Servers == nil {
 			cfg.Servers = make(map[string]config.ServerConfig)
 		}
 		cfg.Servers["memory"] = memoryConfig
-		cfg.Servers["postgres-memory"] = postgresMemoryConfig
+		// postgres-memory server removed - postgres should be managed as MCPPostgres resource
 
 		logger.Info("Added memory as built-in server on port %d", cfg.Memory.Port)
 	}

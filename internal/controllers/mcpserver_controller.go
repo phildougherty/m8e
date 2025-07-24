@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -98,7 +97,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	logger.V(1).Info("Successfully reconciled MCPServer", "name", mcpServer.Name)
-	return ctrl.Result{RequeueAfter: time.Second * 30}, nil
+	return ctrl.Result{}, nil
 }
 
 // handleDeletion handles MCPServer deletion

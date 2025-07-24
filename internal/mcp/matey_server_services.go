@@ -42,9 +42,9 @@ func (m *MateyMCPServer) startService(ctx context.Context, args map[string]inter
 			if err != nil {
 				errorMsg := fmt.Sprintf("Failed to start %s: %v", serviceName, err)
 				errors = append(errors, errorMsg)
-				result.WriteString(fmt.Sprintf("❌ %s\n", errorMsg))
+				result.WriteString(fmt.Sprintf("ERROR: %s\n", errorMsg))
 			} else {
-				result.WriteString(fmt.Sprintf("✅ Started service: %s\n", serviceName))
+				result.WriteString(fmt.Sprintf("Started service: %s\n", serviceName))
 			}
 		}
 	}
@@ -87,9 +87,9 @@ func (m *MateyMCPServer) stopService(ctx context.Context, args map[string]interf
 			if err != nil {
 				errorMsg := fmt.Sprintf("Failed to stop %s: %v", serviceName, err)
 				errors = append(errors, errorMsg)
-				result.WriteString(fmt.Sprintf("❌ %s\n", errorMsg))
+				result.WriteString(fmt.Sprintf("ERROR: %s\n", errorMsg))
 			} else {
-				result.WriteString(fmt.Sprintf("✅ Stopped service: %s\n", serviceName))
+				result.WriteString(fmt.Sprintf("Stopped service: %s\n", serviceName))
 			}
 		}
 	}
@@ -144,7 +144,7 @@ func (m *MateyMCPServer) reloadProxy(ctx context.Context, args map[string]interf
 	}
 	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: fmt.Sprintf("✅ Proxy pod %s restarted successfully. Configuration will be reloaded.", pod.Name)}},
+		Content: []Content{{Type: "text", Text: fmt.Sprintf("Proxy pod %s restarted successfully. Configuration will be reloaded.", pod.Name)}},
 	}, nil
 }
 
@@ -168,7 +168,7 @@ func (m *MateyMCPServer) getMemoryStatusFromK8s(ctx context.Context) (*ToolResul
 	// Check for MCPMemory CRD
 	var memory crd.MCPMemory
 	err := m.k8sClient.Get(ctx, client.ObjectKey{
-		Name:      "memory-service",
+		Name:      "memory",
 		Namespace: m.namespace,
 	}, &memory)
 	
@@ -220,13 +220,16 @@ func (m *MateyMCPServer) memoryStart(ctx context.Context, args map[string]interf
 	err := m.startMemoryService(ctx)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("❌ Failed to start memory service: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Failed to start memory service: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
+	// Try to reinitialize the memory store now that the service is starting
+	m.initializeMemoryStore()
+	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: "✅ Memory service started successfully"}},
+		Content: []Content{{Type: "text", Text: "Memory service started successfully"}},
 	}, nil
 }
 
@@ -242,13 +245,13 @@ func (m *MateyMCPServer) memoryStop(ctx context.Context, args map[string]interfa
 	err := m.stopMemoryService(ctx)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("❌ Failed to stop memory service: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Failed to stop memory service: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: "✅ Memory service stopped successfully"}},
+		Content: []Content{{Type: "text", Text: "Memory service stopped successfully"}},
 	}, nil
 }
 
@@ -343,13 +346,13 @@ func (m *MateyMCPServer) taskSchedulerStart(ctx context.Context, args map[string
 	err := m.startTaskSchedulerService(ctx)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("❌ Failed to start task scheduler: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Failed to start task scheduler: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: "✅ Task scheduler started successfully"}},
+		Content: []Content{{Type: "text", Text: "Task scheduler started successfully"}},
 	}, nil
 }
 
@@ -365,13 +368,13 @@ func (m *MateyMCPServer) taskSchedulerStop(ctx context.Context, args map[string]
 	err := m.stopTaskSchedulerService(ctx)
 	if err != nil {
 		return &ToolResult{
-			Content: []Content{{Type: "text", Text: fmt.Sprintf("❌ Failed to stop task scheduler: %v", err)}},
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Failed to stop task scheduler: %v", err)}},
 			IsError: true,
 		}, err
 	}
 	
 	return &ToolResult{
-		Content: []Content{{Type: "text", Text: "✅ Task scheduler stopped successfully"}},
+		Content: []Content{{Type: "text", Text: "Task scheduler stopped successfully"}},
 	}, nil
 }
 
@@ -1083,7 +1086,7 @@ func (m *MateyMCPServer) installMateyFromK8s(ctx context.Context) (*ToolResult, 
 	var serverList crd.MCPServerList
 	err := m.k8sClient.List(ctx, &serverList)
 	if err != nil {
-		result.WriteString("❌ MCPServer CRD: Not found or inaccessible\n")
+		result.WriteString("ERROR: MCPServer CRD: Not found or inaccessible\n")
 	} else {
 		result.WriteString("✓ MCPServer CRD: Installed\n")
 	}
@@ -1091,7 +1094,7 @@ func (m *MateyMCPServer) installMateyFromK8s(ctx context.Context) (*ToolResult, 
 	var memoryList crd.MCPMemoryList
 	err = m.k8sClient.List(ctx, &memoryList)
 	if err != nil {
-		result.WriteString("❌ MCPMemory CRD: Not found or inaccessible\n")
+		result.WriteString("ERROR: MCPMemory CRD: Not found or inaccessible\n")
 	} else {
 		result.WriteString("✓ MCPMemory CRD: Installed\n")
 	}
@@ -1099,7 +1102,7 @@ func (m *MateyMCPServer) installMateyFromK8s(ctx context.Context) (*ToolResult, 
 	var taskSchedulerList crd.MCPTaskSchedulerList
 	err = m.k8sClient.List(ctx, &taskSchedulerList)
 	if err != nil {
-		result.WriteString("❌ MCPTaskScheduler CRD: Not found or inaccessible\n")
+		result.WriteString("ERROR: MCPTaskScheduler CRD: Not found or inaccessible\n")
 	} else {
 		result.WriteString("✓ MCPTaskScheduler CRD: Installed\n")
 	}
@@ -1107,7 +1110,7 @@ func (m *MateyMCPServer) installMateyFromK8s(ctx context.Context) (*ToolResult, 
 	var proxyList crd.MCPProxyList
 	err = m.k8sClient.List(ctx, &proxyList)
 	if err != nil {
-		result.WriteString("❌ MCPProxy CRD: Not found or inaccessible\n")
+		result.WriteString("ERROR: MCPProxy CRD: Not found or inaccessible\n")
 	} else {
 		result.WriteString("✓ MCPProxy CRD: Installed\n")
 	}
@@ -1115,7 +1118,7 @@ func (m *MateyMCPServer) installMateyFromK8s(ctx context.Context) (*ToolResult, 
 	var toolboxList crd.MCPToolboxList
 	err = m.k8sClient.List(ctx, &toolboxList)
 	if err != nil {
-		result.WriteString("❌ MCPToolbox CRD: Not found or inaccessible\n")
+		result.WriteString("ERROR: MCPToolbox CRD: Not found or inaccessible\n")
 	} else {
 		result.WriteString("✓ MCPToolbox CRD: Installed\n")
 	}
