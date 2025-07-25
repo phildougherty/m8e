@@ -907,5 +907,101 @@ func (m *MateyMCPServer) GetTools() []Tool {
 				"properties": map[string]interface{}{},
 			},
 		},
+		// Native tools (migrated from chat package)
+		{
+			Name:        "create_todos",
+			Description: "Create multiple TODO items",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"todos": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"content": map[string]interface{}{
+									"type":        "string",
+									"description": "TODO item content",
+								},
+								"priority": map[string]interface{}{
+									"type":        "string",
+									"description": "Priority level (low, medium, high, urgent)",
+									"default":     "medium",
+								},
+							},
+							"required": []string{"content"},
+						},
+						"description": "Array of TODO items to create",
+					},
+				},
+				"required": []string{"todos"},
+			},
+		},
+		{
+			Name:        "search_in_files",
+			Description: "Search for patterns within file contents with regex support",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"pattern": map[string]interface{}{
+						"type":        "string",
+						"description": "Search pattern or regex",
+					},
+					"files": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Specific file paths to search in",
+					},
+					"file_pattern": map[string]interface{}{
+						"type":        "string",
+						"description": "Glob pattern for files to search (e.g., '*.go', 'internal/**/*.go')",
+					},
+					"regex": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Treat pattern as regex",
+						"default":     false,
+					},
+					"case_sensitive": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Case sensitive search",
+						"default":     false,
+					},
+					"max_results": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of results per file",
+						"default":     100,
+					},
+					"context_lines": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of context lines to show around matches",
+						"default":     2,
+					},
+				},
+				"required": []string{"pattern"},
+			},
+		},
+		{
+			Name:        "execute_bash",
+			Description: "Execute bash commands with security validation",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"command": map[string]interface{}{
+						"type":        "string",
+						"description": "Bash command to execute",
+					},
+					"timeout": map[string]interface{}{
+						"type":        "integer",
+						"description": "Timeout in seconds (max 600)",
+						"default":     120,
+					},
+					"working_directory": map[string]interface{}{
+						"type":        "string",
+						"description": "Working directory for command execution",
+					},
+				},
+				"required": []string{"command"},
+			},
+		},
 	}
 }

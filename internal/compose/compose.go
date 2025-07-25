@@ -1455,8 +1455,15 @@ func List(configFile string) error {
 		return err
 	}
 
-	fmt.Printf("%-20s %-15s %-10s\n", "SERVICE", "STATUS", "TYPE")
-	fmt.Println(strings.Repeat("-", 50))
+	serviceCount := len(status.Services)
+	runningCount := 0
+	for _, svc := range status.Services {
+		if strings.ToLower(svc.Status) == "running" || strings.ToLower(svc.Status) == "up" {
+			runningCount++
+		}
+	}
+	fmt.Printf("Services (%d total, %d running)\n", serviceCount, runningCount)
+	fmt.Println(strings.Repeat("=", 40))
 
 	for name, svc := range status.Services {
 		fmt.Printf("%-20s %-15s %-10s\n", name, svc.Status, svc.Type)

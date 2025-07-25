@@ -25,10 +25,17 @@ func (m *MateyMCPServer) mateyPS(ctx context.Context, args map[string]interface{
 		}, err
 	}
 	
-	// Format output similar to matey ps
+	// Format output with service count summary
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-20s %-15s %-10s\n", "SERVICE", "STATUS", "TYPE"))
-	output.WriteString(strings.Repeat("-", 50))
+	serviceCount := len(status.Services)
+	runningCount := 0
+	for _, svc := range status.Services {
+		if strings.ToLower(svc.Status) == "running" || strings.ToLower(svc.Status) == "up" {
+			runningCount++
+		}
+	}
+	output.WriteString(fmt.Sprintf("MCP Services (%d total, %d running)\n", serviceCount, runningCount))
+	output.WriteString(strings.Repeat("=", 40))
 	output.WriteString("\n")
 	
 	for name, svc := range status.Services {
@@ -278,9 +285,15 @@ func (m *MateyMCPServer) getClusterState(ctx context.Context, args map[string]in
 	if m.useK8sClient() {
 		status, err := compose.Status(m.configFile)
 		if err == nil {
-			result.WriteString("=== MCP Servers ===\n")
-			result.WriteString(fmt.Sprintf("%-20s %-15s %-10s\n", "SERVICE", "STATUS", "TYPE"))
-			result.WriteString(strings.Repeat("-", 50))
+			serviceCount := len(status.Services)
+			runningCount := 0
+			for _, svc := range status.Services {
+				if strings.ToLower(svc.Status) == "running" || strings.ToLower(svc.Status) == "up" {
+					runningCount++
+				}
+			}
+			result.WriteString(fmt.Sprintf("=== MCP Servers (%d total, %d running) ===\n", serviceCount, runningCount))
+			result.WriteString(strings.Repeat("=", 50))
 			result.WriteString("\n")
 			
 			for name, svc := range status.Services {

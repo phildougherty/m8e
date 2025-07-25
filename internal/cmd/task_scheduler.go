@@ -783,8 +783,14 @@ func listTemplates(category, output string) error {
 // Helper functions for display
 
 func printWorkflowTable(workflows []crd.WorkflowDefinition) {
-	fmt.Printf("%-20s %-15s %-10s %-15s %-20s %-10s\n", "NAME", "NAMESPACE", "ENABLED", "SCHEDULE", "TEMPLATE", "SUSPEND")
-	fmt.Printf("%-20s %-15s %-10s %-15s %-20s %-10s\n", "----", "---------", "-------", "--------", "--------", "-------")
+	enabledCount := 0
+	for _, wf := range workflows {
+		if wf.Enabled {
+			enabledCount++
+		}
+	}
+	fmt.Printf("Workflow Definitions (%d total, %d enabled)\n", len(workflows), enabledCount)
+	fmt.Println(strings.Repeat("=", 50))
 
 	for _, wf := range workflows {
 		name := wf.Name
@@ -867,8 +873,12 @@ func printWorkflowDetails(workflow *crd.WorkflowDefinition, taskScheduler *crd.M
 }
 
 func printTemplateTable(templates []*scheduler.WorkflowTemplate) {
-	fmt.Printf("%-25s %-15s %-50s\n", "NAME", "CATEGORY", "DESCRIPTION")
-	fmt.Printf("%-25s %-15s %-50s\n", "----", "--------", "-----------")
+	categoryCount := make(map[string]int)
+	for _, template := range templates {
+		categoryCount[template.Category]++
+	}
+	fmt.Printf("Workflow Templates (%d total, %d categories)\n", len(templates), len(categoryCount))
+	fmt.Println(strings.Repeat("=", 50))
 
 	for _, tmpl := range templates {
 		name := tmpl.Name

@@ -2088,24 +2088,7 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 
 // isNativeFunction checks if a function is handled natively
 func (tc *TermChat) isNativeFunction(functionName string) bool {
-	nativeFunctions := []string{
-		"execute_bash", "bash", "run_command", 
-		"deploy_service", "scale_service", "restart_service", 
-		"get_logs", "get_metrics", "check_health",
-		"get_service_status", "create_backup",
-		"edit_file", "editfile", "edit-file", // File editing tools as native
-		"read_file", "readfile", "read-file", // File reading tools as native
-		"search_files", "searchfiles", "search-files", // File search tools as native
-		"search_in_files", "searchinfiles", "search-in-files", // File content search tools as native
-		"parse_code", "parsecode", "parse-code", // Code parsing tools as native
-		"create_todo", "create_todos", "list_todos", "update_todo_status", "update_todos", "remove_todo", "clear_completed_todos", "get_todo_stats", // TODO tools
-	}
-	
-	for _, nativeFunc := range nativeFunctions {
-		if functionName == nativeFunc {
-			return true
-		}
-	}
+	// All tools now route through MCP discovery - native tools are handled by matey-mcp-server
 	return false
 }
 

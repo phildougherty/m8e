@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/phildougherty/m8e/internal/compose"
@@ -306,6 +310,14 @@ func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments
 	case "get_workspace_stats":
 		return m.getWorkspaceStats(ctx)
 		
+	// Native tools (migrated from chat package)
+	case "create_todos":
+		return m.createTodos(ctx, arguments)
+	case "search_in_files":
+		return m.searchInFiles(ctx, arguments)
+	case "execute_bash":
+		return m.executeBash(ctx, arguments)
+		
 	default:
 		return &ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Unknown tool: %s", name)}},
@@ -384,4 +396,316 @@ func (m *MateyMCPServer) initializeMemoryStore() {
 	m.memoryTools = memoryTools
 	
 	fmt.Printf("DEBUG: Memory store initialized successfully\n")
+}
+
+// Native tool implementations (migrated from chat package)
+
+func (m *MateyMCPServer) createTodos(ctx context.Context, arguments map[string]interface{}) (*ToolResult, error) {
+	todosInterface, ok := arguments["todos"]
+	if !ok {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: todos array is required"}},
+			IsError: true,
+		}, fmt.Errorf("todos array is required")
+	}
+
+	todosArray, ok := todosInterface.([]interface{})
+	if !ok {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: todos must be an array"}},
+			IsError: true,
+		}, fmt.Errorf("todos must be an array")
+	}
+
+	var createdItems []map[string]interface{}
+	var createdCount int
+
+	for _, todoInterface := range todosArray {
+		todoMap, ok := todoInterface.(map[string]interface{})
+		if !ok {
+			continue // Skip invalid items
+		}
+
+		content, ok := todoMap["content"].(string)
+		if !ok || content == "" {
+			continue // Skip items without content
+		}
+
+		// Parse priority with default
+		priority := "medium"
+		if p, ok := todoMap["priority"].(string); ok {
+			priority = p
+		}
+
+		// Create a simple TODO ID
+		id := fmt.Sprintf("todo_%d", len(createdItems)+1)
+		createdCount++
+
+		createdItems = append(createdItems, map[string]interface{}{
+			"id":       id,
+			"content":  content,
+			"priority": priority,
+			"status":   "pending",
+		})
+	}
+
+	result := fmt.Sprintf("Created %d TODO items successfully", createdCount)
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: result}},
+		IsError: false,
+	}, nil
+}
+
+func (m *MateyMCPServer) searchInFiles(ctx context.Context, arguments map[string]interface{}) (*ToolResult, error) {
+	pattern, ok := arguments["pattern"].(string)
+	if !ok || pattern == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: pattern is required"}},
+			IsError: true,
+		}, fmt.Errorf("pattern is required")
+	}
+
+	// Get search parameters
+	files, _ := arguments["files"].([]interface{})
+	filePattern, _ := arguments["file_pattern"].(string)
+	isRegex := getBoolArg(arguments, "regex", false)
+	caseSensitive := getBoolArg(arguments, "case_sensitive", false)
+	maxResults := getIntArg(arguments, "max_results", 100)
+	contextLines := getIntArg(arguments, "context_lines", 2)
+
+	var searchFiles []string
+
+	// Determine files to search
+	if len(files) > 0 {
+		for _, f := range files {
+			if filepath, ok := f.(string); ok {
+				searchFiles = append(searchFiles, filepath)
+			}
+		}
+	} else if filePattern != "" {
+		// Use glob pattern to find files
+		matches, err := filepath.Glob(filePattern)
+		if err == nil {
+			searchFiles = matches
+		}
+	} else {
+		// Default to searching current directory Go files
+		matches, _ := filepath.Glob("*.go")
+		searchFiles = matches
+	}
+
+	if len(searchFiles) == 0 {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "No files found to search"}},
+			IsError: false,
+		}, nil
+	}
+
+	// Compile regex if needed
+	var regex *regexp.Regexp
+	var err error
+	if isRegex {
+		flags := ""
+		if !caseSensitive {
+			flags = "(?i)"
+		}
+		regex, err = regexp.Compile(flags + pattern)
+		if err != nil {
+			return &ToolResult{
+				Content: []Content{{Type: "text", Text: fmt.Sprintf("Invalid regex pattern: %v", err)}},
+				IsError: true,
+			}, err
+		}
+	}
+
+	var results []string
+	totalMatches := 0
+
+	for _, filePath := range searchFiles {
+		if totalMatches >= maxResults {
+			break
+		}
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+
+		lines := strings.Split(string(content), "\n")
+		var fileMatches []string
+
+		for lineNum, line := range lines {
+			if totalMatches >= maxResults {
+				break
+			}
+
+			var matched bool
+			if isRegex {
+				matched = regex.MatchString(line)
+			} else {
+				searchLine := line
+				searchPattern := pattern
+				if !caseSensitive {
+					searchLine = strings.ToLower(line)
+					searchPattern = strings.ToLower(pattern)
+				}
+				matched = strings.Contains(searchLine, searchPattern)
+			}
+
+			if matched {
+				// Add context lines
+				start := lineNum - contextLines
+				end := lineNum + contextLines + 1
+				if start < 0 {
+					start = 0
+				}
+				if end > len(lines) {
+					end = len(lines)
+				}
+
+				match := fmt.Sprintf("%s:%d:", filePath, lineNum+1)
+				for i := start; i < end; i++ {
+					prefix := "  "
+					if i == lineNum {
+						prefix = "> "
+					}
+					match += fmt.Sprintf("\n%s%d: %s", prefix, i+1, lines[i])
+				}
+				fileMatches = append(fileMatches, match)
+				totalMatches++
+			}
+		}
+
+		results = append(results, fileMatches...)
+	}
+
+	if len(results) == 0 {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("No matches found for pattern: %s", pattern)}},
+			IsError: false,
+		}, nil
+	}
+
+	result := fmt.Sprintf("Found %d matches:\n\n%s", totalMatches, strings.Join(results, "\n\n"))
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: result}},
+		IsError: false,
+	}, nil
+}
+
+func (m *MateyMCPServer) executeBash(ctx context.Context, arguments map[string]interface{}) (*ToolResult, error) {
+	command, ok := arguments["command"].(string)
+	if !ok || command == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: command is required"}},
+			IsError: true,
+		}, fmt.Errorf("command is required")
+	}
+
+	// Get timeout with default
+	timeout := getIntArg(arguments, "timeout", 120)
+	if timeout > 600 {
+		timeout = 600 // Max 10 minutes
+	}
+
+	// Get working directory
+	workingDir, _ := arguments["working_directory"].(string)
+	if workingDir == "" {
+		workingDir = "."
+	}
+
+	// Security validation - basic checks
+	if err := validateCommand(command); err != nil {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Command validation failed: %v", err)}},
+			IsError: true,
+		}, err
+	}
+
+	// Create command with timeout context
+	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, "bash", "-c", command)
+	cmd.Dir = workingDir
+
+	// Capture both stdout and stderr
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	start := time.Now()
+	err := cmd.Run()
+	duration := time.Since(start)
+
+	// Prepare result
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Command: %s\n", command))
+	result.WriteString(fmt.Sprintf("Directory: %s\n", workingDir))
+	result.WriteString(fmt.Sprintf("Duration: %v\n", duration.Truncate(time.Millisecond)))
+
+	if stdout.Len() > 0 {
+		result.WriteString(fmt.Sprintf("\nSTDOUT:\n%s", stdout.String()))
+	}
+
+	if stderr.Len() > 0 {
+		result.WriteString(fmt.Sprintf("\nSTDERR:\n%s", stderr.String()))
+	}
+
+	if err != nil {
+		result.WriteString(fmt.Sprintf("\nError: %v", err))
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: result.String()}},
+			IsError: true,
+		}, nil // Don't return error since we want to show the output
+	}
+
+	return &ToolResult{
+		Content: []Content{{Type: "text", Text: result.String()}},
+		IsError: false,
+	}, nil
+}
+
+// Helper functions for argument parsing
+func getBoolArg(args map[string]interface{}, key string, defaultValue bool) bool {
+	if val, ok := args[key].(bool); ok {
+		return val
+	}
+	return defaultValue
+}
+
+func getIntArg(args map[string]interface{}, key string, defaultValue int) int {
+	if val, ok := args[key].(float64); ok {
+		return int(val)
+	}
+	if val, ok := args[key].(int); ok {
+		return val
+	}
+	return defaultValue
+}
+
+func getStringArg(args map[string]interface{}, key string, defaultValue string) string {
+	if val, ok := args[key].(string); ok {
+		return val
+	}
+	return defaultValue
+}
+
+func validateCommand(command string) error {
+	// Basic security validation
+	dangerous := []string{
+		"rm -rf /",
+		":(){ :|:& };:",
+		"> /dev/",
+		"curl.*|.*sh",
+		"wget.*|.*sh",
+	}
+	
+	for _, danger := range dangerous {
+		if matched, _ := regexp.MatchString(danger, command); matched {
+			return fmt.Errorf("potentially dangerous command detected")
+		}
+	}
+	
+	return nil
 }
