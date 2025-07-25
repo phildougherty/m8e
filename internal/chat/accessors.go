@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/phildougherty/m8e/internal/ai"
 	"github.com/phildougherty/m8e/internal/edit"
 	"github.com/phildougherty/m8e/internal/mcp"
+	appcontext "github.com/phildougherty/m8e/internal/context"
 )
 
 // Public accessor methods for turn.go compatibility
@@ -40,6 +42,7 @@ func (tc *TermChat) GetMCPFunctions() []ai.Function {
 func (tc *TermChat) GetAIManager() *ai.Manager {
 	return tc.aiManager
 }
+
 
 // GetCurrentModel returns the current model
 func (tc *TermChat) GetCurrentModel() string {
@@ -111,6 +114,8 @@ func (tc *TermChat) ExecuteNativeToolCall(toolCall interface{}, index int) (inte
 		return tc.executeReadFile(call.Function.Arguments)
 	case "search_files", "searchfiles", "search-files":
 		return tc.executeSearchFiles(call.Function.Arguments)
+	case "search_in_files", "searchinfiles", "search-in-files":
+		return tc.executeSearchInFiles(call.Function.Arguments)
 	case "parse_code", "parsecode", "parse-code":
 		return tc.executeParseCode(call.Function.Arguments)
 	case "create_todo":
@@ -705,7 +710,29 @@ func (tc *TermChat) executeSearchFiles(argumentsJSON string) (interface{}, error
 		K8sIntegrated: false,
 	})
 
-	enhancedTools := mcp.NewEnhancedTools(config, fileEditor, nil, nil, nil, nil)
+	// Use existing components from TermChat if available, otherwise create new ones
+	var fileDiscovery *appcontext.FileDiscovery
+	var contextManager *appcontext.ContextManager
+	var mentionProcessor *appcontext.MentionProcessor
+
+	if tc.fileDiscovery != nil {
+		fileDiscovery = tc.fileDiscovery
+	} else {
+		// Fallback: create new file discovery
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get working directory: %v", err)
+		}
+		fileDiscovery, err = appcontext.NewFileDiscovery(workingDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file discovery: %v", err)
+		}
+	}
+
+	contextManager = tc.contextManager
+	mentionProcessor = tc.mentionProcessor
+
+	enhancedTools := mcp.NewEnhancedTools(config, fileEditor, contextManager, fileDiscovery, nil, mentionProcessor)
 
 	// Execute the search
 	ctx := context.Background()
@@ -727,6 +754,193 @@ func (tc *TermChat) executeSearchFiles(argumentsJSON string) (interface{}, error
 	}
 
 	return result, nil
+}
+
+// executeSearchInFiles executes the search_in_files native function
+func (tc *TermChat) executeSearchInFiles(argumentsJSON string) (interface{}, error) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse search_in_files arguments: %v", err)
+	}
+
+	// Extract pattern
+	pattern, ok := args["pattern"].(string)
+	if !ok || pattern == "" {
+		return nil, fmt.Errorf("pattern is required")
+	}
+
+	// Get search options
+	regex := getBoolArg(args, "regex", false)
+	caseSensitive := getBoolArg(args, "case_sensitive", false)
+	maxResults := getIntArg(args, "max_results", 100)
+	contextLines := getIntArg(args, "context_lines", 2)
+
+	// Collect files to search
+	var filesToSearch []string
+
+	// Handle specific files array
+	if files, ok := args["files"].([]interface{}); ok {
+		for _, file := range files {
+			if fileStr, ok := file.(string); ok {
+				filesToSearch = append(filesToSearch, fileStr)
+			}
+		}
+	}
+
+	// Handle file pattern
+	if filePattern, ok := args["file_pattern"].(string); ok && filePattern != "" {
+		// Use file discovery to find files matching pattern
+		if tc.fileDiscovery != nil {
+			searchOptions := appcontext.SearchOptions{
+				Pattern:    filePattern,
+				MaxResults: 1000, // High limit for file discovery
+				Concurrent: true,
+			}
+			
+			ctx := context.Background()
+			results, err := tc.fileDiscovery.Search(ctx, searchOptions)
+			if err != nil {
+				return nil, fmt.Errorf("file pattern search failed: %v", err)
+			}
+			
+			for _, result := range results {
+				filesToSearch = append(filesToSearch, result.Path)
+			}
+		}
+	}
+
+	// If no files specified, default to current directory common file types
+	if len(filesToSearch) == 0 {
+		if tc.fileDiscovery != nil {
+			searchOptions := appcontext.SearchOptions{
+				Pattern:    "*.go",
+				MaxResults: 1000,
+				Concurrent: true,
+			}
+			
+			ctx := context.Background()
+			results, err := tc.fileDiscovery.Search(ctx, searchOptions)
+			if err == nil {
+				for _, result := range results {
+					filesToSearch = append(filesToSearch, result.Path)
+				}
+			}
+		}
+	}
+
+	// Perform search in files
+	searchResults := make([]map[string]interface{}, 0)
+	totalMatches := 0
+
+	for _, filePath := range filesToSearch {
+		if totalMatches >= maxResults {
+			break
+		}
+
+		matches, err := tc.searchInFile(filePath, pattern, regex, caseSensitive, contextLines, maxResults-totalMatches)
+		if err != nil {
+			continue // Skip files that can't be read
+		}
+
+		if len(matches) > 0 {
+			fileResult := map[string]interface{}{
+				"file":    filePath,
+				"matches": matches,
+				"count":   len(matches),
+			}
+			searchResults = append(searchResults, fileResult)
+			totalMatches += len(matches)
+		}
+	}
+
+	// Return results
+	result := map[string]interface{}{
+		"pattern":      pattern,
+		"files":        searchResults,
+		"total_matches": totalMatches,
+		"total_files":   len(searchResults),
+	}
+
+	return result, nil
+}
+
+// searchInFile searches for a pattern in a specific file and returns matches with line numbers
+func (tc *TermChat) searchInFile(filePath, pattern string, regex, caseSensitive bool, contextLines, maxMatches int) ([]map[string]interface{}, error) {
+	// Read file content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	matches := make([]map[string]interface{}, 0)
+	
+	// Compile regex if needed
+	var regexPattern *regexp.Regexp
+	if regex {
+		flags := ""
+		if !caseSensitive {
+			flags = "(?i)"
+		}
+		regexPattern, err = regexp.Compile(flags + pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex pattern: %v", err)
+		}
+	}
+
+	searchPattern := pattern
+	if !caseSensitive && !regex {
+		searchPattern = strings.ToLower(pattern)
+	}
+
+	for lineNum, line := range lines {
+		if len(matches) >= maxMatches {
+			break
+		}
+
+		var matched bool
+		if regex {
+			matched = regexPattern.MatchString(line)
+		} else {
+			searchLine := line
+			if !caseSensitive {
+				searchLine = strings.ToLower(line)
+			}
+			matched = strings.Contains(searchLine, searchPattern)
+		}
+
+		if matched {
+			// Calculate context lines
+			startLine := lineNum - contextLines
+			if startLine < 0 {
+				startLine = 0
+			}
+			endLine := lineNum + contextLines
+			if endLine >= len(lines) {
+				endLine = len(lines) - 1
+			}
+
+			// Build context
+			context := make([]map[string]interface{}, 0)
+			for i := startLine; i <= endLine; i++ {
+				contextLine := map[string]interface{}{
+					"line_number": i + 1,
+					"content":     lines[i],
+					"is_match":    i == lineNum,
+				}
+				context = append(context, contextLine)
+			}
+
+			match := map[string]interface{}{
+				"line_number": lineNum + 1,
+				"content":     line,
+				"context":     context,
+			}
+			matches = append(matches, match)
+		}
+	}
+
+	return matches, nil
 }
 
 // executeParseCode executes the parse_code native function

@@ -279,19 +279,11 @@ func (m *ChatUI) updateStatus() tea.Cmd {
 		// Get current mode with enhanced formatting
 		mode := m.termChat.approvalMode.GetModeIndicatorNoEmoji()
 		
-		// Calculate total tokens (rough estimate based on message length)
-		totalTokens := 0
-		for _, msg := range m.termChat.chatHistory {
-			// Rough estimate: 1 token per 4 characters
-			totalTokens += len(msg.Content) / 4
-		}
-		
-		// Create enhanced status with colors
-		statusText := fmt.Sprintf("%s | %s | %s | %d tokens | %s",
+		// Create enhanced status with colors (removed token count - not accurate for streaming)
+		statusText := fmt.Sprintf("%s | %s | %s | %s",
 			time.Now().Format("15:04:05"), 
 			m.termChat.currentProvider, 
 			m.termChat.currentModel,
-			totalTokens,
 			mode)
 		return statusUpdateMsg{status: statusText}
 	})

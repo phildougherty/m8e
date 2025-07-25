@@ -392,8 +392,17 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 		if err != nil {
 			resultContent = fmt.Sprintf("Error: %v", err)
 		} else if result != nil {
-			// Handle MCP tool result - convert to string
-			resultContent = fmt.Sprintf("Result: %+v", result)
+			// Use the same formatting that the UI uses for consistency
+			if isNative {
+				// For native functions, use our enhanced formatting
+				resultContent = t.chat.extractAnyContent(result, toolCall.Function.Name)
+				if resultContent == "" {
+					resultContent = fmt.Sprintf("Result: %+v", result)
+				}
+			} else {
+				// Handle MCP tool result - convert to string
+				resultContent = fmt.Sprintf("Result: %+v", result)
+			}
 		} else {
 			resultContent = "Function executed successfully"
 		}

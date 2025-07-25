@@ -488,6 +488,49 @@ func (tc *TermChat) getMCPFunctions() []ai.Function {
 			},
 		},
 		{
+			Name:        "search_in_files",
+			Description: "Search for text patterns within specific files or file patterns, returns matches with line numbers",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"pattern": map[string]interface{}{
+						"type":        "string",
+						"description": "Text pattern or regex to search for",
+					},
+					"files": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Specific file paths to search in",
+					},
+					"file_pattern": map[string]interface{}{
+						"type":        "string",
+						"description": "Glob pattern for files to search (e.g., '*.go', 'internal/**/*.go')",
+					},
+					"regex": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Treat pattern as regex",
+						"default":     false,
+					},
+					"case_sensitive": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Case sensitive search",
+						"default":     false,
+					},
+					"max_results": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of results per file",
+						"default":     100,
+					},
+					"context_lines": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of context lines to show around matches",
+						"default":     2,
+					},
+				},
+				"required": []string{"pattern"},
+			},
+		},
+		{
 			Name:        "parse_code",
 			Description: "Parse code structure using tree-sitter for function/class definitions",
 			Parameters: map[string]interface{}{
@@ -1270,21 +1313,62 @@ func (tc *TermChat) extractMapSummary(m map[string]interface{}, toolName string)
 		return "TODO created"
 	
 	case "create_todos":
-		if count, ok := m["created_count"].(float64); ok {
+		// Handle both int and float64 for created_count
+		var count float64
+		var hasCount bool
+		if countInt, ok := m["created_count"].(int); ok {
+			count = float64(countInt)
+			hasCount = true
+		} else if countFloat, ok := m["created_count"].(float64); ok {
+			count = countFloat
+			hasCount = true
+		}
+		
+		if hasCount {
 			if items, ok := m["items"].([]interface{}); ok {
-				var summaries []string
+				var result strings.Builder
+				result.WriteString(fmt.Sprintf("Created %d TODOs:", int(count)))
+				
 				for i, item := range items {
-					if i >= 3 {
-						summaries = append(summaries, "...")
-						break
-					}
 					if itemMap, ok := item.(map[string]interface{}); ok {
-						if content, ok := itemMap["content"].(string); ok {
-							summaries = append(summaries, tc.truncateString(content, 30))
+						content, _ := itemMap["content"].(string)
+						priority, _ := itemMap["priority"].(string)
+						status, _ := itemMap["status"].(string)
+						
+						// Format status like Claude Code
+						var statusIcon string
+						switch status {
+						case "pending":
+							statusIcon = "[ ]"
+						case "in_progress":
+							statusIcon = "[▶]"
+						case "completed":
+							statusIcon = "[✓]"
+						default:
+							statusIcon = "[ ]"
 						}
+						
+						// Format priority like Claude Code
+						var priorityLabel string
+						switch priority {
+						case "urgent":
+							priorityLabel = "(urgent)"
+						case "high":
+							priorityLabel = "(high)"
+						case "medium":
+							priorityLabel = "(medium)"
+						case "low":
+							priorityLabel = "(low)"
+						default:
+							priorityLabel = "(medium)"
+						}
+						
+						result.WriteString(fmt.Sprintf("\n%d. %s %s %s", 
+							i+1, statusIcon, content, priorityLabel))
 					}
 				}
-				return fmt.Sprintf("Created %d TODOs: %s", int(count), strings.Join(summaries, ", "))
+				
+				return result.String()
 			}
 			return fmt.Sprintf("Created %d TODOs", int(count))
 		}
@@ -1307,38 +1391,38 @@ func (tc *TermChat) extractMapSummary(m map[string]interface{}, toolName string)
 					status, _ := itemMap["status"].(string)
 					priority, _ := itemMap["priority"].(string)
 					
-					// Format status with color/symbol
-					var statusIcon string
+					// Format status
+					var statusLabel string
 					switch status {
 					case "pending":
-						statusIcon = "⏸️"
+						statusLabel = "PENDING"
 					case "in_progress":
-						statusIcon = "▶️"
+						statusLabel = "ACTIVE"
 					case "completed":
-						statusIcon = "✅"
+						statusLabel = "DONE"
 					case "cancelled":
-						statusIcon = "❌"
+						statusLabel = "CANCELLED"
 					default:
-						statusIcon = "❓"
+						statusLabel = "UNKNOWN"
 					}
 					
 					// Format priority
 					var priorityLabel string
 					switch priority {
 					case "urgent":
-						priorityLabel = "🔴 URGENT"
+						priorityLabel = "URGENT"
 					case "high":
-						priorityLabel = "🟠 HIGH"
+						priorityLabel = "HIGH"
 					case "medium":
-						priorityLabel = "🟡 MED"
+						priorityLabel = "MED"
 					case "low":
-						priorityLabel = "🟢 LOW"
+						priorityLabel = "LOW"
 					default:
-						priorityLabel = "⚪ UNK"
+						priorityLabel = "MED"
 					}
 					
-					result.WriteString(fmt.Sprintf("%d. %s [%s] %s - %s\n", 
-						i+1, statusIcon, priorityLabel, tc.truncateString(content, 60), id[:8]))
+					result.WriteString(fmt.Sprintf("%d. [%s] [%s] %s (%s)\n", 
+						i+1, statusLabel, priorityLabel, tc.truncateString(content, 60), id[:8]))
 				}
 			}
 			
@@ -2012,6 +2096,7 @@ func (tc *TermChat) isNativeFunction(functionName string) bool {
 		"edit_file", "editfile", "edit-file", // File editing tools as native
 		"read_file", "readfile", "read-file", // File reading tools as native
 		"search_files", "searchfiles", "search-files", // File search tools as native
+		"search_in_files", "searchinfiles", "search-in-files", // File content search tools as native
 		"parse_code", "parsecode", "parse-code", // Code parsing tools as native
 		"create_todo", "create_todos", "list_todos", "update_todo_status", "update_todos", "remove_todo", "clear_completed_todos", "get_todo_stats", // TODO tools
 	}
