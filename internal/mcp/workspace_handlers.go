@@ -4,7 +4,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 )
@@ -67,7 +66,7 @@ func (m *MateyMCPServer) listWorkspaceFiles(ctx context.Context, workflowName, e
 	}
 
 	// List files
-	files, err := ioutil.ReadDir(fullPath)
+	files, err := os.ReadDir(fullPath)
 	if err != nil {
 		return &ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Failed to list files: %v", err)}},
@@ -81,7 +80,13 @@ func (m *MateyMCPServer) listWorkspaceFiles(ctx context.Context, workflowName, e
 		if file.IsDir() {
 			fileList = append(fileList, fmt.Sprintf("%s/ (directory)", file.Name()))
 		} else {
-			fileList = append(fileList, fmt.Sprintf("%s (%d bytes)", file.Name(), file.Size()))
+			// Get file info for size
+			info, err := file.Info()
+			if err != nil {
+				fileList = append(fileList, fmt.Sprintf("%s (unknown size)", file.Name()))
+			} else {
+				fileList = append(fileList, fmt.Sprintf("%s (%d bytes)", file.Name(), info.Size()))
+			}
 		}
 	}
 
@@ -148,7 +153,7 @@ func (m *MateyMCPServer) readWorkspaceFile(ctx context.Context, workflowName, ex
 	}
 
 	// Read file content
-	content, err := ioutil.ReadFile(fullPath)
+	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		return &ToolResult{
 			Content: []Content{{Type: "text", Text: fmt.Sprintf("Failed to read file: %v", err)}},

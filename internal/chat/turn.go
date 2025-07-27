@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/phildougherty/m8e/internal/ai"
@@ -279,6 +280,7 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 							Arguments: toolCall.Function.Arguments,
 						},
 					}
+					
 				}
 			}
 		}
@@ -307,13 +309,24 @@ func (t *ConversationTurn) executeConversationRound(ctx context.Context) error {
 	return nil
 }
 
-// executeToolsAndContinue executes pending tools and adds results to conversation
+// ToolExecutionResult holds the result of a single tool execution
+type ToolExecutionResult struct {
+	ToolCall ai.ToolCall
+	Result   interface{}
+	Error    error
+	Index    int // Preserve original order
+}
+
+// executeToolsAndContinue executes pending tools in parallel and adds results to conversation
 func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 	aiMsgIndex := len(t.chat.GetChatHistory()) - 1
 	var toolResults []ai.Message
 	
-	// Execute all pending tools
-	for _, toolCall := range t.pendingTools {
+	// First pass: handle approvals sequentially (required for user interaction)
+	approvedTools := make([]ai.ToolCall, 0)
+	toolIndexMap := make(map[string]int) // Map toolCall ID to original index
+	
+	for i, toolCall := range t.pendingTools {
 		if toolCall.Type != "function" {
 			continue
 		}
@@ -333,61 +346,106 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 			}
 		}
 		
-		// In silent mode, show function call execution in UI
-		// Function call will be shown in enhanced format after execution
-		
-		// Parse arguments and validate for specific functions
-		parsedArgs := t.parseArguments(toolCall.Function.Arguments)
-		
-		// Special validation for create_workflow to provide helpful error messages
-		if toolCall.Function.Name == "create_workflow" {
-			if len(parsedArgs) == 0 {
-				// Provide a helpful error that the AI can learn from
-				toolResult := ai.Message{
-					Role:       "tool",
-					Content:    "ERROR: create_workflow requires arguments. MUST include 'name' (string) and 'steps' (array). Example: {\"name\": \"my-workflow\", \"steps\": [{\"name\": \"step1\", \"tool\": \"some_tool\"}]}",
-					ToolCallId: toolCall.ID,
+		// Tool approved - add to execution list
+		approvedTools = append(approvedTools, toolCall)
+		toolIndexMap[toolCall.ID] = i
+	}
+	
+	// If no tools approved, return early
+	if len(approvedTools) == 0 {
+		// Add all tool results to message context
+		for _, result := range toolResults {
+			t.messages = append(t.messages, result)
+		}
+		t.pendingTools = make([]ai.ToolCall, 0)
+		return nil
+	}
+	
+	// Second pass: validate execute_agent calls and execute approved tools in parallel
+	resultsChan := make(chan ToolExecutionResult, len(approvedTools))
+	var wg sync.WaitGroup
+	
+	for i, toolCall := range approvedTools {
+		// Client-side validation for execute_agent to prevent empty calls
+		if toolCall.Function.Name == "execute_agent" {
+			parsedArgs := t.parseArguments(toolCall.Function.Arguments)
+			if len(parsedArgs) == 0 || parsedArgs["objective"] == nil || parsedArgs["objective"] == "" {
+				// Force an error result for empty execute_agent calls
+				resultsChan <- ToolExecutionResult{
+					ToolCall: toolCall,
+					Result:   nil,
+					Error:    fmt.Errorf("❌ BLOCKED: execute_agent called without required 'objective' parameter. Please provide: {\"objective\": \"your task description\", \"ai_provider\": \"openrouter\", \"ai_model\": \"your-model\", \"output_format\": \"structured_data\"}"),
+					Index:    i,
 				}
-				toolResults = append(toolResults, toolResult)
-				continue
-			}
-			if _, hasName := parsedArgs["name"]; !hasName {
-				toolResult := ai.Message{
-					Role:       "tool", 
-					Content:    "ERROR: create_workflow missing required 'name' parameter. Must be a string.",
-					ToolCallId: toolCall.ID,
-				}
-				toolResults = append(toolResults, toolResult)
-				continue
-			}
-			if _, hasSteps := parsedArgs["steps"]; !hasSteps {
-				toolResult := ai.Message{
-					Role:       "tool",
-					Content:    "ERROR: create_workflow missing required 'steps' parameter. Must be an array of step objects.",
-					ToolCallId: toolCall.ID,
-				}
-				toolResults = append(toolResults, toolResult)
 				continue
 			}
 		}
+		// Show execute_agent startup after approval in Claude Code style
+		if toolCall.Function.Name == "execute_agent" && GetUIProgram() != nil {
+			// Parse objective from arguments for display
+			parsedArgs := t.parseArguments(toolCall.Function.Arguments)
+			objective := "execute_agent" // Only fallback if no objective found
+			if args, ok := parsedArgs["objective"].(string); ok && args != "" {
+				if len(args) > 60 {
+					objective = args[:57] + "..."
+				} else {
+					objective = args
+				}
+			} else {
+				// Debug: log when we can't find the objective
+				fmt.Printf("DEBUG: Could not extract objective from execute_agent arguments: %+v\n", parsedArgs)
+			}
+			
+			// Show in Claude Code style with proper formatting
+			bullet := "\x1b[32m*\x1b[0m"
+			displayName := fmt.Sprintf("execute_agent(\"%s\")", objective)
+			startMsg := fmt.Sprintf("\n%s \x1b[32m%s\x1b[0m", bullet, displayName)
+			GetUIProgram().Send(aiStreamMsg{content: startMsg})
+			
+			progressMsg := "\n  \x1b[90m⎿\x1b[0m  Spawning autonomous sub-agent with access to all tools..."
+			GetUIProgram().Send(aiStreamMsg{content: progressMsg})
+		}
 		
-		// Try native function execution first, then fall back to MCP
-		var result interface{}
-		var err error
+		// Launch goroutine for parallel execution
+		wg.Add(1)
+		go func(tc ai.ToolCall, index int) {
+			defer wg.Done()
+			
+			// Execute the tool call
+			result, err := t.executeSingleTool(ctx, tc, aiMsgIndex)
+			
+			// Send result to channel
+			resultsChan <- ToolExecutionResult{
+				ToolCall: tc,
+				Result:   result,
+				Error:    err,
+				Index:    index,
+			}
+		}(toolCall, i)
+	}
+	
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+	
+	// Collect results and maintain order
+	executionResults := make([]ToolExecutionResult, len(approvedTools))
+	for result := range resultsChan {
+		executionResults[result.Index] = result
+	}
+	
+	// Process results in original order and create tool messages
+	for _, execResult := range executionResults {
+		toolCall := execResult.ToolCall
+		result := execResult.Result
+		err := execResult.Error
 		
-		// Check if this is a native function using the chat's isNativeFunction method
+		// Determine if this was a native function
 		isNative := t.chat.isNativeFunction(toolCall.Function.Name)
 		
-		if isNative {
-			// Execute native function
-			result, err = t.executeToolCall(toolCall, aiMsgIndex)
-		} else {
-			// Execute MCP tool
-			toolCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			result, err = t.chat.GetMCPClient().CallTool(toolCtx, t.findServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
-			cancel()
-		}
-		
+		// Format result content
 		var resultContent string
 		if err != nil {
 			resultContent = fmt.Sprintf("Error: %v", err)
@@ -400,8 +458,17 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 					resultContent = fmt.Sprintf("Result: %+v", result)
 				}
 			} else {
-				// Handle MCP tool result - convert to string
-				resultContent = fmt.Sprintf("Result: %+v", result)
+				// Handle MCP tool result
+				if toolCall.Function.Name == "execute_agent" {
+					// Special handling for execute_agent - extract the formatted content
+					resultContent = t.chat.extractAnyContent(result, toolCall.Function.Name)
+					if resultContent == "" {
+						resultContent = fmt.Sprintf("Result: %+v", result)
+					}
+				} else {
+					// Standard MCP tool result - convert to string
+					resultContent = fmt.Sprintf("Result: %+v", result)
+				}
 			}
 		} else {
 			resultContent = "Function executed successfully"
@@ -421,6 +488,9 @@ func (t *ConversationTurn) executeToolsAndContinue(ctx context.Context) error {
 				if t.isFileEditingTool(toolCall.Function.Name) && result != nil {
 					duration := time.Millisecond * 50 // Placeholder duration
 					statusMsg = t.chat.formatToolResultWithArgs(toolCall.Function.Name, "native", result, duration, args)
+				} else if toolCall.Function.Name == "execute_agent" {
+					// Skip standard formatting for execute_agent - we already showed progress messages
+					statusMsg = ""
 				} else {
 					// Use the enhanced Claude Code style formatting
 					duration := time.Millisecond * 50
@@ -825,4 +895,48 @@ func (t *ConversationTurn) hasVeryRecentToolCalls() bool {
 		}
 	}
 	return false
+}
+
+// executeSingleTool executes a single tool call (extracted for parallel execution)
+func (t *ConversationTurn) executeSingleTool(ctx context.Context, toolCall ai.ToolCall, aiMsgIndex int) (interface{}, error) {
+	// Parse arguments and validate for specific functions
+	parsedArgs := t.parseArguments(toolCall.Function.Arguments)
+	
+	// Special validation for create_workflow to provide helpful error messages
+	if toolCall.Function.Name == "create_workflow" {
+		if len(parsedArgs) == 0 {
+			return nil, fmt.Errorf("create_workflow requires arguments. MUST include 'name' (string) and 'steps' (array)")
+		}
+		if _, hasName := parsedArgs["name"]; !hasName {
+			return nil, fmt.Errorf("create_workflow missing required 'name' parameter. Must be a string")
+		}
+		if _, hasSteps := parsedArgs["steps"]; !hasSteps {
+			return nil, fmt.Errorf("create_workflow missing required 'steps' parameter. Must be an array of step objects")
+		}
+	}
+	
+	// Try native function execution first, then fall back to MCP
+	var result interface{}
+	var err error
+	
+	// Check if this is a native function using the chat's isNativeFunction method
+	isNative := t.chat.isNativeFunction(toolCall.Function.Name)
+	
+	if isNative {
+		// Execute native function
+		result, err = t.executeToolCall(toolCall, aiMsgIndex)
+	} else {
+		// Execute MCP tool with extended timeout for execute_agent
+		var toolTimeout time.Duration
+		if toolCall.Function.Name == "execute_agent" {
+			toolTimeout = 25 * time.Minute // Extended timeout for execute_agent
+		} else {
+			toolTimeout = 30 * time.Second // Standard timeout for other tools
+		}
+		toolCtx, cancel := context.WithTimeout(ctx, toolTimeout)
+		result, err = t.chat.GetMCPClient().CallTool(toolCtx, t.findServerForTool(toolCall.Function.Name), toolCall.Function.Name, parsedArgs)
+		cancel()
+	}
+	
+	return result, err
 }

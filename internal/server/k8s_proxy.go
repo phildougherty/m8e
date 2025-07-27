@@ -123,7 +123,7 @@ func NewProxyHandler(cfg *config.ComposeConfig, namespace, apiKey string) (*Prox
 		StdioConnections:          make(map[string]*MCPSTDIOConnection),
 		EnhancedSSEConnections:    make(map[string]*EnhancedMCPSSEConnection),
 		Manager:                   nil, // TODO: Create K8s-native manager or stub
-		httpClient:                &http.Client{Timeout: 30 * time.Second},
+		httpClient:                &http.Client{Timeout: 25 * time.Minute}, // Extended for execute_agent
 		sseClient:                 &http.Client{Timeout: 0}, // No timeout for SSE
 		subscriptionManager:       protocol.NewSubscriptionManager(),
 		changeNotificationManager: protocol.NewChangeNotificationManager(),

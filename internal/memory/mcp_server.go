@@ -95,8 +95,8 @@ func (s *MCPMemoryServer) Start(host string, port int) error {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", host, port),
 		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  25 * time.Minute,  // Extended for execute_agent  
+		WriteTimeout: 25 * time.Minute, // Extended for execute_agent
 	}
 
 	s.logger.Info("MCP Memory Server listening", "address", s.server.Addr)

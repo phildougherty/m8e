@@ -138,6 +138,9 @@ func NewTermChat() *TermChat {
 		mentionProcessor: mentionProcessor,
 		todoList:         &TodoList{Items: []TodoItem{}}, // Initialize TODO list
 	}
+	
+	// Set up recursive agent capability for execute_agent tool
+	tc.setupRecursiveAgentCapability()
 
 	// Set up voice callbacks if voice manager is available
 	if voiceManager != nil {
@@ -338,4 +341,19 @@ func (tc *TermChat) getWelcomeMessage() string {
 
 Ready to orchestrate your infrastructure! What would you like to build today?`, 
 		tc.approvalMode.GetModeIndicatorNoEmoji(), tc.currentProvider, tc.currentModel)
+}
+
+// setupRecursiveAgentCapability configures the MCP client to support execute_agent recursion
+func (tc *TermChat) setupRecursiveAgentCapability() {
+	// This method sets up the agent factory for execute_agent tool recursion
+	// Since the MCP client connects to a remote server, we need to register
+	// our agent factory through a callback mechanism
+	
+	// The actual integration depends on how MCP calls are routed. For now,
+	// we'll implement a simple callback system that can be extended
+	if tc.mcpClient != nil {
+		// TODO: Set up agent factory callback when MCP client supports it
+		// This would involve modifying the MCP client to accept a callback
+		// that can create new TermChat instances for execute_agent execution
+	}
 }

@@ -812,8 +812,8 @@ func (tc *TermChat) executeUIConversationRound(messages []ai.Message) ([]ai.Tool
 	
 	// Close the function result channel and wait for any remaining function calls
 	go func() {
-		// Wait for all function calls to complete with timeout
-		timeout := time.After(30 * time.Second)
+		// Wait for all function calls to complete with extended timeout for execute_agent
+		timeout := time.After(25 * time.Minute)
 		for atomic.LoadInt64(&activeFunctionCalls) > 0 {
 			select {
 			case <-timeout:
@@ -1076,24 +1076,180 @@ func (tc *TermChat) formatToolResultWithArgs(toolName, serverName string, result
 func (tc *TermChat) formatToolResultWithDetailsAndArgs(toolName, serverName string, result interface{}, duration time.Duration, tokenCount int, args map[string]interface{}) string {
 	bullet := "\x1b[32m*\x1b[0m"
 	
-	// Special handling for execute_bash to show the command
-	var displayName string
-	if (toolName == "execute_bash" || toolName == "bash" || toolName == "run_command") && args != nil {
-		if command, ok := args["command"].(string); ok {
-			// Truncate long commands
-			if len(command) > 50 {
-				command = command[:47] + "..."
+	// Enhanced tool-specific formatting with detailed information
+	var displayName, detailLine string
+	
+	switch toolName {
+	case "create_todos":
+		displayName = "create_todos"
+		if args != nil {
+			if todosInterface, ok := args["todos"]; ok {
+				if todosArray, ok := todosInterface.([]interface{}); ok {
+					count := len(todosArray)
+					displayName = fmt.Sprintf("create_todos(%d items)", count)
+					
+					// Show first few TODO items
+					var todoPreview []string
+					for i, todoInterface := range todosArray {
+						if i >= 8 { // Show max 8 items
+							todoPreview = append(todoPreview, fmt.Sprintf("... and %d more", count-i))
+							break
+						}
+						if todoMap, ok := todoInterface.(map[string]interface{}); ok {
+							if content, ok := todoMap["content"].(string); ok {
+								if len(content) > 50 {
+									content = content[:47] + "..."
+								}
+								priority := "medium"
+								if p, ok := todoMap["priority"].(string); ok {
+									priority = p
+								}
+								todoPreview = append(todoPreview, fmt.Sprintf("• \x1b[33m%s\x1b[0m: %s", priority, content))
+							}
+						}
+					}
+					if len(todoPreview) > 0 {
+						detailLine = strings.Join(todoPreview, "\n  ")
+					}
+				}
 			}
-			displayName = fmt.Sprintf("%s(%s)", toolName, command)
+		}
+		
+	case "update_todo_status":
+		displayName = "update_todo_status"
+		if args != nil {
+			id, _ := args["id"].(string)
+			status, _ := args["status"].(string)
+			if id != "" && status != "" {
+				displayName = fmt.Sprintf("update_todo_status(#%s → %s)", id, status)
+				detailLine = fmt.Sprintf("Changed TODO \x1b[36m%s\x1b[0m status to \x1b[33m%s\x1b[0m", id, status)
+			}
+		}
+		
+	case "execute_agent":
+		if args != nil {
+			if objective, ok := args["objective"].(string); ok {
+				if len(objective) > 60 {
+					objective = objective[:57] + "..."
+				}
+				displayName = fmt.Sprintf("execute_agent(\"%s\")", objective)
+			} else {
+				displayName = "execute_agent"
+			}
+		} else {
+			displayName = "execute_agent"
+		}
+		// Show tools used if available in result
+		if resultStr, ok := result.(string); ok {
+			if strings.Contains(resultStr, "│   ") {
+				// Extract tool lines from the result
+				lines := strings.Split(resultStr, "\n")
+				var tools []string
+				for _, line := range lines {
+					if strings.Contains(line, "│   ") && !strings.Contains(line, "**Completed:**") {
+						toolName := strings.TrimSpace(strings.ReplaceAll(line, "│", ""))
+						toolName = strings.ReplaceAll(toolName, "\x1b[90m", "")
+						toolName = strings.ReplaceAll(toolName, "\x1b[32m", "")  
+						toolName = strings.ReplaceAll(toolName, "\x1b[0m", "")
+						if toolName != "" && len(tools) < 5 {
+							tools = append(tools, toolName)
+						}
+					}
+				}
+				if len(tools) > 0 {
+					detailLine = "Tools used: " + strings.Join(tools, ", ")
+				}
+			}
+		}
+		
+	case "execute_bash", "bash", "run_command":
+		if args != nil {
+			if command, ok := args["command"].(string); ok {
+				if len(command) > 50 {
+					command = command[:47] + "..."
+				}
+				displayName = fmt.Sprintf("execute_bash(\"%s\")", command)
+				// Show first line of output if available
+				if resultStr, ok := result.(string); ok {
+					lines := strings.Split(resultStr, "\n")
+					for _, line := range lines {
+						if strings.TrimSpace(line) != "" && !strings.Contains(line, "STDOUT:") && !strings.Contains(line, "STDERR:") {
+							if len(line) > 80 {
+								line = line[:77] + "..."
+							}
+							detailLine = "Output: " + strings.TrimSpace(line)
+							break
+						}
+					}
+				}
+			} else {
+				displayName = fmt.Sprintf("execute_bash(%s)", serverName)
+			}
+		} else {
+			displayName = fmt.Sprintf("execute_bash(%s)", serverName)
+		}
+		
+	case "search_in_files":
+		displayName = "search_in_files"
+		if args != nil {
+			if pattern, ok := args["pattern"].(string); ok {
+				if len(pattern) > 30 {
+					pattern = pattern[:27] + "..."
+				}
+				displayName = fmt.Sprintf("search_in_files(\"%s\")", pattern)
+			}
+		}
+		// Show match count if available
+		summary := tc.extractAnyContent(result, toolName)
+		if strings.Contains(summary, "Found") && strings.Contains(summary, "matches") {
+			detailLine = summary
+		}
+		
+	case "matey_ps":
+		displayName = "matey_ps"
+		// Show service count if available
+		summary := tc.extractAnyContent(result, toolName)
+		if strings.Contains(summary, "services") || strings.Contains(summary, "pods") {
+			detailLine = summary
+		}
+		
+	case "get_cluster_state":
+		displayName = "get_cluster_state"
+		// Show cluster info if available
+		summary := tc.extractAnyContent(result, toolName)
+		if summary != "" {
+			detailLine = summary
+		}
+		
+	default:
+		// Generic fallback
+		if args != nil && len(args) > 0 {
+			// Show the first meaningful argument
+			for key, value := range args {
+				if str, ok := value.(string); ok && str != "" {
+					if len(str) > 40 {
+						str = str[:37] + "..."
+					}
+					displayName = fmt.Sprintf("%s(%s=%s)", toolName, key, str)
+					break
+				}
+			}
+			if displayName == "" {
+				displayName = fmt.Sprintf("%s(%s)", toolName, serverName)
+			}
 		} else {
 			displayName = fmt.Sprintf("%s(%s)", toolName, serverName)
 		}
-	} else {
-		displayName = fmt.Sprintf("%s(%s)", toolName, serverName)
 	}
 	
 	statusLine := fmt.Sprintf("\n%s \x1b[32m%s\x1b[0m", bullet, displayName)
 	
+	// Add detail line if we have specific information
+	if detailLine != "" {
+		return statusLine + fmt.Sprintf("\n  \x1b[90m⎿\x1b[0m  %s", detailLine)
+	}
+	
+	// Fallback to generic summary
 	summary := tc.extractAnyContent(result, toolName)
 	if summary != "" {
 		return statusLine + fmt.Sprintf("\n  \x1b[90m⎿\x1b[0m  %s", summary)
@@ -2041,8 +2197,14 @@ func (tc *TermChat) executeUIToolCallConcurrent(toolCall ai.ToolCall, aiMsgIndex
 		result, err = tc.ExecuteNativeToolCall(toolCall, aiMsgIndex)
 		serverName = "native"
 	} else {
-		// Execute MCP tool using discovery system
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Execute MCP tool using discovery system with extended timeout for execute_agent
+		var toolTimeout time.Duration
+		if toolCall.Function.Name == "execute_agent" {
+			toolTimeout = 25 * time.Minute // Extended timeout for execute_agent
+		} else {
+			toolTimeout = 30 * time.Second // Standard timeout for other tools
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
 		defer cancel()
 		
 		serverName = tc.FindServerForTool(toolCall.Function.Name)
@@ -2121,7 +2283,7 @@ func (tc *TermChat) callDiscoveredTool(ctx context.Context, serverName, toolName
 	
 	req.Header.Set("Content-Type", "application/json")
 	
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 25 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call tool: %w", err)

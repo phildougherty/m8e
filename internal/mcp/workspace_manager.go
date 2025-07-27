@@ -4,7 +4,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -106,7 +105,7 @@ func (wm *WorkspaceManager) MountWorkspacePVC(workflowName, executionID string) 
 	markerContent := fmt.Sprintf("workflow: %s\nexecution: %s\npvc: %s\nmounted: %s\n",
 		workflowName, executionID, pvcName, time.Now().Format(time.RFC3339))
 	
-	if err := ioutil.WriteFile(markerFile, []byte(markerContent), 0644); err != nil {
+	if err := os.WriteFile(markerFile, []byte(markerContent), 0644); err != nil {
 		wm.logger.Error(err, "Failed to create workspace marker file", "file", markerFile)
 	}
 	

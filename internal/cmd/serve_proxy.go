@@ -134,9 +134,9 @@ func runServeProxy(cmd *cobra.Command, port int, namespace, apiKey string) error
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  25 * time.Minute,  // Extended for execute_agent
+		WriteTimeout: 25 * time.Minute, // Extended for execute_agent
+		IdleTimeout:  25 * time.Minute, // Extended for execute_agent
 	}
 
 	// Start server in a goroutine

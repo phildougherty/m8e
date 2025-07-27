@@ -84,7 +84,6 @@ func getRandomHackerQuote() string {
 		"The cake is a lie.",
 	}
 	
-	rand.Seed(time.Now().UnixNano())
 	return quotes[rand.Intn(len(quotes))]
 }
 

@@ -938,6 +938,57 @@ func (m *MateyMCPServer) GetTools() []Tool {
 			},
 		},
 		{
+			Name:        "list_todos",
+			Description: "List all TODO items with their current status",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"status": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by status (pending, in_progress, completed)",
+					},
+					"priority": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter by priority (low, medium, high, urgent)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "update_todo_status",
+			Description: "Update the status of a TODO item",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]interface{}{
+						"type":        "string",
+						"description": "TODO item ID",
+					},
+					"status": map[string]interface{}{
+						"type":        "string",
+						"description": "New status (pending, in_progress, completed)",
+					},
+				},
+				"required": []string{"id", "status"},
+			},
+		},
+		{
+			Name:        "get_todo_stats",
+			Description: "Get statistics about TODO items",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			Name:        "clear_completed_todos",
+			Description: "Remove all completed TODO items",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
 			Name:        "search_in_files",
 			Description: "Search for patterns within file contents with regex support",
 			InputSchema: map[string]interface{}{
@@ -1001,6 +1052,52 @@ func (m *MateyMCPServer) GetTools() []Tool {
 					},
 				},
 				"required": []string{"command"},
+			},
+		},
+		// Agent delegation tool
+		{
+			Name:        "execute_agent",
+			Description: "Spawn a focused sub-agent for specialized tasks like research, file analysis, or code extraction",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"objective": map[string]interface{}{
+						"type":        "string",
+						"description": "The specific objective or research question for the agent",
+					},
+					"behavioral_instructions": map[string]interface{}{
+						"type":        "string",
+						"description": "Custom behavior modifications (e.g., 'RESEARCH ONLY - return structured findings', 'NO EXPLANATIONS - data only')",
+					},
+					"output_format": map[string]interface{}{
+						"type":        "string",
+						"description": "Expected output format: json, markdown, structured_data, list",
+						"default":     "structured_data",
+					},
+					"context": map[string]interface{}{
+						"type":        "string",
+						"description": "Additional context for the agent",
+					},
+					"max_turns": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum conversation turns for the agent",
+						"default":     20,
+					},
+					"timeout_seconds": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum execution time in seconds",
+						"default":     600,
+					},
+					"ai_provider": map[string]interface{}{
+						"type":        "string",
+						"description": "AI provider to use (openrouter, claude, openai, ollama)",
+					},
+					"ai_model": map[string]interface{}{
+						"type":        "string",
+						"description": "AI model to use for reasoning",
+					},
+				},
+				"required": []string{"objective"},
 			},
 		},
 	}

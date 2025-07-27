@@ -373,7 +373,7 @@ func (tc *TermChat) executeBashCommand(argumentsJSON string) (*BashCommandResult
 
 	// Set defaults
 	if args.Timeout == 0 {
-		args.Timeout = 120 // 2 minutes default timeout
+		args.Timeout = 1200 // 20 minutes default timeout for execute_agent operations
 	}
 	if args.WorkingDirectory == "" {
 		args.WorkingDirectory, _ = os.Getwd()

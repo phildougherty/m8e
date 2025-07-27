@@ -254,6 +254,7 @@ func (p *ClaudeProvider) StreamChat(ctx context.Context, messages []Message, opt
 // SupportedModels returns the list of supported models
 func (p *ClaudeProvider) SupportedModels() []string {
 	return []string{
+		"claude-sonnet-4-20250514",
 		"claude-3.5-sonnet-20241022",
 		"claude-3.5-haiku-20241022",
 		"claude-3-opus-20240229",
@@ -278,6 +279,7 @@ func (p *ClaudeProvider) ValidateConfig() error {
 // GetModelContextWindow returns the context window size for a given model
 func (p *ClaudeProvider) GetModelContextWindow(model string) int {
 	contextWindows := map[string]int{
+		"claude-sonnet-4-20250514":  200000, // 200K tokens
 		"claude-3.5-sonnet":         200000, // 200K tokens
 		"claude-sonnet-4":           200000, // 200K tokens
 		"claude-3.7-sonnet":         200000, // 200K tokens

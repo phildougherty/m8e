@@ -91,7 +91,9 @@ func runMCPServer(cmd *cobra.Command, args []string) error {
 				"result": map[string]interface{}{
 					"protocolVersion": "2024-11-05",
 					"capabilities": map[string]interface{}{
-						"tools": map[string]interface{}{},
+						"tools": map[string]interface{}{
+							"listChanged": false,
+						},
 					},
 					"serverInfo": map[string]interface{}{
 						"name":    "matey",
@@ -221,8 +223,11 @@ func runMCPServer(cmd *cobra.Command, args []string) error {
 	router.Use(corsMiddleware)
 	
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%s", port),
-		Handler: router,
+		Addr:         fmt.Sprintf(":%s", port),
+		Handler:      router,
+		ReadTimeout:  25 * time.Minute, // Extended for execute_agent
+		WriteTimeout: 25 * time.Minute, // Extended for execute_agent
+		IdleTimeout:  25 * time.Minute, // Extended for execute_agent
 	}
 	
 	// Start server in goroutine
@@ -304,7 +309,9 @@ func handleMCPRequest(mcpServer *mcp.MateyMCPServer) http.HandlerFunc {
 			result = map[string]interface{}{
 				"protocolVersion": "2024-11-05",
 				"capabilities": map[string]interface{}{
-					"tools": map[string]interface{}{},
+					"tools": map[string]interface{}{
+						"listChanged": false,
+					},
 				},
 				"serverInfo": map[string]interface{}{
 					"name":    "matey",

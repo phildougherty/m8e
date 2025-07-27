@@ -88,7 +88,7 @@ func NewDynamicConnectionManager(serviceDiscovery *K8sServiceDiscovery, logger *
 
 	// Create HTTP clients for different protocols
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 30 * time.Minute, // Extended for execute_agent
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
@@ -560,8 +560,8 @@ func (dcm *DynamicConnectionManager) sendHTTPHealthRequest(ctx context.Context, 
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	// Send request
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Send request - extended timeout for execute_agent operations
+	client := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)

@@ -122,6 +122,7 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 	}
 	
 	
+	
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "POST", p.config.Endpoint+"/chat/completions", bytes.NewBuffer(reqBytes))
 	if err != nil {
@@ -155,8 +156,6 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			errorMsg := fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
-			// API error occurred - log for debugging
-			fmt.Printf("DEBUG: OpenRouter API error for model %s: %s\n", options.Model, errorMsg)
 			responseChan <- StreamResponse{
 				Error: NewProviderError(p.Name(), errorMsg, "http_error"),
 			}
@@ -205,7 +204,6 @@ func (p *OpenRouterProvider) StreamChat(ctx context.Context, messages []Message,
 				}
 				
 				if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-					fmt.Printf("DEBUG: Failed to parse JSON for model %s: %s\n", options.Model, data)
 					continue // Skip malformed JSON
 				}
 				

@@ -3,14 +3,14 @@ package constants
 import "time"
 
 const (
-	// Common timeout values
+	// Common timeout values - Extended for execute_agent compatibility  
 	DefaultConnectTimeout     = 10 * time.Second
-	DefaultReadTimeout        = 30 * time.Second
-	DefaultWriteTimeout       = 30 * time.Second
+	DefaultReadTimeout        = 25 * time.Minute  // Extended for execute_agent
+	DefaultWriteTimeout       = 25 * time.Minute  // Extended for execute_agent
 	DefaultShutdownTimeout    = 30 * time.Second
 	DefaultHealthTimeout      = 5 * time.Second
 	DefaultStatsTimeout       = 10 * time.Second
-	DefaultLogStreamTimeout   = 120 * time.Second
+	DefaultLogStreamTimeout   = 20 * time.Minute  // Extended for execute_agent
 	DefaultCleanupInterval    = 5 * time.Minute
 	DefaultSessionCleanupTime = 30 * time.Minute
 	DefaultWebSocketTimeout   = 5 * time.Second
@@ -80,7 +80,7 @@ const (
 	WebSocketReadTimeout = 60 * time.Second
 	MaxIdleTime          = 10 * time.Minute
 	StdioConnectTimeout  = 15 * time.Second
-	LongOperationTimeout = 120 * time.Second
+	LongOperationTimeout = 20 * time.Minute  // Extended for execute_agent
 
 	// Error buffer constants
 	ErrorChannelSize = 10
@@ -152,15 +152,15 @@ const (
 	StaleConnectionThreshold = 15 * time.Minute
 	MonitoringInterval       = 2 * time.Minute
 
-	// HTTP request timeouts
-	HTTPRequestTimeout      = 30 * time.Second
+	// HTTP request timeouts - Extended for execute_agent compatibility
+	HTTPRequestTimeout      = 20 * time.Minute  // Extended for long execute_agent requests
 	HTTPInitTimeout         = 90 * time.Second
 	HTTPNotificationTimeout = 20 * time.Second
 	HTTPQuickTimeout        = 10 * time.Second
-	HTTPExtendedTimeout     = 60 * time.Second
-	HTTPLongTimeout         = 90 * time.Second
-	HTTPStreamTimeout       = 120 * time.Second
-	HTTPContextTimeout      = 15 * time.Second
+	HTTPExtendedTimeout     = 20 * time.Minute  // Extended for execute_agent
+	HTTPLongTimeout         = 25 * time.Minute  // Extended for execute_agent
+	HTTPStreamTimeout       = 20 * time.Minute  // Extended for execute_agent
+	HTTPContextTimeout      = 20 * time.Minute  // Extended for long execute_agent requests
 
 	// Buffer sizes for HTTP responses
 	HTTPResponseBufferSize = 1024
@@ -223,8 +223,8 @@ const (
 	LifecycleTimeout             = 5 * time.Minute
 	PingTimeout                  = 30 * time.Second
 	KeepAlivePeriod              = 15 * time.Second
-	WriteDeadlineTimeout         = 60 * time.Second
-	STDIOBridgeTimeout           = 120 * time.Second
+	WriteDeadlineTimeout         = 20 * time.Minute  // Extended for long execute_agent requests
+	STDIOBridgeTimeout           = 20 * time.Minute  // Extended for execute_agent
 	STDIOBridgeConnectTimeout    = 60 * time.Second
 	ToolDiscoveryTimeout         = 10 * time.Second
 	ManagerCleanupTimeout        = 30 * time.Second

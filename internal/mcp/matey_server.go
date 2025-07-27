@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"github.com/phildougherty/m8e/internal/ai"
 	"github.com/phildougherty/m8e/internal/compose"
 	"github.com/phildougherty/m8e/internal/memory"
 	"k8s.io/client-go/kubernetes"
@@ -20,6 +21,8 @@ type MateyMCPServer struct {
 	memoryStore      *memory.MemoryStore
 	memoryTools      *memory.MCPMemoryTools
 	workspaceManager *WorkspaceManager
+	agentFactory     AgentFactory // Factory function for creating recursive TermChat instances
+	aiManager        *ai.Manager  // AI provider for real LLM reasoning
 }
 
 // Tool represents an MCP tool

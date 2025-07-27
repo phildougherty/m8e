@@ -95,7 +95,7 @@ func (fd *FileDiscovery) Search(ctx context.Context, options SearchOptions) ([]S
 		options.MaxDepth = 10
 	}
 	if options.Timeout == 0 {
-		options.Timeout = 30 * time.Second
+		options.Timeout = 5 * time.Minute // Extended timeout for complex searches
 	}
 
 	// Create context with timeout

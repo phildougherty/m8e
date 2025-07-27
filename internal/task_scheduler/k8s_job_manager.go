@@ -3,7 +3,7 @@ package task_scheduler
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"time"
@@ -486,7 +486,7 @@ func (jm *K8sJobManager) createJobSpec(ctx context.Context, task *TaskRequest) (
 					// This allows reuse for tasks with same name/image but prevents collisions with different images
 					if task.Image != "" {
 						// Use task name + short hash of image for uniqueness while allowing reuse
-						imageHash := fmt.Sprintf("%x", md5.Sum([]byte(task.Image)))[:8]
+						imageHash := fmt.Sprintf("%x", sha256.Sum256([]byte(task.Image)))[:8]
 						workflowName = fmt.Sprintf("%s-%s", task.Name, imageHash)
 					} else {
 						// Fallback to just task name (less ideal but better than "default")
@@ -787,8 +787,8 @@ func shortenForK8sLabel(s string) string {
 	if len(s) <= 63 {
 		return s
 	}
-	// Use first 55 chars + MD5 hash (8 chars) = 63 chars total
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(s)))[:8]
+	// Use first 55 chars + SHA-256 hash (8 chars) = 63 chars total
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(s)))[:8]
 	return s[:55] + hash
 }
 

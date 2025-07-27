@@ -51,7 +51,7 @@ func NewToolExecutor(mcpProxyURL, mcpProxyAPIKey string, logger logr.Logger) *To
 		mcpProxyURL:    mcpProxyURL,
 		mcpProxyAPIKey: mcpProxyAPIKey,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
+			Timeout: 25 * time.Minute, // Extended for execute_agent
 		},
 		logger: logger,
 	}
@@ -357,7 +357,7 @@ func (te *ToolExecutor) ExecuteTool(ctx context.Context, toolName string, args m
 	req := &ToolExecutionRequest{
 		Tool:       toolName,
 		Parameters: args,
-		Timeout:    5 * time.Minute, // Default timeout
+		Timeout:    25 * time.Minute, // Extended for execute_agent
 	}
 
 	result, err := te.executeToolRequest(ctx, req)
@@ -381,7 +381,7 @@ func (te *ToolExecutor) ExecuteStepWithContext(ctx context.Context, stepContext 
 	}
 
 	// Execute with context
-	result, err := te.ExecuteStepWithContextAndTimeout(ctx, stepCtx, toolName, args, 5*time.Minute)
+	result, err := te.ExecuteStepWithContextAndTimeout(ctx, stepCtx, toolName, args, 25*time.Minute)
 	if err != nil {
 		return &StepExecutionResult{
 			Status:   "Failed",
