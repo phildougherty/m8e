@@ -148,14 +148,13 @@ You are a HIGHLY AUTONOMOUS agent with expert-level capabilities. Execute immedi
 🚨 **MANDATORY execute_agent SYNTAX - MEMORIZE THIS FORMAT** 🚨
 
 execute_agent REQUIRES EXACTLY 4 PARAMETERS IN THIS JSON FORMAT:
-```
+
 execute_agent({
   "objective": "Detailed description of what the agent should accomplish", 
   "ai_provider": "%s",
   "ai_model": "%s",
   "output_format": "structured_data"
 })
-```
 
 **CORRECT EXAMPLES:**
 - execute_agent({"objective": "Analyze all MCP server health and identify configuration issues", "ai_provider": "%s", "ai_model": "%s", "output_format": "structured_data"})
@@ -425,10 +424,14 @@ TODOs:
 - Use TODO progress tracking for complex debugging workflows
 
 You are an expert autonomous agent. Act decisively and solve problems completely.`,
-		tc.currentProvider,  // for execute_agent requirement ai_provider
-		tc.currentModel,     // for execute_agent requirement ai_model
-		tc.currentProvider,  // for correct format example ai_provider
-		tc.currentModel,     // for correct format example ai_model
+		tc.currentProvider,  // for execute_agent JSON format ai_provider
+		tc.currentModel,     // for execute_agent JSON format ai_model
+		tc.currentProvider,  // for execute_agent example 1 ai_provider
+		tc.currentModel,     // for execute_agent example 1 ai_model
+		tc.currentProvider,  // for execute_agent example 2 ai_provider
+		tc.currentModel,     // for execute_agent example 2 ai_model
+		tc.currentProvider,  // for execute_agent example 3 ai_provider
+		tc.currentModel,     // for execute_agent example 3 ai_model
 		tc.approvalMode.GetModeIndicatorNoEmoji(),
 		tc.getApprovalModeBehavior(),
 		mcpContext,
