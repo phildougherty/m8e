@@ -1,0 +1,118 @@
+{
+  "mcpServers": {
+    "dexcom": {
+      "httpUrl": "https://mcp.robotrad.io/server/dexcom",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "DEXCOM_PASSWORD": "Sharky123",
+        "DEXCOM_REGION": "us",
+        "DEXCOM_USERNAME": "+17186149288",
+        "HTTP_PORT": "8007"
+      },
+      "timeout": 30000
+    },
+    "gmail": {
+      "httpUrl": "https://mcp.robotrad.io/server/gmail",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "GMAIL_CREDENTIALS_PATH": "/home/gmail/.gmail-mcp/credentials.json",
+        "GMAIL_OAUTH_PATH": "/home/gmail/.gmail-mcp/gcp-oauth.keys.json",
+        "HOME": "/home/gmail",
+        "HTTP_PORT": "8080",
+        "TZ": "America/New_York"
+      },
+      "timeout": 30000
+    },
+    "google-calendar": {
+      "httpUrl": "https://mcp.robotrad.io/server/google-calendar",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "CALENDAR_CREDENTIALS_PATH": "/home/calendar/.calendar-mcp/credentials.json",
+        "CALENDAR_OAUTH_PATH": "/home/calendar/.calendar-mcp/gcp-oauth.keys.json",
+        "HOME": "/home/calendar",
+        "HTTP_PORT": "8081",
+        "TZ": "America/New_York"
+      },
+      "timeout": 30000
+    },
+    "matey": {
+      "httpUrl": "https://mcp.robotrad.io/server/matey",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "timeout": 30000
+    },
+    "memory": {
+      "httpUrl": "https://mcp.robotrad.io/server/memory",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "DATABASE_URL": "postgresql://postgres:password@matey-postgres.matey.svc.cluster.local:5432/memory_graph?sslmode=disable",
+        "NODE_ENV": "production"
+      },
+      "timeout": 30000
+    },
+    "openrouter-gateway": {
+      "httpUrl": "https://mcp.robotrad.io/server/openrouter-gateway",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "HTTP_PORT": "8012",
+        "OPENROUTER_API_KEY": "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",
+        "TZ": "America/New_York"
+      },
+      "timeout": 30000
+    },
+    "playwright": {
+      "httpUrl": "https://mcp.robotrad.io/server/playwright",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "HTTP_PORT": "8008",
+        "TZ": "America/New_York"
+      },
+      "timeout": 30000
+    },
+    "searxng": {
+      "httpUrl": "https://mcp.robotrad.io/server/searxng",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "MAX_SEARCH_RESULTS": "5",
+        "SEARXNG_URL": "http://192.168.86.201:8484/search"
+      },
+      "timeout": 30000
+    },
+    "sequential-thinking": {
+      "url": "https://mcp.robotrad.io/server/sequential-thinking",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "HTTP_PORT": "12347"
+      },
+      "timeout": 30000
+    },
+    "timezone": {
+      "httpUrl": "https://mcp.robotrad.io/server/timezone",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      },
+      "env": {
+        "HTTP_PORT": "8010",
+        "TZ": "America/New_York"
+      },
+      "timeout": 30000
+    }
+  }
+}

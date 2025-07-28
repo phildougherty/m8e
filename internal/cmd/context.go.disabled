@@ -1,0 +1,719 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/phildougherty/m8e/internal/ai"
+	appcontext "github.com/phildougherty/m8e/internal/context"
+)
+
+var contextCmd = &cobra.Command{
+	Use:   "context",
+	Short: "Advanced context management with intelligent truncation",
+	Long: `Manage context windows with enterprise features:
+- Intelligent context window management with 5 truncation strategies
+- @-mention system for easy content inclusion
+- Context persistence with Kubernetes integration
+- Priority-based content scoring and retention
+- Token-aware truncation with configurable limits
+- Multi-type context support (file, edit, mention, log, diagnostic, git, definition)
+
+Available Commands:
+  add       Add content to context
+  get       Retrieve context items
+  list      List all context items
+  remove    Remove context items
+  clear     Clear all context
+  window    Show current context window
+  stats     Show context statistics
+  mentions  Process @-mentions in text`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
+}
+
+var contextAddCmd = &cobra.Command{
+	Use:   "add [CONTENT]",
+	Short: "Add content to the context manager",
+	Long: `Add content to the context with automatic type detection and priority scoring.
+
+Examples:
+  matey context add --file src/main.go           # Add file content
+  matey context add --text "important note"     # Add text content
+  matey context add --mention "@/config.yaml"   # Process @-mention
+  matey context add --type edit "recent change" # Add with specific type`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runContextAddCommand,
+}
+
+var contextGetCmd = &cobra.Command{
+	Use:   "get [ID]",
+	Short: "Retrieve specific context items",
+	Long: `Retrieve context items by ID, file path, or type.
+
+Examples:
+  matey context get abc123                  # Get item by ID
+  matey context get --file src/main.go     # Get items for specific file
+  matey context get --type edit            # Get all edit-type items
+  matey context get --recent 5             # Get 5 most recent items`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runContextGetCommand,
+}
+
+var contextListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all context items with filtering options",
+	Long: `List context items with advanced filtering and sorting.
+
+Examples:
+  matey context list                        # List all items
+  matey context list --type file            # List only file items
+  matey context list --sort priority        # Sort by priority
+  matey context list --format json          # JSON output`,
+	RunE: runContextListCommand,
+}
+
+var contextRemoveCmd = &cobra.Command{
+	Use:   "remove [ID_OR_PATTERN]",
+	Short: "Remove context items",
+	Long: `Remove context items by ID, pattern, or criteria.
+
+Examples:
+  matey context remove abc123               # Remove by ID
+  matey context remove --file src/main.go  # Remove items for file
+  matey context remove --type log          # Remove all log items
+  matey context remove --older-than 1h     # Remove items older than 1 hour`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runContextRemoveCommand,
+}
+
+var contextClearCmd = &cobra.Command{
+	Use:   "clear",
+	Short: "Clear all context items",
+	Long:  `Remove all context items and reset the context window.`,
+	RunE:  runContextClearCommand,
+}
+
+var contextWindowCmd = &cobra.Command{
+	Use:   "window",
+	Short: "Show current context window",
+	Long: `Display the current context window with truncation information.
+
+Examples:
+  matey context window                      # Show current window
+  matey context window --tokens             # Show with token counts
+  matey context window --strategy lru       # Preview with different strategy`,
+	RunE: runContextWindowCommand,
+}
+
+var contextStatsCmd = &cobra.Command{
+	Use:   "stats",
+	Short: "Show context statistics and metrics",
+	Long:  `Display comprehensive statistics about the context manager.`,
+	RunE:  runContextStatsCommand,
+}
+
+var contextMentionsCmd = &cobra.Command{
+	Use:   "mentions [TEXT]",
+	Short: "Process @-mentions in text",
+	Long: `Process @-mentions and expand them with their content.
+
+Supported mention types:
+  @/path/file.ext        Include file content
+  @/path/file.ext:10-20  Include specific line range
+  @/path/folder/         List directory contents
+  @problems              Show Kubernetes diagnostics
+  @logs:service          Show service logs
+  @git-changes           Show git status and changes
+  @def:functionName      Find code definitions
+  @memory:query          Query memory service
+  @workflow:name         Show workflow status
+
+Examples:
+  matey context mentions "@/src/main.go @problems"
+  matey context mentions --file input.txt
+  matey context mentions --expand-only "@logs:proxy"`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runContextMentionsCommand,
+}
+
+type contextFlags struct {
+	// Add command flags
+	file     string
+	text     string
+	mention  string
+	ctxType  string
+	priority float64
+	metadata map[string]string
+
+	// Get/List command flags
+	recent      int
+	sortBy      string
+	format      string
+	showTokens  bool
+	showContent bool
+
+	// Remove command flags
+	olderThan string
+	force     bool
+
+	// Window command flags
+	strategy string
+	preview  bool
+
+	// Mentions command flags
+	inputFile   string
+	expandOnly  bool
+	outputFile  string
+}
+
+var contextOpts contextFlags
+
+// NewContextCommand creates the context command  
+func NewContextCommand() *cobra.Command {
+
+	// Add subcommands
+	contextCmd.AddCommand(contextAddCmd)
+	contextCmd.AddCommand(contextGetCmd)
+	contextCmd.AddCommand(contextListCmd)
+	contextCmd.AddCommand(contextRemoveCmd)
+	contextCmd.AddCommand(contextClearCmd)
+	contextCmd.AddCommand(contextWindowCmd)
+	contextCmd.AddCommand(contextStatsCmd)
+	contextCmd.AddCommand(contextMentionsCmd)
+
+	// Add command flags
+	contextAddCmd.Flags().StringVar(&contextOpts.file, "file", "", "Add file content to context")
+	contextAddCmd.Flags().StringVar(&contextOpts.text, "text", "", "Add text content to context")
+	contextAddCmd.Flags().StringVar(&contextOpts.mention, "mention", "", "Process @-mention and add to context")
+	contextAddCmd.Flags().StringVar(&contextOpts.ctxType, "type", "", "Context type: file, edit, mention, log, diagnostic, git, definition")
+	contextAddCmd.Flags().Float64Var(&contextOpts.priority, "priority", 0, "Priority score (0.0-1.0)")
+	contextAddCmd.Flags().StringToStringVar(&contextOpts.metadata, "metadata", nil, "Additional metadata (key=value)")
+
+	// Get/List command flags
+	contextGetCmd.Flags().StringVar(&contextOpts.file, "file", "", "Get items for specific file")
+	contextGetCmd.Flags().StringVar(&contextOpts.ctxType, "type", "", "Filter by context type")
+	contextGetCmd.Flags().IntVar(&contextOpts.recent, "recent", 0, "Get N most recent items")
+	contextGetCmd.Flags().StringVar(&contextOpts.format, "format", "table", "Output format: table, json, yaml")
+	contextGetCmd.Flags().BoolVar(&contextOpts.showTokens, "tokens", false, "Show token counts")
+	contextGetCmd.Flags().BoolVar(&contextOpts.showContent, "content", false, "Show full content")
+
+	contextListCmd.Flags().StringVar(&contextOpts.ctxType, "type", "", "Filter by context type")
+	contextListCmd.Flags().StringVar(&contextOpts.sortBy, "sort", "priority", "Sort by: priority, timestamp, access_count, size")
+	contextListCmd.Flags().StringVar(&contextOpts.format, "format", "table", "Output format: table, json, yaml")
+	contextListCmd.Flags().BoolVar(&contextOpts.showTokens, "tokens", false, "Show token counts")
+
+	// Remove command flags
+	contextRemoveCmd.Flags().StringVar(&contextOpts.file, "file", "", "Remove items for specific file")
+	contextRemoveCmd.Flags().StringVar(&contextOpts.ctxType, "type", "", "Remove items of specific type")
+	contextRemoveCmd.Flags().StringVar(&contextOpts.olderThan, "older-than", "", "Remove items older than duration (e.g., 1h, 2d)")
+	contextRemoveCmd.Flags().BoolVar(&contextOpts.force, "force", false, "Force removal without confirmation")
+
+	// Window command flags
+	contextWindowCmd.Flags().StringVar(&contextOpts.strategy, "strategy", "", "Preview with truncation strategy: oldest, lru, by_type, by_priority, intelligent")
+	contextWindowCmd.Flags().BoolVar(&contextOpts.preview, "preview", false, "Preview mode without applying strategy")
+	contextWindowCmd.Flags().BoolVar(&contextOpts.showTokens, "tokens", true, "Show token information")
+
+	// Mentions command flags
+	contextMentionsCmd.Flags().StringVar(&contextOpts.inputFile, "file", "", "Read text from file instead of argument")
+	contextMentionsCmd.Flags().BoolVar(&contextOpts.expandOnly, "expand-only", false, "Only expand mentions, don't add to context")
+	contextMentionsCmd.Flags().StringVar(&contextOpts.outputFile, "output", "", "Write expanded text to file")
+}
+
+func runContextAddCommand(cmd *cobra.Command, args []string) error {
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	var content string
+	var contextType appcontext.ContextType
+	var filePath string
+	var metadata map[string]interface{}
+
+	// Convert metadata
+	if contextOpts.metadata != nil {
+		metadata = make(map[string]interface{})
+		for k, v := range contextOpts.metadata {
+			metadata[k] = v
+		}
+	}
+
+	// Add priority if specified
+	if contextOpts.priority > 0 {
+		if metadata == nil {
+			metadata = make(map[string]interface{})
+		}
+		metadata["priority"] = contextOpts.priority
+	}
+
+	// Determine content source and type
+	if contextOpts.file != "" {
+		fileContent, err := os.ReadFile(contextOpts.file)
+		if err != nil {
+			return fmt.Errorf("failed to read file: %w", err)
+		}
+		content = string(fileContent)
+		contextType = appcontext.ContextTypeFile
+		filePath = contextOpts.file
+	} else if contextOpts.text != "" {
+		content = contextOpts.text
+		contextType = appcontext.ContextTypeMention
+	} else if contextOpts.mention != "" {
+		return runMentionAdd(contextManager, contextOpts.mention)
+	} else if len(args) > 0 {
+		content = args[0]
+		contextType = appcontext.ContextTypeMention
+	} else {
+		return fmt.Errorf("content source required: --file, --text, --mention, or positional argument")
+	}
+
+	// Override type if specified
+	if contextOpts.ctxType != "" {
+		contextType = appcontext.ContextType(contextOpts.ctxType)
+	}
+
+	// Add to context
+	err = contextManager.AddContext(contextType, filePath, content, metadata)
+	if err != nil {
+		return fmt.Errorf("failed to add context: %w", err)
+	}
+
+	fmt.Printf("✅ Added context item: %s (%d tokens)\n", contextType, len(content)/4)
+	return nil
+}
+
+func runContextGetCommand(cmd *cobra.Command, args []string) error {
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	if len(args) > 0 {
+		// Get by ID
+		item, err := contextManager.GetContext(args[0])
+		if err != nil {
+			return fmt.Errorf("failed to get context item: %w", err)
+		}
+		return displayContextItems([]*appcontext.ContextItem{item})
+	}
+
+	if contextOpts.file != "" {
+		// Get by file
+		items, err := contextManager.GetContextByFile(contextOpts.file)
+		if err != nil {
+			return fmt.Errorf("failed to get context for file: %w", err)
+		}
+		return displayContextItems(items)
+	}
+
+	// Get recent items or all items with filtering
+	window := contextManager.GetCurrentWindow()
+	var items []*appcontext.ContextItem
+	for i := range window.Items {
+		items = append(items, &window.Items[i])
+	}
+
+	// Filter by type
+	if contextOpts.ctxType != "" {
+		filtered := make([]*appcontext.ContextItem, 0)
+		for _, item := range items {
+			if string(item.Type) == contextOpts.ctxType {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	// Limit to recent items
+	if contextOpts.recent > 0 && len(items) > contextOpts.recent {
+		items = items[:contextOpts.recent]
+	}
+
+	return displayContextItems(items)
+}
+
+func runContextListCommand(cmd *cobra.Command, args []string) error {
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	window := contextManager.GetCurrentWindow()
+	var items []*appcontext.ContextItem
+	for i := range window.Items {
+		items = append(items, &window.Items[i])
+	}
+
+	// Filter by type
+	if contextOpts.ctxType != "" {
+		filtered := make([]*appcontext.ContextItem, 0)
+		for _, item := range items {
+			if string(item.Type) == contextOpts.ctxType {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	fmt.Printf("📋 Context items (%d total):\n\n", len(items))
+	return displayContextItems(items)
+}
+
+func runContextRemoveCommand(cmd *cobra.Command, args []string) error {
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	if len(args) > 0 {
+		// Remove by ID
+		err = contextManager.RemoveContext(args[0])
+		if err != nil {
+			return fmt.Errorf("failed to remove context item: %w", err)
+		}
+		fmt.Printf("✅ Removed context item: %s\n", args[0])
+		return nil
+	}
+
+	if contextOpts.file != "" {
+		// Remove by file
+		err = contextManager.RemoveContextByFile(contextOpts.file)
+		if err != nil {
+			return fmt.Errorf("failed to remove context for file: %w", err)
+		}
+		fmt.Printf("✅ Removed context items for file: %s\n", contextOpts.file)
+		return nil
+	}
+
+	if contextOpts.olderThan != "" {
+		// Remove by age
+		if !contextOpts.force {
+			fmt.Print("This will remove context items. Continue? [y/N]: ")
+			var response string
+			fmt.Scanln(&response)
+			if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+				fmt.Println("Cancelled")
+				return nil
+			}
+		}
+
+		err = contextManager.CleanupExpired()
+		if err != nil {
+			return fmt.Errorf("failed to cleanup expired items: %w", err)
+		}
+		fmt.Println("✅ Removed expired context items")
+		return nil
+	}
+
+	return fmt.Errorf("removal target required: ID, --file, or --older-than")
+}
+
+func runContextClearCommand(cmd *cobra.Command, args []string) error {
+	if !contextOpts.force {
+		fmt.Print("This will remove ALL context items. Continue? [y/N]: ")
+		var response string
+		fmt.Scanln(&response)
+		if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+			fmt.Println("Cancelled")
+			return nil
+		}
+	}
+
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	// Get all items and remove them
+	window := contextManager.GetCurrentWindow()
+	for _, item := range window.Items {
+		contextManager.RemoveContext(item.ID)
+	}
+
+	fmt.Println("✅ Cleared all context items")
+	return nil
+}
+
+func runContextWindowCommand(cmd *cobra.Command, args []string) error {
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	window := contextManager.GetCurrentWindow()
+
+	fmt.Printf("🪟 Context Window Status:\n")
+	fmt.Printf("════════════════════════════════════════════════════════════════════════════════\n\n")
+	fmt.Printf("Items: %d\n", len(window.Items))
+	fmt.Printf("Total Tokens: %d / %d (%.1f%% utilization)\n", 
+		window.TotalTokens, window.MaxTokens, 
+		float64(window.TotalTokens)/float64(window.MaxTokens)*100)
+	fmt.Printf("Truncated: %v\n", window.Truncated)
+	fmt.Printf("Strategy: %s\n\n", window.Strategy)
+
+	if contextOpts.showTokens {
+		fmt.Printf("Items by Token Count:\n")
+		fmt.Printf("────────────────────────────────────────────────────────────────────────────────\n")
+		
+		for i, item := range window.Items {
+			fmt.Printf("%2d. [%s] %s (%d tokens)\n", 
+				i+1, item.Type, truncateString(item.FilePath, 50), item.TokenCount)
+			if contextOpts.showContent {
+				content := truncateString(item.Content, 100)
+				fmt.Printf("    %s\n", strings.ReplaceAll(content, "\n", "\\n"))
+			}
+		}
+	}
+
+	return nil
+}
+
+func runContextStatsCommand(cmd *cobra.Command, args []string) error {
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return err
+	}
+
+	stats := contextManager.GetStats()
+
+	fmt.Printf("📊 Context Statistics:\n")
+	fmt.Printf("════════════════════════════════════════════════════════════════════════════════\n\n")
+
+	fmt.Printf("Total Items: %v\n", stats["total_items"])
+	fmt.Printf("Total Tokens: %v\n", stats["total_tokens"])
+	fmt.Printf("Window Items: %v\n", stats["window_items"])
+	fmt.Printf("Window Tokens: %v\n", stats["window_tokens"])
+	fmt.Printf("Max Tokens: %v\n", stats["max_tokens"])
+	fmt.Printf("Utilization: %.1f%%\n", stats["utilization"].(float64)*100)
+	fmt.Printf("Truncated: %v\n\n", stats["truncated"])
+
+	if typeBreakdown, ok := stats["type_breakdown"].(map[appcontext.ContextType]int); ok {
+		fmt.Printf("Items by Type:\n")
+		fmt.Printf("────────────────────────────────────────────────────────────────────────────────\n")
+		for contextType, count := range typeBreakdown {
+			fmt.Printf("  %s: %d\n", contextType, count)
+		}
+	}
+
+	return nil
+}
+
+func runContextMentionsCommand(cmd *cobra.Command, args []string) error {
+	var text string
+
+	// Get input text
+	if contextOpts.inputFile != "" {
+		content, err := os.ReadFile(contextOpts.inputFile)
+		if err != nil {
+			return fmt.Errorf("failed to read input file: %w", err)
+		}
+		text = string(content)
+	} else if len(args) > 0 {
+		text = args[0]
+	} else {
+		return fmt.Errorf("text input required: positional argument or --file")
+	}
+
+	// Initialize mention processor
+	mentionProcessor, err := initializeMentionProcessor()
+	if err != nil {
+		return err
+	}
+
+	// Process mentions
+	expandedText, mentions, err := mentionProcessor.ExpandText(text)
+	if err != nil {
+		return fmt.Errorf("failed to process mentions: %w", err)
+	}
+
+	// Display results
+	fmt.Printf("🔍 Processed %d mentions:\n\n", len(mentions))
+	for i, mention := range mentions {
+		fmt.Printf("%d. %s (%s) - %d tokens\n", 
+			i+1, mention.Raw, mention.Type, mention.TokenCount)
+		if mention.Error != "" {
+			fmt.Printf("   ❌ Error: %s\n", mention.Error)
+		}
+	}
+
+	// Output expanded text
+	if contextOpts.outputFile != "" {
+		err = os.WriteFile(contextOpts.outputFile, []byte(expandedText), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Printf("\n✅ Expanded text written to: %s\n", contextOpts.outputFile)
+	} else {
+		fmt.Printf("\n📄 Expanded Text:\n")
+		fmt.Printf("════════════════════════════════════════════════════════════════════════════════\n")
+		fmt.Println(expandedText)
+	}
+
+	return nil
+}
+
+func runMentionAdd(contextManager *appcontext.ContextManager, mention string) error {
+	mentionProcessor, err := initializeMentionProcessor()
+	if err != nil {
+		return err
+	}
+
+	mentions, err := mentionProcessor.ParseMentions(mention)
+	if err != nil {
+		return fmt.Errorf("failed to parse mention: %w", err)
+	}
+
+	for _, m := range mentions {
+		processed, err := mentionProcessor.ProcessMention(m)
+		if err != nil {
+			fmt.Printf("❌ Failed to process %s: %v\n", m.Raw, err)
+			continue
+		}
+
+		err = contextManager.AddContext(
+			appcontext.ContextTypeMention,
+			processed.Path,
+			processed.Content,
+			processed.Metadata,
+		)
+		if err != nil {
+			fmt.Printf("❌ Failed to add %s to context: %v\n", m.Raw, err)
+			continue
+		}
+
+		fmt.Printf("✅ Added mention: %s (%d tokens)\n", m.Raw, processed.TokenCount)
+	}
+
+	return nil
+}
+
+func initializeContextManager() (*appcontext.ContextManager, error) {
+	// Create AI provider (nil for now)
+	var aiProvider ai.Provider
+
+	config := appcontext.ContextConfig{
+		MaxTokens:          32768,
+		TruncationStrategy: appcontext.TruncateIntelligent,
+		RetentionDays:      7,
+		PersistToK8s:       false, // CLI mode doesn't need K8s persistence
+		Namespace:          "matey-system",
+	}
+
+	return appcontext.NewContextManager(config, aiProvider), nil
+}
+
+func initializeMentionProcessor() (*appcontext.MentionProcessor, error) {
+	fileDiscovery, err := appcontext.NewFileDiscovery(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize file discovery: %w", err)
+	}
+
+	contextManager, err := initializeContextManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize context manager: %w", err)
+	}
+
+	return appcontext.NewMentionProcessor(".", fileDiscovery, contextManager), nil
+}
+
+func displayContextItems(items []*appcontext.ContextItem) error {
+	switch contextOpts.format {
+	case "json":
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(items)
+	case "yaml":
+		// YAML output would require yaml package
+		return fmt.Errorf("YAML output not implemented")
+	default:
+		return displayContextItemsTable(items)
+	}
+}
+
+func displayContextItemsTable(items []*appcontext.ContextItem) error {
+	if len(items) == 0 {
+		fmt.Println("No context items found")
+		return nil
+	}
+
+	// Calculate column widths
+	maxIDLen := 8     // "ID"
+	maxTypeLen := 4   // "Type"
+	maxPathLen := 4   // "Path"
+	maxTokenLen := 6  // "Tokens"
+
+	for _, item := range items {
+		if len(item.ID) > maxIDLen {
+			maxIDLen = len(item.ID)
+		}
+		if len(item.Type) > maxTypeLen {
+			maxTypeLen = len(string(item.Type))
+		}
+		if len(item.FilePath) > maxPathLen {
+			maxPathLen = len(item.FilePath)
+		}
+		tokenStr := fmt.Sprintf("%d", item.TokenCount)
+		if len(tokenStr) > maxTokenLen {
+			maxTokenLen = len(tokenStr)
+		}
+	}
+
+	// Limit column widths
+	if maxIDLen > 12 {
+		maxIDLen = 12
+	}
+	if maxPathLen > 40 {
+		maxPathLen = 40
+	}
+
+	// Print header
+	fmt.Printf("%-*s  %-*s  %-*s  %*s  %-12s  %-8s\n",
+		maxIDLen, "ID",
+		maxTypeLen, "Type",
+		maxPathLen, "Path",
+		maxTokenLen, "Tokens",
+		"Modified", "Priority")
+
+	// Print separator
+	fmt.Printf("%s  %s  %s  %s  %-12s  %-8s\n",
+		strings.Repeat("─", maxIDLen),
+		strings.Repeat("─", maxTypeLen),
+		strings.Repeat("─", maxPathLen),
+		strings.Repeat("─", maxTokenLen),
+		"────────────", "────────")
+
+	// Print items
+	for _, item := range items {
+		id := item.ID
+		if len(id) > maxIDLen {
+			id = id[:maxIDLen-3] + "..."
+		}
+
+		path := item.FilePath
+		if len(path) > maxPathLen {
+			path = "..." + path[len(path)-maxPathLen+3:]
+		}
+
+		fmt.Printf("%-*s  %-*s  %-*s  %*d  %-12s  %8.2f\n",
+			maxIDLen, id,
+			maxTypeLen, string(item.Type),
+			maxPathLen, path,
+			maxTokenLen, item.TokenCount,
+			item.LastAccess.Format("2006-01-02"),
+			item.Priority)
+
+		if contextOpts.showContent {
+			content := truncateString(item.Content, 100)
+			fmt.Printf("    %s\n", strings.ReplaceAll(content, "\n", "\\n"))
+		}
+	}
+
+	return nil
+}

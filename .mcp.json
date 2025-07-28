@@ -1,0 +1,74 @@
+{
+  "mcpServers": {
+    "dexcom": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/dexcom",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "gmail": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/gmail",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "google-calendar": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/google-calendar",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "openrouter-gateway": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/openrouter-gateway",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "playwright": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/playwright",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "searxng": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/searxng",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "sequential-thinking": {
+      "type": "sse",
+      "url": "https://mcp.robotrad.io/server/sequential-thinking",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "timezone": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/timezone",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "filesystem": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/filesystem",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "matey": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/matey",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    }
+  }
+}

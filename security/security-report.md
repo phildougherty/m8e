@@ -1,0 +1,303 @@
+# Matey Security Analysis Report
+
+Generated on: 2025-07-28 03:57:38 UTC
+
+## Summary
+
+This report provides a comprehensive security analysis of the Matey codebase using multiple security scanning tools.
+
+## Tools Used
+
+- **gosec**: Go security checker for common security issues
+- **govulncheck**: Official Go vulnerability database scanner
+- **nancy**: Dependency vulnerability scanner using OSS Index
+- **semgrep**: Static analysis tool for finding bugs and security issues
+- **custom scripts**: Hardcoded secrets detection and permission analysis
+
+## Results
+
+### gosec Results
+gosec not available - skipping scan
+
+### govulncheck Results
+
+
+### nancy Results
+nancy not available - skipping scan
+
+### Secrets Scan Results
+Potential secret found with pattern: password.*=.*['"][^'"]{8,}['"]
+Potential secret found with pattern: token.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: key.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: password.*=.*['"][^'"]{8,}['"]
+Potential secret found with pattern: token.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: key.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: password.*=.*['"][^'"]{8,}['"]
+Potential secret found with pattern: token.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: key.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: password.*=.*['"][^'"]{8,}['"]
+Potential secret found with pattern: token.*=.*['"][^'"]{20,}['"]
+Potential secret found with pattern: key.*=.*['"][^'"]{20,}['"]
+
+### File Permissions Analysis
+./charts/matey/Chart.yaml
+./charts/matey/templates/secret.yaml
+./charts/matey/templates/deployment.yaml
+./charts/matey/templates/rbac.yaml
+./charts/matey/templates/registry.yaml
+./charts/matey/templates/service.yaml
+./charts/matey/values.yaml
+./matey.yaml
+./docs/configuration/examples/ai-workflow.yaml
+./docs/configuration/examples/basic.yaml
+./docs/configuration/examples/production.yaml
+./scripts/generate-docs.sh
+./scripts/temp_security_scan.sh
+./scripts/build.sh
+./scripts/install-whisper.sh
+./scripts/test-voice-debug.sh
+./scripts/basic-security-scan.sh
+./scripts/security-scan.sh
+./scripts/prepare-release.sh
+./scripts/macos-voice-setup.sh
+./scripts/build-with-voice.sh
+./scripts/test-coverage.sh
+./scripts/deploy-cluster-mcp.sh
+./scripts/find_code.sh
+./.github/workflows/ci.yml
+./.github/dependabot.yml
+./internal/auth/resource_metadata.go
+./internal/auth/handlers.go
+./internal/auth/basic_auth_test.go
+./internal/auth/token_store.go
+./internal/auth/oauth.go
+./internal/auth/memory_store.go
+./internal/auth/middleware.go
+./internal/auth/oauth_test.go
+./internal/controllers/mcpserver_controller.go
+./internal/controllers/manager_test.go
+./internal/controllers/mcpmemory_controller.go
+./internal/controllers/mcpserver_controller_test.go
+./internal/controllers/mcptaskscheduler_controller.go
+./internal/controllers/mcptoolbox_controller.go
+./internal/controllers/mcptoolbox_controller_test.go
+./internal/controllers/mcptaskscheduler_test.go
+./internal/controllers/manager.go
+./internal/controllers/mcpproxy_controller.go
+./internal/controllers/mcppostgres_controller.go
+./internal/ai/provider.go
+./internal/ai/claude.go
+./internal/ai/ollama.go
+./internal/ai/openrouter.go
+./internal/ai/manager.go
+./internal/ai/placeholder.go
+./internal/ai/openai.go
+./internal/context/search.go
+./internal/context/mentions.go
+./internal/context/manager.go
+./internal/openapi/schema.go
+./internal/mcp/matey_server_services.go
+./internal/mcp/matey_server_tools.go
+./internal/mcp/matey_server_memory.go
+./internal/mcp/workspace_handlers.go
+./internal/mcp/matey_server_core.go
+./internal/mcp/matey_server_helpers.go
+./internal/mcp/enhanced_tools.go
+./internal/mcp/matey_server_cluster.go
+./internal/mcp/matey_server.go
+./internal/mcp/enhanced_tools_test.go
+./internal/mcp/matey_server_workflows.go
+./internal/mcp/filesystem_tools.go
+./internal/mcp/path_resolver.go
+./internal/mcp/server_integration.go
+./internal/mcp/client.go
+./internal/mcp/workspace_manager.go
+./internal/mcp/context_tools.go
+./internal/chat/voice_stub.go
+./internal/chat/voice_test.go
+./internal/chat/ui_commands.go
+./internal/chat/voice.go
+./internal/chat/voice_check_stub.go
+./internal/chat/turn_test.go
+./internal/chat/ai_provider_test.go
+./internal/chat/turn.go
+./internal/chat/command.go
+./internal/chat/command_test.go
+./internal/chat/types.go
+./internal/chat/ui_handlers.go
+./internal/chat/core_methods.go
+./internal/chat/types_test.go
+./internal/chat/ui_view.go
+./internal/chat/client_test.go
+./internal/chat/client.go
+./internal/chat/core_methods_test.go
+./internal/chat/ui_input.go
+./internal/chat/accessors.go
+./internal/chat/voice_check.go
+./internal/chat/ui.go
+./internal/chat/system_prompt.go
+./internal/chat/ai_provider.go
+./internal/runtime/process.go
+./internal/crd/mcpproxy.go
+./internal/crd/mcpserver_test.go
+./internal/crd/mcpserver.go
+./internal/crd/mcppostgres.go
+./internal/crd/mcptaskscheduler.go
+./internal/crd/mcpmemory.go
+./internal/crd/mcptoolbox_test.go
+./internal/crd/mcptoolbox.go
+./internal/crd/mcptaskscheduler_enhanced_test.go
+./internal/config/config_test.go
+./internal/config/config.go
+./internal/config/constants.go
+./internal/visual/editor_view.go
+./internal/visual/diff_view.go
+./internal/visual/file_view.go
+./internal/treesitter/queries.go
+./internal/treesitter/parser.go
+./internal/treesitter/definitions.go
+./internal/audit/audit.go
+./internal/audit/logger.go
+./internal/memory/k8s_manager.go
+./internal/memory/mcp_tools.go
+./internal/memory/memory_store.go
+./internal/memory/mcp_server.go
+./internal/edit/fallback.go
+./internal/edit/diff.go
+./internal/edit/editor.go
+./internal/container/null_runtime.go
+./internal/container/k8s_test.go
+./internal/container/runtime.go
+./internal/container/k8s.go
+./internal/discovery/connection_manager_test.go
+./internal/discovery/service_discovery.go
+./internal/discovery/connection_manager.go
+./internal/discovery/agentic_discovery_test.go
+./internal/logging/logger.go
+./internal/server/stdio_bridge.go
+./internal/server/k8s_manager.go
+./internal/server/http_connections.go
+./internal/server/http_router.go
+./internal/server/sse_connections.go
+./internal/server/k8s_proxy.go
+./internal/server/streamable_http_connections.go
+./internal/server/api_handlers.go
+./internal/server/manager_test.go
+./internal/server/tool_discovery.go
+./internal/server/direct_tool_calls.go
+./internal/server/manager_enhanced_test.go
+./internal/server/openapi_handlers.go
+./internal/server/manager.go
+./internal/server/utils.go
+./internal/server/sse_connections_enhanced.go
+./internal/server/stdio_connections.go
+./internal/server/connection_manager.go
+./internal/server/notification_integration.go
+./internal/constants/constants.go
+./internal/cmd/memory.go
+./internal/cmd/ps.go
+./internal/cmd/mcp_server_test.go
+./internal/cmd/install.go
+./internal/cmd/edit.go
+./internal/cmd/chat.go
+./internal/cmd/chat_agentic_test.go
+./internal/cmd/root.go
+./internal/cmd/approval.go
+./internal/cmd/search.go
+./internal/cmd/scheduler_server.go
+./internal/cmd/proxy.go
+./internal/cmd/stop.go
+./internal/cmd/create-config.go
+./internal/cmd/parse.go
+./internal/cmd/serve_proxy.go
+./internal/cmd/toolbox.go
+./internal/cmd/up.go
+./internal/cmd/logs.go
+./internal/cmd/start.go
+./internal/cmd/postgres.go
+./internal/cmd/completion.go
+./internal/cmd/controller_manager.go
+./internal/cmd/reload.go
+./internal/cmd/top.go
+./internal/cmd/validate.go
+./internal/cmd/inspect.go
+./internal/cmd/restart.go
+./internal/cmd/task_scheduler.go
+./internal/cmd/scheduler_execute_workflow.go
+./internal/cmd/down.go
+./internal/cmd/mcp_server.go
+./internal/cmd/context.go
+./internal/protocol/progress.go
+./internal/protocol/integration_test.go
+./internal/protocol/standard_methods.go
+./internal/protocol/change_notifications.go
+./internal/protocol/websocket.go
+./internal/protocol/uri_templates.go
+./internal/protocol/resources.go
+./internal/protocol/sampling.go
+./internal/protocol/mcp_transport.go
+./internal/protocol/subscriptions.go
+./internal/protocol/errors.go
+./internal/protocol/protocol.go
+./internal/protocol/roots.go
+./internal/protocol/protocol_test.go
+./internal/scheduler/workflow_engine.go
+./internal/scheduler/cron_engine_test.go
+./internal/scheduler/k8s_workflow_executor.go
+./internal/scheduler/tool_executor_test.go
+./internal/scheduler/workflow_store.go
+./internal/scheduler/workflow_storage.go
+./internal/scheduler/pvc_mount_manager.go
+./internal/scheduler/workspace_cleanup.go
+./internal/scheduler/tool_executor.go
+./internal/scheduler/templates.go
+./internal/scheduler/cron_engine.go
+./internal/scheduler/workflow_scheduler.go
+./internal/compose/toolbox.go
+./internal/compose/compose.go
+./internal/compose/lifecycle.go
+./internal/task_scheduler/k8s_manager.go
+./internal/task_scheduler/k8s_job_manager.go
+./internal/integration/e2e_test.go
+./internal/integration/agentic_behavior_test.go
+./internal/integration/service_discovery_test.go
+./internal/integration/taskscheduler_enhanced_test.go
+./tests/e2e-unified-workflow-test.sh
+./config/crd/mcptaskscheduler.yaml
+./config/crd/mcpserver.yaml
+./config/crd/mcptoolbox.yaml
+./config/crd/mcppostgres.yaml
+./config/crd/mcpmemory.yaml
+./config/crd/mcpproxy.yaml
+./config/rbac/controller_manager_rbac.yaml
+./config/rbac/task_scheduler_rbac.yaml
+./test-claude-code.sh
+./.golangci.yml
+./matey-quickstart.yaml
+./k8s/matey-mcp-server-deployment.yaml
+./k8s/proxy-deployment.yaml
+./k8s/mcp-proxy-deployment.yaml
+./k8s/controller-manager-deployment.yaml
+./matey-basic.yaml
+./pkg/protocol/protocol.go
+./pkg/utils/utils.go
+./matey-advanced.yaml
+./matey-minimal.yaml
+./cmd/matey/main.go
+./test-mcp.sh
+./examples/demo-unified-task-scheduler.yaml
+
+## Recommendations
+
+1. **Regular Scanning**: Run this security scan regularly, especially before releases
+2. **Dependency Updates**: Keep dependencies updated to latest secure versions
+3. **Code Review**: Ensure all code changes go through security-focused code review
+4. **Secret Management**: Use external secret management systems for production deployments
+5. **RBAC**: Implement proper RBAC controls in Kubernetes deployments
+
+## Next Steps
+
+- Review and address any high-severity issues found
+- Implement automated security scanning in CI/CD pipeline
+- Consider additional security measures like runtime security monitoring
+- Regular penetration testing for production deployments

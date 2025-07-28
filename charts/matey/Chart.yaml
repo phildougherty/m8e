@@ -1,0 +1,22 @@
+apiVersion: v2
+name: matey
+description: A Helm chart for Matey (m8e) - Kubernetes-native MCP server orchestrator
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/phildougherty/m8e
+sources:
+  - https://github.com/phildougherty/m8e
+maintainers:
+  - name: Phil Dougherty
+    email: phil@phildougherty.com
+keywords:
+  - mcp
+  - model-context-protocol
+  - ai
+  - llm
+  - kubernetes
+  - orchestration
+annotations:
+  category: AI/ML
+  licenses: AGPL-3.0

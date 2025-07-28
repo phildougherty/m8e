@@ -1,0 +1,33 @@
+{
+  "security_scan": {
+    "timestamp": "2025-07-28T03:57:38Z",
+    "total_issues": 4,
+    "tools": {
+      "gosec": {
+        "issues": 0,
+        "report": "gosec.json"
+      },
+      "govulncheck": {
+        "issues": 1,
+        "report": "govulncheck.json"
+      },
+      "nancy": {
+        "issues": 1,
+        "report": "nancy.json"
+      },
+      "secrets": {
+        "issues": 1,
+        "report": "secrets.txt"
+      },
+      "permissions": {
+        "issues": 1,
+        "report": "permissions.txt"
+      }
+    },
+    "status": "fail",
+    "reports": {
+      "comprehensive": "security-report.md",
+      "summary": "security-summary.json"
+    }
+  }
+}

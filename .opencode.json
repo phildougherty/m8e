@@ -1,0 +1,78 @@
+{
+  "mcpServers": {
+    "dexcom": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/dexcom",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "gmail": {
+      "type": "stdio",
+      "command": "./gmail-mcp-server"
+    },
+    "google-calendar": {
+      "type": "stdio",
+      "command": "./calendar-mcp-server"
+    },
+    "matey": {
+      "type": "http",
+      "url": "https://mcp.robotrad.io/server/matey",
+      "headers": {
+        "Authorization": "Bearer myapikey"
+      }
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "server.js"
+      ]
+    },
+    "searxng": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/app/server.js",
+        "--transport",
+        "http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8006"
+      ]
+    },
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "dist/index.js",
+        "--port",
+        "12347",
+        "--host",
+        "0.0.0.0"
+      ]
+    },
+    "timezone": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "server.py"
+      ]
+    }
+  },
+  "providers": {
+    "anthropic": {
+      "disabled": false
+    },
+    "openai": {
+      "disabled": true
+    }
+  },
+  "shell": {
+    "args": [
+      "-l"
+    ],
+    "path": "/bin/bash"
+  }
+}

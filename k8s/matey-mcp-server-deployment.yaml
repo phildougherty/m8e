@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matey-mcp-server
+  namespace: matey
+  labels:
+    app: matey
+    component: mcp-server
+    mcp.matey.ai/role: server
+    mcp.matey.ai/server-name: matey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matey
+      component: mcp-server
+  template:
+    metadata:
+      labels:
+        app: matey
+        component: mcp-server
+        mcp.matey.ai/role: server
+        mcp.matey.ai/server-name: matey
+    spec:
+      serviceAccountName: matey-mcp-server
+      containers:
+      - name: matey-mcp-server
+        image: mcp.robotrad.io/matey:latest
+        imagePullPolicy: Always
+        command: ["./matey"]
+        args: ["mcp-server", "--port=8081", "--namespace=matey"]
+        env:
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 8081
+          name: http
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: matey-config
+          mountPath: /app/matey.yaml
+          subPath: matey.yaml
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: matey-config
+        configMap:
+          name: matey-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: matey-mcp-server
+  namespace: matey
+  labels:
+    app: matey
+    component: mcp-server
+    mcp.matey.ai/role: server
+    mcp.matey.ai/server-name: matey
+    mcp.matey.ai/protocol: http
+    mcp.matey.ai/capabilities: tools
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8081
+    targetPort: 8081
+    name: http
+  selector:
+    app: matey
+    component: mcp-server
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: matey-mcp-server
+  namespace: matey
+  labels:
+    app: matey
+    component: mcp-server
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: matey-mcp-server
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints", "pods", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["mcp.matey.ai"]
+  resources: ["mcpservers", "mcptoolboxes", "workflows", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["mcp.matey.ai"]
+  resources: ["mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: matey-mcp-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: matey-mcp-server
+subjects:
+- kind: ServiceAccount
+  name: matey-mcp-server
+  namespace: matey

@@ -1,0 +1,829 @@
+# MCP-Compose Configuration Template with Security & Resource Management
+# Version with all available options and their requirements
+
+version: '1'  # REQUIRED
+
+# ============================================================================
+# PROXY AUTHENTICATION - OPTIONAL (but recommended for production)
+# ============================================================================
+proxy_auth:
+  enabled: true                    # OPTIONAL (default: false)
+  api_key: "${MCP_API_KEY}"       # REQUIRED ENV VAR - NEVER use hardcoded secrets
+  oauth_fallback: true             # OPTIONAL (default: false)
+
+# ============================================================================
+# OAUTH 2.1 CONFIGURATION - OPTIONAL (advanced authentication)
+# ============================================================================
+oauth:
+  enabled: true                    # OPTIONAL (default: false)
+  issuer: "http://your-proxy-url"  # REQUIRED if oauth.enabled: true
+  endpoints:                       # OPTIONAL (defaults provided)
+    authorization: "/oauth/authorize"
+    token: "/oauth/token"
+    userinfo: "/oauth/userinfo"
+    revoke: "/oauth/revoke"
+    discovery: "/.well-known/oauth-authorization-server"
+  tokens:                          # OPTIONAL (defaults provided)
+    access_token_ttl: "1h"
+    refresh_token_ttl: "168h"
+    authorization_code_ttl: "10m"
+    algorithm: "HS256"
+  security:                        # OPTIONAL (defaults provided)
+    require_pkce: true
+  grant_types:                     # OPTIONAL (defaults provided)
+    - "authorization_code"
+    - "client_credentials"
+    - "refresh_token"
+  response_types:                  # OPTIONAL (defaults provided)
+    - "code"
+  scopes_supported:                # OPTIONAL (defaults provided)
+    - "mcp:*"
+    - "mcp:tools"
+    - "mcp:resources"
+    - "mcp:prompts"
+
+# ============================================================================
+# AUDIT LOGGING - OPTIONAL (security monitoring)
+# ============================================================================
+audit:
+  enabled: true                    # OPTIONAL (default: false)
+  log_level: "info"               # OPTIONAL (default: "info")
+  storage: "memory"               # OPTIONAL (default: "memory")
+  retention:                      # OPTIONAL (defaults provided)
+    max_entries: 1000
+    max_age: "7d"
+  events:                         # OPTIONAL (defaults provided)
+    - "oauth.token.issued"
+    - "oauth.token.revoked"
+    - "oauth.user.login"
+    - "server.access.granted"
+    - "server.access.denied"
+
+# ============================================================================
+# RBAC CONFIGURATION - OPTIONAL (role-based access control)
+# ============================================================================
+rbac:
+  enabled: true                    # OPTIONAL (default: false)
+  scopes:                         # OPTIONAL (defaults provided)
+    - name: "mcp:*"
+      description: "Full access to all MCP resources"
+    - name: "mcp:tools"
+      description: "Access to MCP tools"
+    - name: "mcp:resources"
+      description: "Access to MCP resources"
+    - name: "mcp:prompts"
+      description: "Access to MCP prompts"
+  roles:                          # OPTIONAL (defaults provided)
+    admin:
+      name: "admin"
+      description: "Full administrative access"
+      scopes: ["mcp:*"]
+    user:
+      name: "user"
+      description: "Standard user access"
+      scopes: ["mcp:tools", "mcp:resources"]
+    readonly:
+      name: "readonly"
+      description: "Read-only access"
+      scopes: ["mcp:resources"]
+
+# ============================================================================
+# OAUTH CLIENTS - OPTIONAL (pre-registered OAuth clients)
+# ============================================================================
+oauth_clients:
+  client_name:                     # OPTIONAL (client identifier)
+    client_id: "unique-client-id"  # REQUIRED for each client
+    client_secret: "${OAUTH_CLIENT_SECRET}"        # REQUIRED ENV VAR - NEVER use hardcoded secrets
+    name: "Client Display Name"    # REQUIRED for each client
+    description: "Client description" # OPTIONAL
+    redirect_uris:                 # REQUIRED for each client
+      - "http://localhost:3000/callback"
+    scopes: ["mcp:tools"]          # REQUIRED for each client
+    grant_types: ["authorization_code"] # REQUIRED for each client
+    public_client: true            # OPTIONAL (default: false)
+    auto_approve: false            # OPTIONAL (default: false)
+
+# ============================================================================
+# DASHBOARD CONFIGURATION - OPTIONAL (web interface)
+# ============================================================================
+dashboard:
+  enabled: true                    # OPTIONAL (default: false)
+  port: 3111                      # OPTIONAL (default: 3001)
+  host: "0.0.0.0"                 # OPTIONAL (default: "localhost")
+  proxy_url: "http://proxy:9876"  # REQUIRED if dashboard.enabled: true
+  theme: "dark"                   # OPTIONAL (default: "light")
+  log_streaming: true             # OPTIONAL (default: false)
+  config_editor: true             # OPTIONAL (default: false)
+  metrics: true                   # OPTIONAL (default: false)
+  security:                       # OPTIONAL (dashboard security features)
+    enabled: true                 # OPTIONAL (default: false)
+    oauth_config: true            # OPTIONAL (default: false)
+    client_management: true       # OPTIONAL (default: false)
+    user_management: true         # OPTIONAL (default: false)
+    audit_logs: true              # OPTIONAL (default: false)
+  admin_login:                    # OPTIONAL (admin access)
+    enabled: true                 # OPTIONAL (default: false)
+    session_timeout: "24h"        # OPTIONAL (default: "1h")
+
+# ============================================================================
+# GLOBAL CONNECTIONS & TIMEOUTS - OPTIONAL (advanced configuration)
+# ============================================================================
+connections:
+  default:
+    transport: http                    # OPTIONAL (default transport)
+    port: 9876                        # OPTIONAL (default proxy port)
+    expose: true                      # OPTIONAL (expose to host)
+    tls: false                        # OPTIONAL (enable TLS)
+    timeouts:                         # OPTIONAL (configurable timeouts)
+      connect: "10s"                  # Connection timeout (default: 10s)
+      read: "30s"                     # Read timeout (default: 30s)
+      write: "30s"                    # Write timeout (default: 30s)
+      idle: "60s"                     # Idle timeout (default: 60s)
+      health_check: "5s"              # Health check timeout (default: 5s)
+      shutdown: "30s"                 # Graceful shutdown timeout (default: 30s)
+      lifecycle_hook: "30s"           # Lifecycle hook timeout (default: 30s)
+
+# ============================================================================
+# SERVERS CONFIGURATION - REQUIRED (at least one server)
+# ============================================================================
+servers:
+  # Example comprehensive server configuration
+  example-server:
+    # ========================================================================
+    # BASIC CONFIGURATION - One of image/build/command is REQUIRED
+    # ========================================================================
+    image: "nginx:alpine"          # OPTIONAL (use pre-built image)
+    # OR
+    build:                         # OPTIONAL (build from source)
+      context: "./path/to/build"   # REQUIRED if build specified
+      dockerfile: "Dockerfile"     # OPTIONAL (default: "Dockerfile")
+      args:                        # OPTIONAL (build arguments)
+        BUILD_ENV: "production"
+      target: "production"         # OPTIONAL (multi-stage build target)
+      no_cache: false              # OPTIONAL (default: false)
+      pull: true                   # OPTIONAL (default: false)
+      platform: "linux/amd64"     # OPTIONAL (target platform)
+    # OR
+    command: "/usr/bin/app"        # OPTIONAL (executable path)
+    args: ["--flag", "value"]      # OPTIONAL (command arguments)
+
+    # ========================================================================
+    # MCP PROTOCOL CONFIGURATION - OPTIONAL (defaults to stdio)
+    # ========================================================================
+    protocol: "http"               # OPTIONAL ("stdio", "http", "sse", "tcp")
+    http_port: 8080                # OPTIONAL (required for http/sse protocols)
+    http_path: "/api"              # OPTIONAL (HTTP endpoint path)
+    sse_path: "/sse"               # OPTIONAL (SSE endpoint path)
+    sse_port: 8081                 # OPTIONAL (separate SSE port)
+    sse_heartbeat: 30              # OPTIONAL (SSE heartbeat interval in seconds)
+    stdio_hoster_port: 12345       # OPTIONAL (for stdio-over-socket)
+
+    # ========================================================================
+    # SECURITY CONFIGURATION - OPTIONAL (Docker-style security)
+    # ========================================================================
+    user: "1000:1000"             # OPTIONAL (user:group to run as)
+    groups: ["audio", "video"]     # OPTIONAL (additional groups)
+    privileged: false              # OPTIONAL (default: false) - DANGEROUS
+    read_only: true                # OPTIONAL (default: false)
+    tmpfs:                         # OPTIONAL (temporary filesystems)
+      - "/tmp"
+      - "/var/cache"
+    
+    # Linux capabilities
+    cap_add:                       # OPTIONAL (add capabilities)
+      - "NET_ADMIN"                # Use with caution
+      - "SYS_TIME"
+    cap_drop:                      # OPTIONAL (drop capabilities - recommended)
+      - "ALL"                      # Drop all, then add specific ones
+    security_opt:                  # OPTIONAL (security options)
+      - "no-new-privileges:true"   # RECOMMENDED
+      - "apparmor:unconfined"      # Use with caution
+      - "seccomp:unconfined"       # Use with caution
+
+    # MCP-Compose security policy
+    security:                      # OPTIONAL (mcp-compose security rules)
+      allow_docker_socket: false   # OPTIONAL (default: false) - DANGEROUS
+      allow_host_mounts:           # OPTIONAL (allowed host mount paths)
+        - "/home/user/safe-dir"
+        - "/tmp"
+      allow_privileged_ops: false  # OPTIONAL (default: false)
+      trusted_image: true          # OPTIONAL (default: false)
+      no_new_privileges: true      # OPTIONAL (default: true)
+      apparmor: "default"          # OPTIONAL (AppArmor profile)
+      seccomp: "default"           # OPTIONAL (seccomp profile)
+      selinux:                     # OPTIONAL (SELinux labels)
+        type: "container_t"
+
+    # ========================================================================
+    # RESOURCE LIMITS - OPTIONAL (prevent resource exhaustion)
+    # ========================================================================
+    deploy:
+      resources:
+        limits:                    # OPTIONAL (resource limits)
+          cpus: "1.0"              # OPTIONAL (CPU cores)
+          memory: "512m"           # OPTIONAL (RAM limit)
+          memory_swap: "1g"        # OPTIONAL (swap limit)
+          pids: 100                # OPTIONAL (process limit)
+          blkio_weight: 500        # OPTIONAL (block I/O weight)
+        reservations:              # OPTIONAL (resource reservations)
+          cpus: "0.5"              # OPTIONAL (guaranteed CPU)
+          memory: "256m"           # OPTIONAL (guaranteed RAM)
+      restart_policy: "unless-stopped" # OPTIONAL (restart behavior)
+      replicas: 1                  # OPTIONAL (number of instances)
+      update_config:               # OPTIONAL (update strategy)
+        parallelism: 1
+        delay: "10s"
+        failure_action: "pause"
+        monitor: "5s"
+        max_failure_ratio: "0.3"
+
+    # ========================================================================
+    # NETWORKING - OPTIONAL (defaults provided)
+    # ========================================================================
+    ports:                         # OPTIONAL (port mappings)
+      - "8080:8080"                # Format: "host:container"
+      - "127.0.0.1:8081:8081"      # Bind to specific interface
+    networks:                      # OPTIONAL (custom networks)
+      - "mcp-net"                  # Default network
+      - "custom-net"               # Additional networks
+    network_mode: "bridge"         # OPTIONAL (networking mode)
+    hostname: "my-server"          # OPTIONAL (container hostname)
+    domainname: "example.com"      # OPTIONAL (container domain)
+    dns:                           # OPTIONAL (custom DNS servers)
+      - "8.8.8.8"
+      - "1.1.1.1"
+    dns_search:                    # OPTIONAL (DNS search domains)
+      - "example.com"
+    extra_hosts:                   # OPTIONAL (additional hosts)
+      - "host.docker.internal:host-gateway"
+
+    # ========================================================================
+    # STORAGE - OPTIONAL (persistent data)
+    # ========================================================================
+    volumes:                       # OPTIONAL (volume mounts)
+      - "/host/path:/container/path:ro"     # Host mount (read-only)
+      - "/host/path:/container/path:rw"     # Host mount (read-write)
+      - "named-volume:/data"                # Named volume
+      - "/tmp:/tmp"                         # Temporary mount
+    workdir: "/app"                # OPTIONAL (working directory)
+
+    # ========================================================================
+    # ENVIRONMENT - OPTIONAL (runtime configuration)
+    # ========================================================================
+    env:                           # OPTIONAL (environment variables)
+      NODE_ENV: "production"
+      API_KEY: "${SECRET_KEY}"     # REQUIRED ENV VAR - Environment variable expansion
+      DEBUG: "false"
+    pull: true                     # OPTIONAL (pull image before start)
+
+    # ========================================================================
+    # HEALTH & LIFECYCLE - OPTIONAL (monitoring and hooks)
+    # ========================================================================
+    healthcheck:                   # OPTIONAL (container health monitoring)
+      test: ["CMD", "curl", "-f", "http://localhost/health"]  # REQUIRED if healthcheck specified
+      interval: "30s"              # OPTIONAL (check interval)
+      timeout: "10s"               # OPTIONAL (check timeout)
+      retries: 3                   # OPTIONAL (failure threshold)
+      start_period: "40s"          # OPTIONAL (initial grace period)
+
+    lifecycle:                     # OPTIONAL (lifecycle hooks)
+      pre_start: "echo 'Starting'"  # OPTIONAL (run before start)
+      post_start: "echo 'Started'" # OPTIONAL (run after start)
+      pre_stop: "echo 'Stopping'"  # OPTIONAL (run before stop)
+      post_stop: "echo 'Stopped'"  # OPTIONAL (run after stop)
+
+    # ========================================================================
+    # LOGGING - OPTIONAL (log configuration)
+    # ========================================================================
+    log_driver: "json-file"        # OPTIONAL (logging driver)
+    log_options:                   # OPTIONAL (driver-specific options)
+      max-size: "10m"
+      max-file: "3"
+      compress: "true"
+
+    # ========================================================================
+    # RUNTIME OPTIONS - OPTIONAL (advanced container settings)
+    # ========================================================================
+    platform: "linux/amd64"       # OPTIONAL (target platform)
+    stop_signal: "SIGTERM"         # OPTIONAL (stop signal)
+    stop_grace_period: 30          # OPTIONAL (graceful stop timeout)
+    labels:                        # OPTIONAL (metadata labels)
+      com.example.service: "web"
+      com.example.version: "1.0"
+    annotations:                   # OPTIONAL (additional metadata)
+      description: "Web server component"
+
+    # ========================================================================
+    # MCP-SPECIFIC CONFIGURATION - OPTIONAL (mcp features)
+    # ========================================================================
+    capabilities: [tools, resources, prompts] # OPTIONAL (MCP capabilities)
+    depends_on:                    # OPTIONAL (service dependencies)
+      - "database"
+      - "redis"
+
+    # MCP Authentication
+    authentication:                # OPTIONAL (server-level auth)
+      enabled: true                # OPTIONAL (default: false)
+      required_scope: "mcp:tools"  # OPTIONAL (required OAuth scope)
+      optional_auth: false         # OPTIONAL (allow unauthenticated)
+      scopes: ["mcp:tools"]        # OPTIONAL (allowed scopes)
+      allow_api_key: true          # OPTIONAL (allow API key auth)
+
+    # OAuth Configuration (server-level)
+    oauth:                         # OPTIONAL (server OAuth settings)
+      enabled: true                # OPTIONAL (default: false)
+      required_scope: "mcp:tools"  # REQUIRED if oauth.enabled: true
+      allow_api_key_fallback: true # OPTIONAL (allow API key fallback)
+      optional_auth: false         # OPTIONAL (allow no auth)
+      allowed_clients: ["client1"] # OPTIONAL (restrict to specific clients)
+
+# ============================================================================
+# NETWORK DEFINITIONS - OPTIONAL (custom networks)
+# ============================================================================
+networks:
+  mcp-net:                         # Default network (automatically created)
+    driver: bridge                 # OPTIONAL (default: bridge)
+  custom-net:                      # Example custom network
+    driver: bridge                 # OPTIONAL (network driver)
+    driver_opts:                   # OPTIONAL (driver options)
+      com.docker.network.bridge.name: "custom0"
+    attachable: true               # OPTIONAL (allow manual attachment)
+    enable_ipv6: false             # OPTIONAL (enable IPv6)
+    ipam:                          # OPTIONAL (IP address management)
+      driver: default
+      config:
+        - subnet: "172.20.0.0/16"
+          gateway: "172.20.0.1"
+    internal: false                # OPTIONAL (internal network)
+    labels:                        # OPTIONAL (network labels)
+      environment: "production"
+    external: false                # OPTIONAL (use external network)
+
+# ============================================================================
+# VOLUME DEFINITIONS - OPTIONAL (named volumes)
+# ============================================================================
+volumes:
+  app-data:                        # Example named volume
+    driver: local                  # OPTIONAL (default: local)
+    driver_opts:                   # OPTIONAL (driver options)
+      type: "nfs"
+      o: "addr=192.168.1.1,rw"
+      device: ":/path/to/dir"
+    external: false                # OPTIONAL (use external volume)
+    labels:                        # OPTIONAL (volume labels)
+      backup: "daily"
+
+# ============================================================================
+# TASK SCHEDULER CONFIGURATION - OPTIONAL (AI-powered workflow orchestration)
+# ============================================================================
+task_scheduler:
+  enabled: true                    # OPTIONAL (default: false)
+  
+  # ========================================================================
+  # BASIC CONFIGURATION
+  # ========================================================================
+  port: 8018                      # OPTIONAL (default: 8018)
+  host: "0.0.0.0"                 # OPTIONAL (default: "localhost")
+  database_path: "/data/scheduler.db" # OPTIONAL (default: "/data/task-scheduler.db")
+  log_level: "debug"              # OPTIONAL (default: "info", options: debug, info, warn, error)
+  
+  # ========================================================================
+  # AI PROVIDER CONFIGURATION - AT LEAST ONE REQUIRED if enabled
+  # ========================================================================
+  openrouter_api_key: "${OPENROUTER_API_KEY}"        # REQUIRED ENV VAR
+  openrouter_model: "openai/gpt-4o"                  # OPTIONAL (default: "openai/gpt-4")
+  ollama_url: "http://ollama:11434"                   # OPTIONAL (local LLM endpoint)
+  ollama_model: "llama3:8b"                          # OPTIONAL (local model name)
+  
+  # ========================================================================
+  # MCP INTEGRATION
+  # ========================================================================
+  mcp_proxy_url: "http://proxy:9876"                 # OPTIONAL (MCP proxy endpoint)
+  mcp_proxy_api_key: "${MCP_PROXY_API_KEY}"          # REQUIRED ENV VAR if mcp_proxy_url specified
+  
+  # ========================================================================
+  # RESOURCE CONFIGURATION
+  # ========================================================================
+  cpus: "2.0"                     # OPTIONAL (CPU limit)
+  memory: "1g"                    # OPTIONAL (memory limit)
+  volumes:                        # OPTIONAL (volume mounts)
+    - "/workspace:/workspace:rw"
+    - "/tmp:/tmp:rw"
+  
+  # ========================================================================
+  # WORKSPACE & INTEGRATION
+  # ========================================================================
+  workspace: "/workspace"         # OPTIONAL (working directory)
+  openwebui_enabled: false        # OPTIONAL (default: false)
+  
+  # ========================================================================
+  # SCHEDULER CONFIGURATION - Advanced task management
+  # ========================================================================
+  scheduler_config:
+    # Basic settings
+    default_timeout: "30m"        # OPTIONAL (default task timeout)
+    max_concurrent_tasks: 10      # OPTIONAL (maximum parallel tasks)
+    
+    # Task storage and history
+    task_storage_enabled: true    # OPTIONAL (enable task persistence)
+    task_history_limit: 1000     # OPTIONAL (number of completed tasks to keep)
+    task_cleanup_policy: "delete_after_30_days" # OPTIONAL (cleanup strategy)
+    
+    # Webhooks and notifications
+    activity_webhook: "${SLACK_WEBHOOK_URL}"  # OPTIONAL (activity notifications)
+    
+    # Retry policy for failed tasks
+    retry_policy:
+      max_retries: 3              # OPTIONAL (maximum retry attempts)
+      retry_delay: "5m"           # OPTIONAL (initial delay between retries)
+      backoff_strategy: "Exponential"  # OPTIONAL (Linear, Exponential, Fixed)
+    
+    # Auto-scaling configuration
+    auto_scaling:
+      enabled: true               # OPTIONAL (enable auto-scaling)
+      min_concurrent_tasks: 2     # OPTIONAL (minimum task slots)
+      max_concurrent_tasks: 20    # OPTIONAL (maximum task slots)
+      target_cpu_utilization: 70 # OPTIONAL (target CPU percentage)
+      target_memory_utilization: 80  # OPTIONAL (target memory percentage)
+      scale_up_cooldown: "5m"     # OPTIONAL (cooldown before scaling up)
+      scale_down_cooldown: "10m"  # OPTIONAL (cooldown before scaling down)
+      metrics_interval: "1m"      # OPTIONAL (metrics collection interval)
+      custom_metrics:             # OPTIONAL (custom scaling metrics)
+        - name: "queue_length"
+          type: "pods"
+          target_value: "10"
+          selector:
+            app: "task-scheduler"
+    
+    # Event-driven workflow triggers
+    event_triggers:
+      - name: "pod-failure-trigger"     # Event trigger name
+        type: "k8s-event"               # Type: k8s-event, webhook, file-watch
+        workflow: "incident-response"   # Workflow to trigger
+        cooldown_duration: "10m"        # Prevent rapid re-triggering
+        kubernetes_event:               # Kubernetes event configuration
+          kind: "Pod"                   # Resource kind to watch
+          reason: "Failed"              # Event reason filter
+          namespace: "default"          # Namespace filter (optional)
+          label_selector: "app=critical" # Label selector (optional)
+          field_selector: "status.phase=Failed" # Field selector (optional)
+        conditions:                     # Additional conditions
+          - field: "reason"
+            operator: "equals"
+            value: "Failed"
+      
+      - name: "webhook-deployment"      # Webhook trigger example
+        type: "webhook"
+        workflow: "deployment-pipeline"
+        cooldown_duration: "5m"
+        webhook:
+          endpoint: "/webhooks/deploy"   # Webhook endpoint path
+          method: "POST"                 # HTTP method
+          authentication: "bearer-token" # Auth method (optional)
+          headers:                       # Expected headers (optional)
+            "X-GitHub-Event": "push"
+        conditions:
+          - field: "ref"
+            operator: "equals"
+            value: "refs/heads/main"
+      
+      - name: "file-change-trigger"     # File watch trigger example
+        type: "file-watch"
+        workflow: "data-processing"
+        cooldown_duration: "30m"
+        file_watch:
+          path: "/data/input"            # Path to watch
+          pattern: "*.csv"               # File pattern filter
+          events: ["create", "modify"]   # Watch events
+          recursive: true                # Recursive watching
+    
+    # Conditional dependencies
+    conditional_dependencies:
+      enabled: true                      # OPTIONAL (enable conditional deps)
+      default_strategy: "wait_for_completion" # OPTIONAL (dependency strategy)
+      resolution_timeout: "1h"          # OPTIONAL (max wait for dependencies)
+      cross_workflow_enabled: true      # OPTIONAL (allow cross-workflow deps)
+  
+  # ========================================================================
+  # WORKFLOW DEFINITIONS - Define workflows directly in task scheduler
+  # ========================================================================
+  workflows:
+    # Simple scheduled task
+    - name: "health-monitoring"
+      schedule: "*/15 * * * *"          # Every 15 minutes
+      timezone: "UTC"                   # Timezone for schedule
+      enabled: true                     # Enable/disable workflow
+      description: "Monitor system health"
+      tags: ["monitoring", "health"]    # Categorization tags
+      parameters:                       # Global workflow parameters
+        alert_threshold: 80
+        notification_channel: "alerts"
+      steps:
+        - name: "check-system"
+          tool: "health_check"
+          parameters:
+            services: ["proxy", "memory", "scheduler"]
+            include_metrics: true
+          timeout: "30s"                # Step timeout
+        - name: "analyze-results"
+          tool: "ai_analyze"
+          parameters:
+            data: "{{steps.check-system.output}}"
+            prompt: "Analyze health metrics and identify issues"
+          depends_on: ["check-system"]  # Step dependencies
+        - name: "send-alerts"
+          tool: "send_notification"
+          parameters:
+            channel: "{{parameters.notification_channel}}"
+            message: "{{steps.analyze-results.output}}"
+          condition: "{{steps.analyze-results.issues_found}}" # Conditional execution
+          continue_on_error: false      # Stop workflow on error
+          run_policy: "OnCondition"     # Always, OnSuccess, OnFailure, OnCondition
+    
+    # Complex multi-step workflow with dependencies
+    - name: "data-backup-pipeline"
+      schedule: "0 2 * * *"             # Daily at 2 AM
+      timezone: "America/New_York"
+      enabled: true
+      description: "Comprehensive data backup with validation"
+      concurrency_policy: "Forbid"     # Allow, Forbid, Replace
+      parameters:
+        backup_location: "s3://backups"
+        retention_days: 30
+        compression: true
+      retry_policy:                     # Workflow-level retry policy
+        max_retries: 2
+        retry_delay: "10m"
+        backoff_strategy: "Linear"
+        max_retry_delay: "1h"
+        backoff_multiplier: 2.0
+      timeout: "2h"                     # Maximum workflow execution time
+      successful_jobs_history_limit: 5  # Keep last 5 successful runs
+      failed_jobs_history_limit: 3      # Keep last 3 failed runs
+      workspace:                        # Shared workspace for steps
+        enabled: true
+        size: "10Gi"
+        mount_path: "/shared"
+        storage_class: "fast-ssd"
+        access_modes: ["ReadWriteOnce"]
+        reclaim_policy: "Delete"        # Delete, Retain
+      steps:
+        - name: "pre-backup-validation"
+          tool: "validate_services"
+          parameters:
+            services: ["memory", "task-scheduler"]
+            health_check: true
+          timeout: "5m"
+        - name: "backup-memory-db"
+          tool: "backup_database"
+          parameters:
+            service: "memory"
+            destination: "{{parameters.backup_location}}/memory"
+            compression: "{{parameters.compression}}"
+          depends_on: ["pre-backup-validation"]
+          retry_policy:                 # Step-level retry policy
+            max_retries: 3
+            retry_delay: "2m"
+            backoff_strategy: "Exponential"
+          timeout: "45m"
+        - name: "backup-scheduler-db"
+          tool: "backup_database"
+          parameters:
+            service: "task-scheduler"
+            destination: "{{parameters.backup_location}}/scheduler"
+            compression: "{{parameters.compression}}"
+          depends_on: ["pre-backup-validation"]
+          timeout: "30m"
+        - name: "verify-backups"
+          tool: "verify_backup_integrity"
+          parameters:
+            backup_paths: [
+              "{{steps.backup-memory-db.output.path}}",
+              "{{steps.backup-scheduler-db.output.path}}"
+            ]
+          depends_on: ["backup-memory-db", "backup-scheduler-db"]
+          timeout: "15m"
+        - name: "cleanup-old-backups"
+          tool: "cleanup_old_files"
+          parameters:
+            location: "{{parameters.backup_location}}"
+            older_than: "{{parameters.retention_days}}d"
+            dry_run: false
+          depends_on: ["verify-backups"]
+          timeout: "10m"
+        - name: "send-completion-report"
+          tool: "send_email"
+          parameters:
+            recipients: ["ops-team@company.com"]
+            subject: "Backup Completed - {{date}}"
+            body: |
+              Backup completed successfully:
+              Memory DB: {{steps.backup-memory-db.output.size}}
+              Scheduler DB: {{steps.backup-scheduler-db.output.size}}
+              Verification: {{steps.verify-backups.output.status}}
+          depends_on: ["cleanup-old-backups"]
+          continue_on_error: true       # Don't fail workflow if email fails
+    
+    # Event-triggered workflow (no schedule)
+    - name: "incident-response"
+      enabled: true
+      description: "Automated incident response"
+      manual_execution: true            # Allow manual triggering
+      parameters:
+        escalation_timeout: "30m"
+        auto_remediation: false
+      steps:
+        - name: "assess-incident"
+          tool: "analyze_system_state"
+          parameters:
+            comprehensive: true
+            include_logs: true
+        - name: "ai-diagnosis"
+          tool: "ai_analyze"
+          parameters:
+            data: "{{steps.assess-incident.output}}"
+            prompt: "Diagnose the incident and suggest remediation steps"
+        - name: "attempt-auto-remediation"
+          tool: "execute_remediation"
+          parameters:
+            actions: "{{steps.ai-diagnosis.remediation_steps}}"
+            safe_mode: true
+          condition: "{{parameters.auto_remediation}}"
+          depends_on: ["ai-diagnosis"]
+        - name: "escalate-to-human"
+          tool: "create_incident_ticket"
+          parameters:
+            severity: "{{steps.ai-diagnosis.severity}}"
+            description: "{{steps.ai-diagnosis.summary}}"
+            assignee: "on-call-engineer"
+          depends_on: ["ai-diagnosis"]
+          run_policy: "OnFailure"       # Only run if remediation fails
+  
+  # ========================================================================
+  # WORKFLOW TEMPLATES - Reusable workflow patterns
+  # ========================================================================
+  templates:
+    - name: "monitoring-template"
+      description: "Standard monitoring workflow template"
+      category: "monitoring"
+      version: "1.0"
+      tags: ["template", "monitoring"]
+      parameters:                       # Template parameters
+        - name: "check_interval"
+          type: "string"
+          description: "Cron schedule for monitoring"
+          required: false
+          default: "*/10 * * * *"
+        - name: "services"
+          type: "array"
+          description: "Services to monitor"
+          required: true
+        - name: "alert_threshold"
+          type: "integer"
+          description: "Alert threshold percentage"
+          required: false
+          default: 80
+          minimum: 1
+          maximum: 100
+      workflow:                         # Template workflow definition
+        schedule: "{{.check_interval}}"
+        enabled: true
+        steps:
+          - name: "health-check"
+            tool: "health_check"
+            parameters:
+              services: "{{.services}}"
+              threshold: "{{.alert_threshold}}"
+          - name: "send-alert"
+            tool: "send_notification"
+            condition: "{{steps.health-check.alert_needed}}"
+    
+    - name: "backup-template"
+      description: "Standard backup workflow template"
+      category: "maintenance"
+      version: "1.0"
+      parameters:
+        - name: "backup_schedule"
+          type: "string"
+          default: "0 2 * * *"
+        - name: "services"
+          type: "array"
+          required: true
+        - name: "retention_days"
+          type: "integer"
+          default: 30
+          minimum: 1
+          maximum: 365
+      workflow:
+        schedule: "{{.backup_schedule}}"
+        steps:
+          - name: "backup-services"
+            tool: "backup_services"
+            parameters:
+              services: "{{.services}}"
+              retention: "{{.retention_days}}d"
+  
+  # ========================================================================
+  # SIMPLE TASK DEFINITIONS - Individual scheduled tasks
+  # ========================================================================
+  tasks:
+    - name: "daily-health-check"
+      schedule: "0 8 * * *"             # Daily at 8 AM
+      tool: "health_check"
+      parameters:
+        services: ["all"]
+        detailed: true
+      enabled: true
+      description: "Daily comprehensive health check"
+      retry_policy:
+        max_retries: 2
+        retry_delay: "5m"
+        backoff_strategy: "Linear"
+      timeout: "10m"
+      tags: ["health", "daily"]
+    
+    - name: "weekly-cleanup"
+      schedule: "0 2 * * 0"             # Sunday at 2 AM
+      tool: "cleanup_system"
+      parameters:
+        cleanup_logs: true
+        cleanup_temp: true
+        max_age: "7d"
+      enabled: true
+      description: "Weekly system cleanup"
+      timeout: "30m"
+      tags: ["cleanup", "maintenance"]
+  
+  # ========================================================================
+  # GLOBAL WORKFLOW CONFIGURATION
+  # ========================================================================
+  global_retry_policy:                  # Default retry policy for all workflows
+    max_retries: 3
+    retry_delay: "5m"
+    backoff_strategy: "Exponential"
+    max_retry_delay: "30m"
+    backoff_multiplier: 2.0
+  
+  dependency_timeout: "1h"              # Default dependency timeout
+  workflow_history_limit: 100          # Maximum workflow executions to keep
+  
+  # ========================================================================
+  # ENVIRONMENT VARIABLES
+  # ========================================================================
+  env:                                  # OPTIONAL (additional environment variables)
+    NODE_ENV: "production"
+    DEBUG: "false"
+    METRICS_ENABLED: "true"
+    AUDIT_LOGGING: "true"
+
+# ============================================================================
+# SECURITY WARNINGS & REQUIREMENTS
+# ============================================================================
+# CRITICAL SECURITY REQUIREMENTS:
+# - NEVER commit hardcoded API keys, passwords, or secrets to version control
+# - Use environment variables for ALL sensitive configuration
+# - Required environment variables:
+#   - MCP_API_KEY: API key for proxy authentication
+#   - OAUTH_CLIENT_SECRET: OAuth client secret (if using OAuth)
+#   - POSTGRES_PASSWORD: Database password (if using PostgreSQL)
+#   - GITHUB_TOKEN: GitHub token (if using GitHub integration)
+#   - OPENROUTER_API_KEY: OpenRouter API key (if using OpenRouter)
+#   - Any other API keys or secrets used by your servers
+#
+# CONTAINER SECURITY BEST PRACTICES:
+# - Run containers as non-root users whenever possible
+# - Use cap_drop: ["ALL"] and add only required capabilities
+# - Set read_only: true when containers don't need write access
+# - Use security_opt: ["no-new-privileges:true"]
+# - Limit resources with deploy.resources.limits
+# - Restrict volume mounts to only necessary paths
+# - NEVER use privileged: true unless absolutely required
+# - NEVER expose Docker socket unless essential
+#
+# ============================================================================
+# FIELD REQUIREMENTS SUMMARY
+# ============================================================================
+# REQUIRED FIELDS:
+# - version: "1" 
+# - servers: (at least one server)
+# - servers.{name}: (for each server, one of: image, build.context, or command)
+#
+# CONDITIONALLY REQUIRED:
+# - oauth.issuer (if oauth.enabled: true)
+# - dashboard.proxy_url (if dashboard.enabled: true)
+# - build.context (if build specified)
+# - healthcheck.test (if healthcheck specified)
+# - oauth.required_scope (if server oauth.enabled: true)
+#
+# ALL OTHER FIELDS ARE OPTIONAL with sensible defaults
+#
+# SECURITY RECOMMENDATIONS:
+# - Always use cap_drop: ["ALL"] and add only needed capabilities
+# - Set user: "non-root-user" whenever possible
+# - Use read_only: true when the container doesn't need to write
+# - Enable security_opt: ["no-new-privileges:true"]
+# - Limit resources with deploy.resources.limits
+# - Use security.allow_host_mounts to restrict volume mounts
+# - Never use privileged: true unless absolutely necessary
+# - Never use security.allow_docker_socket: true unless required
+# ============================================================================

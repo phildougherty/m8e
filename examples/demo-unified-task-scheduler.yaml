@@ -1,0 +1,348 @@
+apiVersion: mcp.matey.ai/v1
+kind: MCPTaskScheduler
+metadata:
+  name: task-scheduler
+  namespace: matey
+spec:
+  # Task scheduler configuration
+  port: 8018
+  host: "0.0.0.0"
+  logLevel: info
+  databasePath: "/data/task-scheduler.db"
+  
+  # AI provider configuration for workflow execution
+  openRouterAPIKey: "sk-or-v1-example-key"
+  openRouterModel: "openai/gpt-4"
+  ollamaURL: "http://ollama:11434"
+  ollamaModel: "llama3:8b"
+  
+  # MCP proxy configuration
+  mcpProxyURL: "http://matey-proxy.matey.svc.cluster.local:9876"
+  mcpProxyAPIKey: "your-proxy-api-key"
+  
+  # Resource limits
+  resources:
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+  
+  # Scheduler configuration with advanced features
+  schedulerConfig:
+    defaultTimeout: "30m"
+    maxConcurrentTasks: 5
+    taskStorageEnabled: true
+    taskHistoryLimit: 100
+    taskCleanupPolicy: "delete_after_7_days"
+    activityWebhook: "https://hooks.slack.com/your-webhook"
+    
+    # Retry policy configuration
+    retryPolicy:
+      maxRetries: 3
+      retryDelay: "5m"
+      backoffStrategy: "Exponential"
+    
+    # Auto-scaling based on task load
+    autoScaling:
+      enabled: true
+      minConcurrentTasks: 2
+      maxConcurrentTasks: 10
+      targetCPUUtilization: 70
+      targetMemoryUtilization: 80
+      scaleUpCooldown: "5m"
+      scaleDownCooldown: "10m"
+      metricsInterval: "1m"
+    
+    # Event-driven workflow triggers
+    eventTriggers:
+      - name: pod-restart-detection
+        type: k8s-event
+        workflow: health-check
+        cooldownDuration: "10m"
+        kubernetesEvent:
+          kind: Pod
+          reason: Failed
+          namespace: default
+        conditions:
+          - field: reason
+            operator: equals
+            value: Failed
+            
+      - name: backup-schedule-trigger
+        type: k8s-event
+        workflow: backup-workflow
+        cooldownDuration: "1h"
+        kubernetesEvent:
+          kind: CronJob
+          reason: SuccessfulCreate
+          namespace: default
+    
+    # Conditional dependencies for complex workflows
+    conditionalDependencies:
+      enabled: true
+      defaultStrategy: "wait_for_completion"
+      resolutionTimeout: "1h"
+      crossWorkflowEnabled: true
+
+  # Unified workflow definitions - this replaces separate Workflow CRDs
+  workflows:
+    # Health monitoring workflow with AI analysis
+    - name: health-check
+      schedule: "*/15 * * * *"  # Every 15 minutes
+      timezone: "UTC"
+      enabled: true
+      parameters:
+        alert_threshold: 80
+        check_services: ["proxy", "memory", "task-scheduler"]
+        notification_channel: "alerts"
+      steps:
+        - name: check-cluster-status
+          tool: get_cluster_state
+          parameters:
+            format: "json"
+            include_metrics: true
+        - name: analyze-health
+          tool: execute_workflow
+          parameters:
+            workflow_name: "ai-health-analysis"
+            input_data: "{{steps.check-cluster-status.output}}"
+        - name: send-alerts
+          tool: create_notification
+          parameters:
+            channel: "{{parameters.notification_channel}}"
+            message: "Health check completed: {{steps.analyze-health.output}}"
+            severity: "{{steps.analyze-health.severity}}"
+          condition: "{{steps.analyze-health.severity == 'high'}}"
+          
+    # Data backup workflow with dependency management
+    - name: backup-workflow
+      schedule: "0 2 * * *"  # Daily at 2 AM
+      timezone: "UTC"
+      enabled: true
+      parameters:
+        backup_location: "s3://backup-bucket/matey-backups"
+        retention_days: 30
+      steps:
+        - name: backup-memory-db
+          tool: backup_database
+          parameters:
+            service: "memory"
+            destination: "{{parameters.backup_location}}/memory"
+            timestamp: "{{date}}"
+        - name: backup-task-scheduler-db
+          tool: backup_database
+          parameters:
+            service: "task-scheduler"
+            destination: "{{parameters.backup_location}}/scheduler"
+            timestamp: "{{date}}"
+          dependsOn: ["backup-memory-db"]
+        - name: cleanup-old-backups
+          tool: cleanup_backups
+          parameters:
+            location: "{{parameters.backup_location}}"
+            older_than: "{{parameters.retention_days}}d"
+          dependsOn: ["backup-memory-db", "backup-task-scheduler-db"]
+          
+    # AI-powered report generation workflow
+    - name: daily-report
+      schedule: "0 9 * * 1-5"  # Weekdays at 9 AM
+      timezone: "America/New_York"
+      enabled: true
+      parameters:
+        report_type: "operations"
+        recipients: ["ops-team@company.com"]
+      steps:
+        - name: gather-metrics
+          tool: collect_metrics
+          parameters:
+            timeframe: "24h"
+            services: ["all"]
+        - name: ai-analysis
+          tool: analyze_with_ai
+          parameters:
+            data: "{{steps.gather-metrics.output}}"
+            model: "openai/gpt-4"
+            prompt: |
+              Analyze this operational data and provide insights on:
+              1. System performance trends
+              2. Resource utilization patterns  
+              3. Potential optimization opportunities
+              4. Recommended actions
+        - name: generate-report
+          tool: create_document
+          parameters:
+            template: "operations-report"
+            data: "{{steps.ai-analysis.output}}"
+            format: "markdown"
+        - name: distribute-report
+          tool: send_email
+          parameters:
+            recipients: "{{parameters.recipients}}"
+            subject: "Daily Operations Report - {{date}}"
+            body: "{{steps.generate-report.output}}"
+          dependsOn: ["generate-report"]
+          
+    # System maintenance workflow with approval gates
+    - name: system-maintenance
+      schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+      timezone: "UTC"
+      enabled: false  # Manually triggered only
+      parameters:
+        maintenance_type: "routine"
+        approval_required: true
+      steps:
+        - name: pre-maintenance-check
+          tool: health_check
+          parameters:
+            comprehensive: true
+        - name: request-approval
+          tool: request_approval
+          parameters:
+            approvers: ["admin@company.com"]
+            message: "System maintenance scheduled. Health check: {{steps.pre-maintenance-check.status}}"
+            timeout: "24h"
+          condition: "{{parameters.approval_required}}"
+        - name: update-containers
+          tool: update_images
+          parameters:
+            strategy: "rolling"
+            wait_for_ready: true
+          dependsOn: ["request-approval"]
+        - name: restart-services
+          tool: restart_services
+          parameters:
+            services: ["proxy", "memory"]
+            health_check: true
+          dependsOn: ["update-containers"]
+        - name: post-maintenance-check
+          tool: health_check
+          parameters:
+            comprehensive: true
+            wait_time: "5m"
+          dependsOn: ["restart-services"]
+          
+    # CI/CD integration workflow
+    - name: deployment-pipeline
+      # No schedule - triggered by events only
+      enabled: true
+      parameters:
+        environment: "staging"
+        auto_promote: false
+      steps:
+        - name: run-tests
+          tool: execute_tests
+          parameters:
+            test_suite: "integration"
+            environment: "{{parameters.environment}}"
+        - name: security-scan
+          tool: security_scan
+          parameters:
+            target: "images"
+            fail_on_high: true
+          dependsOn: ["run-tests"]
+        - name: deploy-to-staging
+          tool: deploy_services
+          parameters:
+            environment: "{{parameters.environment}}"
+            strategy: "blue-green"
+          dependsOn: ["security-scan"]
+        - name: smoke-tests
+          tool: execute_tests
+          parameters:
+            test_suite: "smoke"
+            target_environment: "{{parameters.environment}}"
+          dependsOn: ["deploy-to-staging"]
+        - name: promote-to-production
+          tool: deploy_services
+          parameters:
+            environment: "production"
+            strategy: "rolling"
+          condition: "{{parameters.auto_promote and steps.smoke-tests.success}}"
+          dependsOn: ["smoke-tests"]
+          
+    # Database maintenance workflow  
+    - name: database-maintenance
+      schedule: "0 1 * * 6"  # Saturday at 1 AM
+      timezone: "UTC"
+      enabled: true
+      parameters:
+        vacuum_threshold: 20  # Percentage of dead tuples
+        reindex_threshold: 50  # Percentage fragmentation
+      steps:
+        - name: analyze-database
+          tool: analyze_database
+          parameters:
+            service: "memory"
+            include_stats: true
+        - name: vacuum-tables
+          tool: vacuum_database
+          parameters:
+            service: "memory"
+            analyze: true
+            verbose: true
+          condition: "{{steps.analyze-database.dead_tuple_percent > parameters.vacuum_threshold}}"
+        - name: reindex-tables
+          tool: reindex_database
+          parameters:
+            service: "memory"
+            concurrent: true
+          condition: "{{steps.analyze-database.fragmentation_percent > parameters.reindex_threshold}}"
+          dependsOn: ["vacuum-tables"]
+        - name: update-statistics
+          tool: update_statistics
+          parameters:
+            service: "memory"
+          dependsOn: ["reindex-tables"]
+
+# Templates for common workflow patterns  
+  templates:
+    - name: health-monitoring
+      description: "Monitor system health and send alerts"
+      category: "monitoring"
+      parameters:
+        - name: check_interval
+          type: string
+          default: "*/15 * * * *"
+        - name: alert_threshold
+          type: integer
+          default: 80
+      steps:
+        - name: health-check
+          tool: get_cluster_state
+          parameters:
+            format: "json"
+        - name: evaluate-health
+          tool: evaluate_condition
+          parameters:
+            condition: "health_score > {{parameters.alert_threshold}}"
+        - name: send-alert
+          tool: create_notification
+          condition: "{{steps.evaluate-health.result == false}}"
+          
+    - name: data-backup
+      description: "Backup databases and persistent data"
+      category: "maintenance"
+      parameters:
+        - name: backup_schedule
+          type: string
+          default: "0 2 * * *"
+        - name: retention_days
+          type: integer
+          default: 30
+      steps:
+        - name: create-backup
+          tool: backup_database
+          parameters:
+            retention: "{{parameters.retention_days}}d"
+        - name: verify-backup
+          tool: verify_backup
+          dependsOn: ["create-backup"]
+
+  # Environment variables for containerized execution
+  env:
+    NODE_ENV: "production"
+    LOG_FORMAT: "json"
+    METRICS_ENABLED: "true"
+    AUDIT_LOGGING: "true"

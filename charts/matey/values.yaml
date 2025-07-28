@@ -1,0 +1,152 @@
+# Default values for matey
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global configuration
+global:
+  namespace: default
+  imageRegistry: ghcr.io/phildougherty/matey
+
+# Memory service configuration
+memory:
+  enabled: true
+  image:
+    repository: "{{ .Values.global.imageRegistry }}/memory"
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 3001
+    annotations: {}
+  
+  postgres:
+    enabled: true
+    port: 5432
+    database: memory_graph
+    username: postgres
+    password: password
+  
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  
+  postgresResources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  authentication:
+    enabled: true
+    requiredScope: "mcp:tools"
+
+# Task Scheduler service configuration  
+taskScheduler:
+  enabled: true
+  image:
+    repository: "{{ .Values.global.imageRegistry }}/task-scheduler"
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 8084
+    annotations: {}
+  
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  config:
+    defaultTimeout: "5m"
+    maxConcurrentTasks: 10
+    retryPolicy:
+      maxRetries: 3
+      retryDelay: "30s"
+      backoffStrategy: "exponential"
+    taskStorageEnabled: true
+    taskHistoryLimit: 100
+    taskCleanupPolicy: "auto"
+  
+  llm:
+    openRouter:
+      apiKey: ""
+      model: "anthropic/claude-3.5-sonnet"
+    ollama:
+      url: ""
+      model: "llama3.2"
+  
+  mcp:
+    proxyUrl: ""
+    proxyApiKey: ""
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+# Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Network Policies
+networkPolicy:
+  enabled: false
+
+# Monitoring and observability
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
