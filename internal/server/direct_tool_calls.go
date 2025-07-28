@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/phildougherty/m8e/internal/constants"
 	"github.com/phildougherty/m8e/internal/discovery"
 )
 
@@ -68,6 +69,16 @@ func (h *ProxyHandler) sendSSEToolCall(conn *discovery.MCPConnection, request ma
 // SendSSEToolCall sends a tools/call request via SSE (exported for proxy endpoints)
 func (h *ProxyHandler) SendSSEToolCall(conn *discovery.MCPConnection, request map[string]interface{}) (map[string]interface{}, error) {
 	return h.sendSSEToolCall(conn, request)
+}
+
+// SendStreamableHTTPToolCall sends a tools/call request via streamable HTTP
+func (h *ProxyHandler) SendStreamableHTTPToolCall(serverName string, request map[string]interface{}) (map[string]interface{}, error) {
+	conn, err := h.getStreamableHTTPConnection(serverName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get streamable HTTP connection: %w", err)
+	}
+
+	return h.sendStreamableHTTPRequest(conn, request, constants.HTTPExtendedTimeout)
 }
 
 func (h *ProxyHandler) handleDirectToolCall(w http.ResponseWriter, r *http.Request, toolName string) {

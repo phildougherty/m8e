@@ -440,9 +440,18 @@ func convertJSONSchemaToOpenAPI(jsonSchema map[string]interface{}) Schema {
 		}
 	}
 
-	if items, ok := jsonSchema["items"].(map[string]interface{}); ok && schema.Type == "array" {
-		itemsSchema := convertJSONSchemaToOpenAPI(items)
-		schema.Items = &itemsSchema
+	// Handle array items - required for Google Function Calling API
+	if schema.Type == "array" {
+		if items, ok := jsonSchema["items"].(map[string]interface{}); ok {
+			itemsSchema := convertJSONSchemaToOpenAPI(items)
+			schema.Items = &itemsSchema
+		} else {
+			// Fix invalid array schema missing items - default to object for Google API compatibility
+			schema.Items = &Schema{
+				Type:        "object",
+				Description: "Array item (schema validation auto-fix)",
+			}
+		}
 	}
 
 	return schema

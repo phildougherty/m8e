@@ -124,6 +124,13 @@ func runServeProxy(cmd *cobra.Command, port int, namespace, apiKey string) error
 		handleMCPServerToolsEndpoint(w, r, proxyHandler)
 	})
 	
+	// Claude Code specific endpoints - alias to existing /servers/ functionality
+	mux.HandleFunc("/server/", func(w http.ResponseWriter, r *http.Request) {
+		// Convert /server/xxx to /servers/xxx and use existing handler
+		r.URL.Path = strings.Replace(r.URL.Path, "/server/", "/servers/", 1)
+		handleServerRequest(w, r, proxyHandler)
+	})
+	
 	// FastAPI-style tool endpoints are now handled dynamically in handleDynamicRequest
 	
 	// Catch-all for dynamic routing (must be last)
@@ -652,7 +659,7 @@ func handleMCPToolCallEndpoint(w http.ResponseWriter, r *http.Request, handler *
 		},
 	}
 
-	// Send request based on protocol
+	// Send request based on protocol (Gemini CLI works with standard HTTP and SSE protocols)
 	var response map[string]interface{}
 	switch conn.Protocol {
 	case "http":
@@ -674,3 +681,4 @@ func handleMCPToolCallEndpoint(w http.ResponseWriter, r *http.Request, handler *
 	// Return the response in MCP protocol format
 	writeJSONResponse(w, response)
 }
+

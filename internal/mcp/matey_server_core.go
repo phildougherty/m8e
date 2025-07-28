@@ -150,191 +150,134 @@ func (m *MateyMCPServer) useK8sClient() bool {
 	return m.k8sClient != nil && m.composer != nil
 }
 
-// ExecuteTool executes a tool by name with the given arguments
+// manageTodos handles consolidated TODO management operations
+func (m *MateyMCPServer) manageTodos(ctx context.Context, arguments map[string]interface{}) (*ToolResult, error) {
+	action, _ := arguments["action"].(string)
+	if action == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: action parameter is required"}},
+			IsError: true,
+		}, fmt.Errorf("action parameter is required")
+	}
+
+	switch action {
+	case "create":
+		return m.createTodos(ctx, arguments)
+	case "list":
+		return m.listTodos(ctx, arguments)
+	case "update":
+		return m.updateTodoStatus(ctx, arguments)
+	case "clear":
+		return m.clearCompletedTodos(ctx, arguments)
+	case "stats":
+		return m.getTodoStats(ctx, arguments)
+	default:
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Unknown action: %s", action)}},
+			IsError: true,
+		}, fmt.Errorf("unknown action: %s", action)
+	}
+}
+
+// workspaceFiles handles consolidated workspace file operations
+func (m *MateyMCPServer) workspaceFiles(ctx context.Context, arguments map[string]interface{}) (*ToolResult, error) {
+	action, _ := arguments["action"].(string)
+	if action == "" {
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: "Error: action parameter is required"}},
+			IsError: true,
+		}, fmt.Errorf("action parameter is required")
+	}
+
+	// Extract common parameters
+	workflowName, _ := arguments["workflowName"].(string)
+	executionID, _ := arguments["executionID"].(string)
+
+	switch action {
+	case "list":
+		subPath, _ := arguments["subPath"].(string)
+		return m.listWorkspaceFiles(ctx, workflowName, executionID, subPath)
+	case "read":
+		filePath, _ := arguments["filePath"].(string)
+		maxSize, _ := arguments["maxSize"].(int)
+		if maxSize == 0 {
+			maxSize = 1048576 // 1MB default
+		}
+		return m.readWorkspaceFile(ctx, workflowName, executionID, filePath, maxSize)
+	case "mount":
+		return m.mountWorkspace(ctx, workflowName, executionID)
+	case "unmount":
+		return m.unmountWorkspace(ctx, workflowName, executionID)
+	case "stats":
+		return m.getWorkspaceStats(ctx)
+	default:
+		return &ToolResult{
+			Content: []Content{{Type: "text", Text: fmt.Sprintf("Unknown action: %s", action)}},
+			IsError: true,
+		}, fmt.Errorf("unknown action: %s", action)
+	}
+}
+
+// ExecuteTool executes a tool by name with the given arguments - slimmed down version
 func (m *MateyMCPServer) ExecuteTool(ctx context.Context, name string, arguments map[string]interface{}) (*ToolResult, error) {
 	switch name {
-	// Core operations
+	// Core Cluster Management (6 tools)
 	case "matey_ps":
 		return m.mateyPS(ctx, arguments)
 	case "matey_up":
 		return m.mateyUp(ctx, arguments)
 	case "matey_down":
 		return m.mateyDown(ctx, arguments)
+	case "get_cluster_state":
+		return m.getClusterState(ctx, arguments)
 	case "matey_logs":
 		return m.mateyLogs(ctx, arguments)
 	case "matey_inspect":
 		return m.mateyInspect(ctx, arguments)
-	case "apply_config":
-		return m.applyConfig(ctx, arguments)
-	case "get_cluster_state":
-		return m.getClusterState(ctx, arguments)
 
-	// Workflow operations
+	// Memory/Knowledge Graph (6 tools - consolidated from memory server)
+	case "create_entities":
+		return m.createEntities(ctx, arguments)
+	case "create_relations":
+		return m.createRelations(ctx, arguments)
+	case "search_nodes":
+		return m.searchNodes(ctx, arguments)
+	case "read_graph":
+		return m.readGraph(ctx, arguments)
+	case "add_observations":
+		return m.addObservations(ctx, arguments)
+	case "delete_entities":
+		return m.deleteEntities(ctx, arguments)
+
+	// Task Management (3 tools - consolidated)
+	case "manage_todos":
+		return m.manageTodos(ctx, arguments)
 	case "create_workflow":
 		return m.createWorkflow(ctx, arguments)
 	case "list_workflows":
 		return m.listWorkflows(ctx, arguments)
-	case "get_workflow":
-		return m.getWorkflow(ctx, arguments)
-	case "delete_workflow":
-		return m.deleteWorkflow(ctx, arguments)
 	case "execute_workflow":
 		return m.executeWorkflow(ctx, arguments)
-	case "pause_workflow":
-		return m.pauseWorkflow(ctx, arguments)
-	case "resume_workflow":
-		return m.resumeWorkflow(ctx, arguments)
-	case "workflow_logs":
-		return m.workflowLogs(ctx, arguments)
-	case "workflow_templates":
-		return m.workflowTemplates(ctx, arguments)
+	case "delete_workflow":
+		return m.deleteWorkflow(ctx, arguments)
 
-	// Service management
-	case "start_service":
-		return m.startService(ctx, arguments)
-	case "stop_service":
-		return m.stopService(ctx, arguments)
-	case "memory_status":
-		return m.memoryStatus(ctx, arguments)
-	case "memory_start":
-		return m.memoryStart(ctx, arguments)
-	case "memory_stop":
-		return m.memoryStop(ctx, arguments)
-	
-	// Memory graph tools
-	case "create_entities":
-		return m.createEntities(ctx, arguments)
-	case "delete_entities":
-		return m.deleteEntities(ctx, arguments)
-	case "add_observations":
-		return m.addObservations(ctx, arguments)
-	case "delete_observations":
-		return m.deleteObservations(ctx, arguments)
-	case "create_relations":
-		return m.createRelations(ctx, arguments)
-	case "delete_relations":
-		return m.deleteRelations(ctx, arguments)
-	case "read_graph":
-		return m.readGraph(ctx, arguments)
-	case "search_nodes":
-		return m.searchNodes(ctx, arguments)
-	case "open_nodes":
-		return m.openNodes(ctx, arguments)
-	case "memory_health_check":
-		return m.memoryHealthCheck(ctx, arguments)
-	case "memory_stats":
-		return m.memoryStats(ctx, arguments)
-		
-	case "task_scheduler_status":
-		return m.taskSchedulerStatus(ctx, arguments)
-	case "task_scheduler_start":
-		return m.taskSchedulerStart(ctx, arguments)
-	case "task_scheduler_stop":
-		return m.taskSchedulerStop(ctx, arguments)
-	case "reload_proxy":
-		return m.reloadProxy(ctx, arguments)
-
-	// Toolbox and configuration
-	case "list_toolboxes":
-		return m.listToolboxes(ctx, arguments)
-	case "get_toolbox":
-		return m.getToolbox(ctx, arguments)
-	case "validate_config":
-		return m.validateConfig(ctx, arguments)
-	case "create_config":
-		return m.createConfig(ctx, arguments)
-	case "install_matey":
-		return m.installMatey(ctx, arguments)
-
-	// Inspection operations
-	case "inspect_mcpserver":
-		resourceName, _ := arguments["resource_name"].(string)
-		outputFormat, _ := arguments["output_format"].(string)
-		if outputFormat == "" {
-			outputFormat = "table"
-		}
-		return m.inspectMCPServers(ctx, resourceName, outputFormat)
-	case "inspect_mcpmemory":
-		resourceName, _ := arguments["resource_name"].(string)
-		outputFormat, _ := arguments["output_format"].(string)
-		if outputFormat == "" {
-			outputFormat = "table"
-		}
-		return m.inspectMCPMemory(ctx, resourceName, outputFormat)
-	case "inspect_mcptaskscheduler":
-		resourceName, _ := arguments["resource_name"].(string)
-		outputFormat, _ := arguments["output_format"].(string)
-		if outputFormat == "" {
-			outputFormat = "table"
-		}
-		return m.inspectMCPTaskScheduler(ctx, resourceName, outputFormat)
-	case "inspect_mcpproxy":
-		resourceName, _ := arguments["resource_name"].(string)
-		outputFormat, _ := arguments["output_format"].(string)
-		if outputFormat == "" {
-			outputFormat = "table"
-		}
-		return m.inspectMCPProxy(ctx, resourceName, outputFormat)
-	case "inspect_mcptoolbox":
-		resourceName, _ := arguments["resource_name"].(string)
-		outputFormat, _ := arguments["output_format"].(string)
-		if outputFormat == "" {
-			outputFormat = "table"
-		}
-		return m.inspectMCPToolbox(ctx, resourceName, outputFormat)
-	case "inspect_all":
-		outputFormat, _ := arguments["output_format"].(string)
-		if outputFormat == "" {
-			outputFormat = "table"
-		}
-		return m.inspectAllResources(ctx, outputFormat)
-
-		
-	// Workspace Access Tools
-	case "mount_workspace":
-		workflowName, _ := arguments["workflowName"].(string)
-		executionID, _ := arguments["executionID"].(string)
-		return m.mountWorkspace(ctx, workflowName, executionID)
-	case "list_workspace_files":
-		workflowName, _ := arguments["workflowName"].(string)
-		executionID, _ := arguments["executionID"].(string)
-		subPath, _ := arguments["subPath"].(string)
-		return m.listWorkspaceFiles(ctx, workflowName, executionID, subPath)
-	case "read_workspace_file":
-		workflowName, _ := arguments["workflowName"].(string)
-		executionID, _ := arguments["executionID"].(string)
-		filePath, _ := arguments["filePath"].(string)
-		maxSize, _ := arguments["maxSize"].(int)
-		if maxSize == 0 {
-			maxSize = 1024 * 1024 // 1MB default
-		}
-		return m.readWorkspaceFile(ctx, workflowName, executionID, filePath, maxSize)
-	case "unmount_workspace":
-		workflowName, _ := arguments["workflowName"].(string)
-		executionID, _ := arguments["executionID"].(string)
-		return m.unmountWorkspace(ctx, workflowName, executionID)
-	case "list_mounted_workspaces":
-		return m.listMountedWorkspaces(ctx)
-	case "get_workspace_stats":
-		return m.getWorkspaceStats(ctx)
-		
-	// Native tools (migrated from chat package)
-	case "create_todos":
-		return m.createTodos(ctx, arguments)
-	case "list_todos":
-		return m.listTodos(ctx, arguments)
-	case "update_todo_status":
-		return m.updateTodoStatus(ctx, arguments)
-	case "get_todo_stats":
-		return m.getTodoStats(ctx, arguments)
-	case "clear_completed_todos":
-		return m.clearCompletedTodos(ctx, arguments)
-	case "search_in_files":
-		return m.searchInFiles(ctx, arguments)
-	case "execute_bash":
-		return m.executeBash(ctx, arguments)
+	// Agent & Execution (2 tools)
 	case "execute_agent":
 		return m.executeAgent(ctx, arguments)
+	case "execute_bash":
+		return m.executeBash(ctx, arguments)
+
+	// Workspace Management (2 tools - consolidated)
+	case "workspace_files":
+		return m.workspaceFiles(ctx, arguments)
+	case "search_in_files":
+		return m.searchInFiles(ctx, arguments)
+
+	// Configuration (2 tools)
+	case "apply_config":
+		return m.applyConfig(ctx, arguments)
+	case "reload_proxy":
+		return m.reloadProxy(ctx, arguments)
 		
 	default:
 		return &ToolResult{

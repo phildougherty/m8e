@@ -16,6 +16,7 @@ import (
 
 	"github.com/phildougherty/m8e/internal/auth"
 	"github.com/phildougherty/m8e/internal/config"
+	"github.com/phildougherty/m8e/internal/constants"
 	"github.com/phildougherty/m8e/internal/discovery"
 	"github.com/phildougherty/m8e/internal/logging"
 	"github.com/phildougherty/m8e/internal/protocol"
@@ -237,8 +238,26 @@ func (h *ProxyHandler) handleHTTPRequest(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Forward request to the actual server
-	h.forwardK8sHTTPRequest(w, r, conn.HTTPConnection)
+	// Detect if this is a Gemini CLI request
+	userAgent := r.Header.Get("User-Agent")
+	acceptHeader := r.Header.Get("Accept")
+	isGeminiRequest := strings.Contains(userAgent, "gemini") || 
+					  strings.Contains(userAgent, "Gemini")
+
+	// If it's a Gemini request asking for SSE (text/event-stream), redirect to SSE handler
+	if isGeminiRequest && strings.Contains(acceptHeader, "text/event-stream") {
+		h.Logger.Info("Detected Gemini CLI SSE request for HTTP server %s, redirecting to SSE handler", conn.Name)
+		// Find the corresponding SSE connection if available
+		if sseConn, err := h.ConnectionManager.GetConnection(conn.Name); err == nil && sseConn.Protocol == "sse" {
+			h.handleSSERequest(w, r, sseConn)
+		} else {
+			h.Logger.Warning("Gemini CLI requested SSE for HTTP-only server %s", conn.Name)
+			h.forwardK8sHTTPRequest(w, r, conn.HTTPConnection)
+		}
+	} else {
+		// Forward regular HTTP request to the actual server (works for both regular clients and Gemini CLI with httpUrl)
+		h.forwardK8sHTTPRequest(w, r, conn.HTTPConnection)
+	}
 }
 
 // handleSSERequest handles SSE protocol requests
@@ -248,8 +267,15 @@ func (h *ProxyHandler) handleSSERequest(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Forward request to SSE server
-	h.forwardSSERequest(w, r, conn.SSEConnection)
+	// Check if client expects text/event-stream (like Gemini CLI)
+	acceptHeader := r.Header.Get("Accept")
+	if strings.Contains(acceptHeader, "text/event-stream") {
+		h.Logger.Info("Client expects text/event-stream for server %s, providing SSE format", conn.Name)
+		h.handleSSEStreamRequest(w, r, conn)
+	} else {
+		// Forward regular request to SSE server
+		h.forwardSSERequest(w, r, conn.SSEConnection)
+	}
 }
 
 // handleStdioRequest handles STDIO protocol requests
@@ -1645,4 +1671,122 @@ func (h *ProxyHandler) processMCPContentForOpenWebUI(content interface{}) interf
 	}
 
 	return content
+}
+
+// handleStreamableHTTPRequest handles HTTP requests that need streaming responses for Gemini CLI
+func (h *ProxyHandler) handleStreamableHTTPRequest(w http.ResponseWriter, r *http.Request, serverName string) {
+	// Get streamable HTTP connection
+	conn, err := h.getStreamableHTTPConnection(serverName)
+	if err != nil {
+		h.Logger.Error("Failed to get streamable HTTP connection for %s: %v", serverName, err)
+		h.writeErrorResponse(w, "Streamable HTTP connection not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// For GET requests, return server capabilities
+	if r.Method == "GET" {
+		// Return server info in streamable format
+		response := map[string]interface{}{
+			"capabilities": conn.Capabilities,
+			"serverInfo":   conn.ServerInfo,
+			"protocol":     "http",
+			"status":       "connected",
+		}
+
+		// Set appropriate headers for streaming
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+
+		// Write response as JSON
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			h.Logger.Error("Failed to encode streamable HTTP response: %v", err)
+		}
+		return
+	}
+
+	// For POST requests, forward to the actual server with streamable support
+	if r.Method == "POST" {
+		// Read request body
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			h.writeErrorResponse(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		// Parse JSON request
+		var request map[string]interface{}
+		if err := json.Unmarshal(body, &request); err != nil {
+			h.writeErrorResponse(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+
+		// Send request via streamable HTTP
+		response, err := h.sendStreamableHTTPRequest(conn, request, constants.HTTPExtendedTimeout)
+		if err != nil {
+			h.Logger.Error("Streamable HTTP request failed: %v", err)
+			h.writeErrorResponse(w, "Request failed", http.StatusBadGateway)
+			return
+		}
+
+		// Return streamable response
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			h.Logger.Error("Failed to encode streamable HTTP response: %v", err)
+		}
+		return
+	}
+
+	h.writeErrorResponse(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+// handleSSEStreamRequest handles SSE requests that need text/event-stream format
+func (h *ProxyHandler) handleSSEStreamRequest(w http.ResponseWriter, r *http.Request, conn *discovery.MCPConnection) {
+	// For GET requests to SSE endpoints, provide proper SSE stream
+	if r.Method == "GET" {
+		// Set SSE headers
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.WriteHeader(http.StatusOK)
+
+		// Send initial server info as SSE events
+		serverInfo := map[string]interface{}{
+			"capabilities": map[string]interface{}{
+				"tools": map[string]interface{}{
+					"listChanged": true,
+				},
+			},
+			"serverInfo": map[string]interface{}{
+				"name":    conn.Name,
+				"version": "1.0.0",
+			},
+			"protocol":        "sse",
+			"protocolVersion": "2024-11-05",
+			"status":          "connected",
+		}
+
+		infoData, _ := json.Marshal(serverInfo)
+
+		// Send as SSE event
+		fmt.Fprintf(w, "event: message\n")
+		fmt.Fprintf(w, "data: %s\n\n", string(infoData))
+
+		// Flush to ensure data is sent immediately
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+
+		// Keep connection alive briefly for SSE
+		time.Sleep(1 * time.Second)
+		return
+	}
+
+	// For POST requests, handle as regular MCP requests but return SSE format
+	h.forwardSSERequest(w, r, conn.SSEConnection)
 }

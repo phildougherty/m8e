@@ -48,6 +48,9 @@ This makes it easy to use your MCP servers with popular LLM client applications.
 			case "claude-code":
 
 				return generateClaudeCodeConfig(cfg, outputDir)
+			case "gemini":
+
+				return generateGeminiConfig(cfg, outputDir)
 			case "anthropic":
 
 				return generateAnthropicConfig(cfg, outputDir)
@@ -60,6 +63,10 @@ This makes it easy to use your MCP servers with popular LLM client applications.
 					return err
 				}
 				if err := generateClaudeCodeConfig(cfg, outputDir); err != nil {
+
+					return err
+				}
+				if err := generateGeminiConfig(cfg, outputDir); err != nil {
 
 					return err
 				}
@@ -77,7 +84,7 @@ This makes it easy to use your MCP servers with popular LLM client applications.
 	}
 	// Use different flag names to avoid conflict with the global -c flag
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "client-configs", "Directory to output client configurations")
-	cmd.Flags().StringVarP(&clientType, "type", "t", "all", "Client type (claude, claude-code, anthropic, openai, all)")
+	cmd.Flags().StringVarP(&clientType, "type", "t", "all", "Client type (claude, claude-code, gemini, anthropic, openai, all)")
 
 	return cmd
 }
@@ -254,6 +261,121 @@ func generateClaudeCodeConfig(cfg *config.ComposeConfig, outputDir string) error
 	fmt.Println("1. Copy the .mcp.json file to your project directory")
 	fmt.Println("2. Run 'claude-code' in the directory containing .mcp.json")
 	fmt.Println("3. The MCP servers will be automatically loaded")
+
+	return nil
+}
+
+// generateGeminiConfig creates .gemini/settings.json configuration for Gemini CLI
+func generateGeminiConfig(cfg *config.ComposeConfig, outputDir string) error {
+	fmt.Println("Generating Gemini CLI configuration...")
+
+	// Gemini CLI settings.json structure
+	type geminiServer struct {
+		URL     string            `json:"url,omitempty"`
+		HttpURL string            `json:"httpUrl,omitempty"`
+		Headers map[string]string `json:"headers,omitempty"`
+		Env     map[string]string `json:"env,omitempty"`
+		Timeout int               `json:"timeout,omitempty"`
+		Trust   bool              `json:"trust,omitempty"`
+	}
+
+	type geminiConfig struct {
+		McpServers map[string]geminiServer `json:"mcpServers"`
+	}
+
+	config := geminiConfig{
+		McpServers: make(map[string]geminiServer),
+	}
+
+	// Get registry URL and API key
+	registryURL := cfg.Registry.URL
+	if registryURL == "" {
+		registryURL = "mcp.robotrad.io"
+	}
+
+	apiKey := cfg.ProxyAuth.APIKey
+	if apiKey == "" {
+		apiKey = "myapikey" // fallback default
+	}
+
+	// Process each server
+	for name, srvCfg := range cfg.Servers {
+		server := geminiServer{
+			Timeout: 30000, // 30 second timeout
+			Trust:   false, // Default to not trusted
+		}
+
+		// Build the URL based on protocol
+		protocol := srvCfg.Protocol
+		if protocol == "" {
+			protocol = "http" // default
+		}
+
+		serverURL := fmt.Sprintf("https://%s/server/%s", registryURL, name)
+
+		if protocol == "sse" {
+			server.URL = serverURL // Use url for SSE (expects text/event-stream)
+		} else {
+			server.HttpURL = serverURL // Use httpUrl for HTTP (supports streamable responses)
+		}
+
+		// Add authentication headers if API key is provided
+		if apiKey != "" {
+			server.Headers = map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", apiKey),
+			}
+		}
+
+		// Add environment variables if any
+		if len(srvCfg.Env) > 0 {
+			server.Env = make(map[string]string)
+			for k, v := range srvCfg.Env {
+				server.Env[k] = v
+			}
+		}
+
+		config.McpServers[name] = server
+	}
+
+	// Add the matey MCP server (internal cluster management tools)
+	mateyServer := geminiServer{
+		HttpURL: fmt.Sprintf("https://%s/server/matey", registryURL),
+		Timeout: 30000,
+		Trust:   false,
+	}
+	
+	// Add authentication headers if API key is provided
+	if apiKey != "" {
+		mateyServer.Headers = map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", apiKey),
+		}
+	}
+	
+	config.McpServers["matey"] = mateyServer
+
+	// Create .gemini directory in output directory
+	geminiDir := filepath.Join(outputDir, ".gemini")
+	if err := os.MkdirAll(geminiDir, constants.DefaultDirMode); err != nil {
+		return fmt.Errorf("failed to create .gemini directory: %w", err)
+	}
+
+	// Write the settings.json file
+	configPath := filepath.Join(geminiDir, "settings.json")
+	configData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal Gemini config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, configData, constants.DefaultFileMode); err != nil {
+		return fmt.Errorf("failed to write Gemini config file: %w", err)
+	}
+
+	fmt.Printf("Gemini CLI configuration created at %s\n", configPath)
+	fmt.Println("To use with Gemini CLI:")
+	fmt.Println("1. Copy the .gemini directory to your project root")
+	fmt.Println("2. Run 'gemini' in the directory containing .gemini/settings.json")
+	fmt.Println("3. The MCP servers will be automatically loaded")
+	fmt.Println("4. Alternatively, copy to ~/.gemini/settings.json for global config")
 
 	return nil
 }

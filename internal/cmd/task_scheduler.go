@@ -82,6 +82,7 @@ Examples:
 		newWorkflowLogsCommand(),
 		newWorkflowTemplatesCommand(),
 		newWorkflowExecuteCommand(),
+		newWorkflowWorkspaceCommand(),
 	)
 
 	return cmd
@@ -377,25 +378,44 @@ func newWorkflowResumeCommand() *cobra.Command {
 
 func newWorkflowLogsCommand() *cobra.Command {
 	var (
-		namespace string
-		step      string
-		follow    bool
-		tail      int
+		namespace   string
+		step        string
+		follow      bool
+		tail        int
+		executionID string
+		since       string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "logs <name>",
-		Short: "Get workflow execution logs from task scheduler",
-		Args:  cobra.ExactArgs(1),
+		Use:   "logs <workflow-name-or-execution-id>",
+		Short: "Get consolidated workflow execution logs",
+		Long: `Get consolidated logs from all steps of a workflow execution.
+If no execution ID is specified, shows logs from the most recent execution.
+
+Examples:
+  # Get logs from most recent execution of workflow
+  matey task-scheduler logs my-workflow
+
+  # Get logs from specific execution ID  
+  matey task-scheduler logs abc123-def456
+
+  # Get logs for specific step only
+  matey task-scheduler logs my-workflow --step=step-1
+
+  # Follow logs in real-time
+  matey task-scheduler logs my-workflow -f`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return getWorkflowLogs(args[0], namespace, step, follow, tail)
+			return getWorkflowLogs(args[0], namespace, executionID, step, follow, tail, since)
 		},
 	}
 
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
-	cmd.Flags().StringVar(&step, "step", "", "Get logs for specific step")
+	cmd.Flags().StringVar(&executionID, "execution-id", "", "Specific execution ID (if not provided, uses most recent)")
+	cmd.Flags().StringVar(&step, "step", "", "Get logs for specific step only")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
 	cmd.Flags().IntVar(&tail, "tail", 100, "Number of lines to show from the end")
+	cmd.Flags().StringVar(&since, "since", "", "Show logs since time (e.g. '1h', '30m', '2h30m')")
 
 	return cmd
 }
@@ -439,6 +459,99 @@ func newWorkflowExecuteCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for execution to complete")
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "Timeout for waiting")
+
+	return cmd
+}
+
+func newWorkflowWorkspaceCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "workspace",
+		Short: "Manage workflow workspaces and persistent volumes",
+		Long: `Manage workflow workspaces including listing available PVCs and mounting them locally.
+Workspaces contain files and data produced by workflow executions and persist beyond the execution.`,
+	}
+
+	cmd.AddCommand(
+		newWorkspaceListCommand(),
+		newWorkspaceMountCommand(),
+		newWorkspaceUnmountCommand(),
+	)
+
+	return cmd
+}
+
+func newWorkspaceListCommand() *cobra.Command {
+	var (
+		namespace string
+		output    string
+		showAll   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List available workflow workspace PVCs",
+		Long: `List all workspace persistent volume claims created by workflow executions.
+Shows workspace status, size, retention policy, and age.`,
+		Aliases: []string{"ls"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return listWorkspaces(namespace, output, showAll)
+		},
+	}
+
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format (table, json, yaml)")
+	cmd.Flags().BoolVar(&showAll, "all", false, "Show all workspaces including auto-delete ones")
+
+	return cmd
+}
+
+func newWorkspaceMountCommand() *cobra.Command {
+	var (
+		namespace string
+		mountPath string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "mount <execution-id> [local-path]",
+		Short: "Mount a workflow workspace PVC locally",
+		Long: `Mount a workflow workspace PVC to a local directory for inspection and manipulation.
+If no local path is provided, mounts to /tmp/matey-workspaces/<execution-id>.
+
+Examples:
+  # Mount workspace to default location
+  matey task-scheduler workspace mount workflow-123-abc456
+
+  # Mount workspace to custom location  
+  matey task-scheduler workspace mount workflow-123-abc456 /mnt/my-workspace`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			executionID := args[0]
+			if len(args) > 1 {
+				mountPath = args[1]
+			}
+			return mountWorkspace(executionID, namespace, mountPath)
+		},
+	}
+
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
+
+	return cmd
+}
+
+func newWorkspaceUnmountCommand() *cobra.Command {
+	var namespace string
+
+	cmd := &cobra.Command{
+		Use:   "unmount <execution-id>",
+		Short: "Unmount a workflow workspace PVC",  
+		Long: `Unmount a previously mounted workflow workspace PVC and clean up the mount directory.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return unmountWorkspace(args[0], namespace)
+		},
+	}
+
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "matey", "Kubernetes namespace")
 
 	return cmd
 }
@@ -724,15 +837,46 @@ func updateWorkflowSuspend(name, namespace string, suspend bool) error {
 	return nil
 }
 
-func getWorkflowLogs(name, namespace, step string, follow bool, tail int) error {
-	// For now, redirect to the task scheduler logs since workflows run through the scheduler
-	fmt.Printf("Getting logs for workflow %s in task scheduler...\n", name)
+func getWorkflowLogs(nameOrExecutionID, namespace, executionID, step string, follow bool, tail int, since string) error {
+	k8sClient, err := createK8sClientWithScheme()
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
 
-	// Get the task scheduler logs which contain workflow execution logs
-	// This would need to be enhanced to filter logs by workflow name
-	fmt.Printf("Note: Workflow logs are included in task scheduler logs.\n")
-	fmt.Printf("Use: kubectl logs -n %s deployment/task-scheduler -f  < /dev/null |  grep '%s'\n", namespace, name)
+	// Determine if we have a workflow name or execution ID
+	var workflowName, targetExecutionID string
 	
+	// If it looks like an execution ID (contains hyphens and is long), treat as execution ID
+	if len(nameOrExecutionID) > 20 && strings.Contains(nameOrExecutionID, "-") {
+		targetExecutionID = nameOrExecutionID
+		// Extract workflow name from execution ID (format: workflow-name-hash)
+		parts := strings.Split(nameOrExecutionID, "-")
+		if len(parts) >= 2 {
+			workflowName = strings.Join(parts[:len(parts)-1], "-")
+		}
+	} else {
+		workflowName = nameOrExecutionID
+		targetExecutionID = executionID
+	}
+
+	// If no specific execution ID provided, find the most recent execution
+	if targetExecutionID == "" {
+		recentExecutionID, err := findMostRecentExecution(k8sClient, namespace, workflowName)
+		if err != nil {
+			return fmt.Errorf("failed to find recent execution: %w", err)
+		}
+		targetExecutionID = recentExecutionID
+	}
+
+	fmt.Printf("Getting consolidated logs for workflow '%s', execution '%s'\n", workflowName, targetExecutionID)
+	
+	// Get logs from the workflow job
+	logs, err := getWorkflowJobLogs(k8sClient, namespace, workflowName, targetExecutionID, step, follow, tail, since)
+	if err != nil {
+		return fmt.Errorf("failed to get workflow logs: %w", err)
+	}
+
+	fmt.Print(logs)
 	return nil
 }
 

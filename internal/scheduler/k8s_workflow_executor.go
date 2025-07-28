@@ -4,7 +4,9 @@ package scheduler
 import (
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -339,14 +341,58 @@ func (kwe *K8sWorkflowExecutor) buildShellScript(workflowDef *crd.WorkflowDefini
 			}
 			
 		default:
-			// For unknown tools, try to execute them as commands
-			command := step.Tool
-			if cmd, ok := step.Parameters["command"].(string); ok {
-				command = cmd
-			} else if args, ok := step.Parameters["args"].(string); ok {
-				command = fmt.Sprintf("%s %s", step.Tool, args)
+			// Check if this is an MCP tool
+			if strings.HasPrefix(step.Tool, "mcp__") {
+				// Parse MCP tool name to extract server and tool
+				parts := strings.Split(step.Tool, "__")
+				if len(parts) >= 3 {
+					server := parts[1]
+					tool := strings.Join(parts[2:], "__")
+					
+					// Convert parameters to JSON, parsing string JSON values
+					argsJSON := "{}"
+					if len(step.Parameters) > 0 {
+						// Convert string JSON values to proper types
+						processedParams := make(map[string]interface{})
+						for k, v := range step.Parameters {
+							if strVal, ok := v.(string); ok {
+								// Try to parse as JSON first
+								var parsed interface{}
+								if err := json.Unmarshal([]byte(strVal), &parsed); err == nil {
+									processedParams[k] = parsed
+								} else {
+									// If not valid JSON, keep as string
+									processedParams[k] = strVal
+								}
+							} else {
+								processedParams[k] = v
+							}
+						}
+						
+						if argsBytes, err := json.Marshal(processedParams); err == nil {
+							argsJSON = string(argsBytes)
+						}
+					}
+					
+					// Make direct HTTP call to MCP proxy
+					script += fmt.Sprintf(`curl -s -X POST "${MCP_PROXY_URL:-http://matey-proxy.matey.svc.cluster.local:9876}/server/%s" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCP_PROXY_API_KEY:-myapikey}" \
+  -d '{"method":"tools/call","params":{"name":"%s","arguments":%s}}' || echo 'MCP call failed: %s'`+"\n", 
+						server, tool, argsJSON, step.Tool)
+				} else {
+					script += fmt.Sprintf("echo 'Invalid MCP tool format: %s'\n", step.Tool)
+				}
+			} else {
+				// For unknown tools, try to execute them as commands
+				command := step.Tool
+				if cmd, ok := step.Parameters["command"].(string); ok {
+					command = cmd
+				} else if args, ok := step.Parameters["args"].(string); ok {
+					command = fmt.Sprintf("%s %s", step.Tool, args)
+				}
+				script += fmt.Sprintf("%s || echo 'Command failed: %s'\n", command, command)
 			}
-			script += fmt.Sprintf("%s || echo 'Command failed: %s'\n", command, command)
 		}
 		
 		script += fmt.Sprintf("echo 'Step %d completed'\n", i+1)
