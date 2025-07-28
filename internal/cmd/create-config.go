@@ -45,6 +45,9 @@ This makes it easy to use your MCP servers with popular LLM client applications.
 			case "claude":
 
 				return generateClaudeConfig(cfg, outputDir)
+			case "claude-code":
+
+				return generateClaudeCodeConfig(cfg, outputDir)
 			case "anthropic":
 
 				return generateAnthropicConfig(cfg, outputDir)
@@ -53,6 +56,10 @@ This makes it easy to use your MCP servers with popular LLM client applications.
 				return generateOpenAIConfig(cfg, outputDir)
 			case "all":
 				if err := generateClaudeConfig(cfg, outputDir); err != nil {
+
+					return err
+				}
+				if err := generateClaudeCodeConfig(cfg, outputDir); err != nil {
 
 					return err
 				}
@@ -70,7 +77,7 @@ This makes it easy to use your MCP servers with popular LLM client applications.
 	}
 	// Use different flag names to avoid conflict with the global -c flag
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "client-configs", "Directory to output client configurations")
-	cmd.Flags().StringVarP(&clientType, "type", "t", "all", "Client type (claude, anthropic, openai, all)")
+	cmd.Flags().StringVarP(&clientType, "type", "t", "all", "Client type (claude, claude-code, anthropic, openai, all)")
 
 	return cmd
 }
@@ -163,6 +170,90 @@ docker run --rm -i \
 	fmt.Println("1. Open Claude Desktop")
 	fmt.Println("2. Go to Settings > MCP Servers")
 	fmt.Println("3. Click 'Import Servers' and select the generated file")
+
+	return nil
+}
+
+// generateClaudeCodeConfig creates .mcp.json configuration for Claude Code
+func generateClaudeCodeConfig(cfg *config.ComposeConfig, outputDir string) error {
+	fmt.Println("Generating Claude Code .mcp.json configuration...")
+
+	// Claude Code .mcp.json structure
+	type mcpServer struct {
+		Type    string            `json:"type"`
+		URL     string            `json:"url"`
+		Headers map[string]string `json:"headers,omitempty"`
+	}
+
+	type mcpConfig struct {
+		McpServers map[string]mcpServer `json:"mcpServers"`
+	}
+
+	config := mcpConfig{
+		McpServers: make(map[string]mcpServer),
+	}
+
+	// Get registry URL and API key
+	registryURL := cfg.Registry.URL
+	if registryURL == "" {
+		registryURL = "mcp.robotrad.io"
+	}
+
+	apiKey := cfg.ProxyAuth.APIKey
+	if apiKey == "" {
+		apiKey = "myapikey" // fallback default
+	}
+
+	// Process each server
+	for name, srvCfg := range cfg.Servers {
+		// Determine the protocol
+		protocol := srvCfg.Protocol
+		if protocol == "" {
+			protocol = "http" // default
+		}
+
+		server := mcpServer{
+			Type: protocol, // Use the actual server protocol
+		}
+
+		// Build the URL
+		if registryURL != "" {
+			server.URL = fmt.Sprintf("https://%s/server/%s", registryURL, name)
+		} else {
+			// Fallback to direct server URL if no registry
+			if srvCfg.HttpPort > 0 {
+				server.URL = fmt.Sprintf("http://localhost:%d", srvCfg.HttpPort)
+			} else {
+				server.URL = fmt.Sprintf("http://localhost:8080") // default port
+			}
+		}
+
+		// Add authentication headers if API key is provided
+		if apiKey != "" {
+			server.Headers = map[string]string{
+				"Authorization": fmt.Sprintf("Bearer %s", apiKey),
+			}
+		}
+
+		config.McpServers[name] = server
+	}
+
+	// Write the .mcp.json file
+	configPath := filepath.Join(outputDir, ".mcp.json")
+	configData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal Claude Code config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, configData, constants.DefaultFileMode); err != nil {
+		return fmt.Errorf("failed to write Claude Code config file: %w", err)
+	}
+
+	fmt.Printf("Claude Code configuration created at %s\n", configPath)
+	fmt.Println("To use with Claude Code:")
+	fmt.Println("1. Copy the .mcp.json file to your project directory")
+	fmt.Println("2. Run 'claude-code' in the directory containing .mcp.json")
+	fmt.Println("3. The MCP servers will be automatically loaded")
 
 	return nil
 }
