@@ -1,0 +1,233 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcppostgres.mcp.matey.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.12.0
+spec:
+  group: mcp.matey.ai
+  names:
+    kind: MCPPostgres
+    listKind: MCPPostgresList
+    plural: mcppostgres
+    shortNames:
+    - mcppg
+    singular: mcppostgres
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: string
+    - jsonPath: .spec.database
+      name: Database
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: MCPPostgres represents a PostgreSQL database deployment for MCP services
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MCPPostgresSpec defines the desired state of MCPPostgres
+            properties:
+              backupConfig:
+                description: Backup configuration
+                properties:
+                  enabled:
+                    type: boolean
+                  location:
+                    type: string
+                  retention:
+                    type: string
+                  schedule:
+                    type: string
+                type: object
+              database:
+                description: Database name
+                type: string
+              password:
+                description: Database password
+                type: string
+              port:
+                description: Database port  
+                format: int32
+                type: integer
+              postgresConfig:
+                additionalProperties:
+                  type: string
+                description: Additional PostgreSQL configuration
+                type: object
+              replicas:
+                description: High availability settings
+                format: int32
+                type: integer
+              resources:
+                description: Resource configuration
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    type: object
+                type: object
+              securityContext:
+                description: Security configuration
+                properties:
+                  allowDockerSocket:
+                    type: boolean
+                  allowHostMounts:
+                    items:
+                      type: string
+                    type: array
+                  allowPrivilegedOps:
+                    type: boolean
+                  capAdd:
+                    items:
+                      type: string
+                    type: array
+                  capDrop:
+                    items:
+                      type: string
+                    type: array
+                  noNewPrivileges:
+                    type: boolean
+                  readOnlyRootFS:
+                    type: boolean
+                  runAsGroup:
+                    format: int64
+                    type: integer
+                  runAsUser:
+                    format: int64
+                    type: integer
+                  trustedImage:
+                    type: boolean
+                type: object
+              storageClassName:
+                description: Storage class name
+                type: string
+              storageSize:
+                description: Storage size
+                type: string
+              user:
+                description: Database user
+                type: string
+              version:
+                description: PostgreSQL version
+                type: string
+            type: object
+          status:
+            description: MCPPostgresStatus defines the observed state of MCPPostgres
+            properties:
+              backupStatus:
+                description: Backup status
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: PostgresCondition describes the state of a PostgreSQL deployment
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      description: PostgresConditionType represents the type of condition
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              databaseError:
+                description: Database connection error
+                type: string
+              databaseReady:
+                description: Database connection status
+                type: boolean
+              lastBackup:
+                description: Last backup time
+                format: date-time
+                type: string
+              nextBackup:
+                description: Next backup time
+                format: date-time
+                type: string
+              observedGeneration:
+                description: Observed generation
+                format: int64
+                type: integer
+              phase:
+                description: Phase indicates the current phase of the PostgreSQL deployment
+                type: string
+              readyReplicas:
+                description: Ready replicas count
+                format: int32
+                type: integer
+              replicas:
+                description: Total replicas count
+                format: int32
+                type: integer
+              serviceEndpoint:
+                description: Service endpoint information
+                type: string
+              servicePort:
+                description: Service port
+                format: int32
+                type: integer
+              stats:
+                description: Database statistics
+                properties:
+                  connectionCount:
+                    format: int32
+                    type: integer
+                  databaseSize:
+                    type: string
+                  databases:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  extensions:
+                    items:
+                      type: string
+                    type: array
+                  lastStatsUpdate:
+                    format: date-time
+                    type: string
+                  tableCount:
+                    format: int32
+                    type: integer
+                type: object
+              storageSize:
+                description: Storage size
+                type: string
+              storageStatus:
+                description: Storage information
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

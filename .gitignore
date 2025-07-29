@@ -1,0 +1,76 @@
+matey.yml
+matey.yaml
+.gemini/
+.opencode/
+.mcp.json
+TODO.md
+CLAUDE.md
+
+# Binaries for programs and plugins
+matey
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Client config directories
+client-config/
+client-configs/
+
+# Generated files
+*.generated.*
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Security - Never commit secrets
+.env
+.env.local
+.env.production
+.env.staging
+*.pem
+*.key
+*.crt
+*_secret.json
+client_secret.json
+credentials.json
+auth.json
+
+# Build artifacts
+build/
+dist/
+bin/
+matey
+
+# Custom development files
+custom_mcp/
+find_code.sh
+
+CLAUDE.md

@@ -1,0 +1,47 @@
+name: Update Version on Tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Get version from tag
+      id: tag_version
+      run: |
+        TAG_VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$TAG_VERSION" >> $GITHUB_OUTPUT
+        echo "Tag version: $TAG_VERSION"
+
+    - name: Update version in main.go
+      run: |
+        TAG_VERSION="${{ steps.tag_version.outputs.version }}"
+        sed -i "s/var version = \".*\"/var version = \"$TAG_VERSION\"/" cmd/matey/main.go
+        echo "Updated main.go with version: $TAG_VERSION"
+
+    - name: Commit version update
+      run: |
+        TAG_VERSION="${{ steps.tag_version.outputs.version }}"
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add cmd/matey/main.go
+        git commit -m "chore: update version to $TAG_VERSION in main.go [skip ci]" || exit 0
+
+    - name: Push changes
+      run: |
+        git push origin main

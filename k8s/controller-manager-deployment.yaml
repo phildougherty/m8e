@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matey-controller-manager
+  namespace: default
+  labels:
+    app: matey-controller-manager
+    app.kubernetes.io/name: matey-controller-manager
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/managed-by: matey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matey-controller-manager
+  template:
+    metadata:
+      labels:
+        app: matey-controller-manager
+        app.kubernetes.io/name: matey-controller-manager
+        app.kubernetes.io/component: controller-manager
+        app.kubernetes.io/managed-by: matey
+    spec:
+      serviceAccountName: matey-controller-manager
+      containers:
+      - name: controller-manager
+        image: mcp.robotrad.io/matey:latest
+        command:
+        - /app/matey
+        args:
+        - controller-manager
+        - --config=/config/matey.yaml
+        - --namespace=default
+        - --log-level=info
+        env:
+        - name: KUBECONFIG
+          value: ""
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 8083
+          name: metrics
+          protocol: TCP
+        - containerPort: 8082
+          name: health
+          protocol: TCP
+        - containerPort: 9443
+          name: webhook
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8082
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: matey-config
+      terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: matey-controller-manager-metrics
+  namespace: default
+  labels:
+    app: matey-controller-manager
+    app.kubernetes.io/name: matey-controller-manager
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/managed-by: matey
+spec:
+  selector:
+    app: matey-controller-manager
+  ports:
+  - name: metrics
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: matey-config
+  namespace: default
+  labels:
+    app: matey-controller-manager
+    app.kubernetes.io/name: matey-controller-manager
+    app.kubernetes.io/component: controller-manager
+    app.kubernetes.io/managed-by: matey
+data:
+  matey.yaml: |
+    # This will be populated by the matey up command
+    version: "1"
+    servers: {}

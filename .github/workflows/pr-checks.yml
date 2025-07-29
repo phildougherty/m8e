@@ -1,0 +1,67 @@
+---
+name: PR Quick Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  quick-test:
+    name: Quick Tests
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run fast unit tests
+        run: |
+          # Run tests without race detection for speed
+          go test -v -short $(go list ./... | grep -v '/internal/integration')
+
+      - name: Basic lint check
+        run: |
+          # Quick formatting check
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code not formatted properly:"
+            gofmt -s -l .
+            exit 1
+          fi
+          
+          # Basic go vet
+          go vet ./...
+
+      - name: Check build
+        run: |
+          go build -o /tmp/matey ./cmd/matey
+          /tmp/matey --version
+
+  auto-merge-check:
+    name: Auto-merge Check
+    runs-on: ubuntu-latest
+    needs: quick-test
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Check if ready for auto-merge
+        run: |
+          echo "✅ Quick checks passed - PR is ready for full CI pipeline"
+          echo "## Quick Check Results ✅" >> $GITHUB_STEP_SUMMARY
+          echo "- Unit tests: PASSED" >> $GITHUB_STEP_SUMMARY
+          echo "- Lint checks: PASSED" >> $GITHUB_STEP_SUMMARY
+          echo "- Build check: PASSED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Full CI pipeline will run automatically." >> $GITHUB_STEP_SUMMARY

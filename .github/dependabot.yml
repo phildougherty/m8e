@@ -1,0 +1,83 @@
+# Dependabot configuration for automated dependency updates
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Go dependencies
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "phildougherty"
+    assignees:
+      - "phildougherty"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "go"
+    rebase-strategy: "auto"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore major version updates for stable dependencies
+      - dependency-name: "k8s.io/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "sigs.k8s.io/*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "phildougherty"
+    assignees:
+      - "phildougherty"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    rebase-strategy: "auto"
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "phildougherty"
+    assignees:
+      - "phildougherty"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+    rebase-strategy: "auto"
+    ignore:
+      # Only patch and minor updates for base images
+      - dependency-name: "golang"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "alpine"
+        update-types: ["version-update:semver-major"]

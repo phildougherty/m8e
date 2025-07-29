@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matey-mcp-proxy
+  namespace: default
+  labels:
+    app: matey
+    component: mcp-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matey
+      component: mcp-proxy
+  template:
+    metadata:
+      labels:
+        app: matey
+        component: mcp-proxy
+    spec:
+      serviceAccountName: matey-proxy
+      containers:
+      - name: mcp-proxy
+        image: mcp.robotrad.io/matey:latest
+        imagePullPolicy: Always
+        command: ["matey"]
+        args: ["serve-proxy", "--port=9876", "--namespace=default"]
+        env:
+        - name: MCP_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: matey-secrets
+              key: mcp-api-key
+              optional: true
+        ports:
+        - containerPort: 9876
+          name: http
+        - containerPort: 8080
+          name: metrics
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9876
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9876
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: matey-mcp-proxy
+  namespace: default
+  labels:
+    app: matey
+    component: mcp-proxy
+spec:
+  type: NodePort
+  ports:
+  - port: 9876
+    targetPort: 9876
+    nodePort: 30876
+    name: http
+  selector:
+    app: matey
+    component: mcp-proxy
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: matey-mcp-proxy
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: mcp.robotrad.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: matey-mcp-proxy
+            port:
+              number: 9876
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: matey-proxy
+  namespace: default
+  labels:
+    app: matey
+    component: mcp-proxy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: matey-proxy
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["mcp.matey.ai"]
+  resources: ["mcpservers", "mcptoolboxes", "workflows"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: matey-proxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: matey-proxy
+subjects:
+- kind: ServiceAccount
+  name: matey-proxy
+  namespace: default
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: matey-secrets
+  namespace: default
+type: Opaque
+stringData:
+  mcp-api-key: "your-api-key-here"

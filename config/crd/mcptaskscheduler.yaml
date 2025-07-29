@@ -1,0 +1,398 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcptaskschedulers.mcp.matey.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.12.0
+spec:
+  group: mcp.matey.ai
+  names:
+    kind: MCPTaskScheduler
+    listKind: MCPTaskSchedulerList
+    plural: mcptaskschedulers
+    shortNames:
+    - mcpts
+    singular: mcptaskscheduler
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: MCPTaskScheduler represents a task scheduler deployment
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MCPTaskSchedulerSpec defines the desired state of MCPTaskScheduler
+            properties:
+              databasePath:
+                description: Database path for task storage (SQLite)
+                type: string
+              databaseURL:
+                description: Database connection URL (PostgreSQL)
+                type: string
+              postgresEnabled:
+                description: Enable PostgreSQL database instead of SQLite
+                type: boolean
+              host:
+                description: Host interface
+                type: string
+              image:
+                description: Container image
+                type: string
+              logLevel:
+                description: Log level
+                type: string
+              mcpProxyAPIKey:
+                description: MCP Proxy API key
+                type: string
+              mcpProxyURL:
+                description: MCP Proxy URL
+                type: string
+              ollamaModel:
+                description: Ollama model
+                type: string
+              ollamaURL:
+                description: Ollama URL
+                type: string
+              openRouterAPIKey:
+                description: OpenRouter API key
+                type: string
+              openRouterModel:
+                description: OpenRouter model
+                type: string
+              port:
+                description: Service port
+                format: int32
+                type: integer
+              replicas:
+                description: Number of replicas
+                format: int32
+                type: integer
+              resources:
+                description: Resource requirements
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    type: object
+                type: object
+              schedulerConfig:
+                description: Scheduler configuration
+                properties:
+                  autoScaling:
+                    description: Auto scaling configuration
+                    type: object
+                  conditionalDependencies:
+                    description: Conditional dependencies configuration
+                    type: object
+                  defaultTimeout:
+                    description: Default timeout for tasks
+                    type: string
+                  maxConcurrentTasks:
+                    description: Maximum concurrent tasks
+                    format: int32
+                    type: integer
+                  retryPolicy:
+                    description: Retry policy configuration
+                    properties:
+                      backoffStrategy:
+                        description: Backoff strategy for retries
+                        type: string
+                      maxRetries:
+                        description: Maximum number of retries
+                        format: int32
+                        type: integer
+                      retryDelay:
+                        description: Delay between retries
+                        type: string
+                    type: object
+                  taskCleanupPolicy:
+                    description: Task cleanup policy
+                    type: string
+                  taskHistoryLimit:
+                    description: Task history limit
+                    format: int32
+                    type: integer
+                  taskStorageEnabled:
+                    description: Whether task storage is enabled
+                    type: boolean
+                type: object
+              security:
+                description: Security configuration
+                properties:
+                  capDrop:
+                    description: Capabilities to drop
+                    items:
+                      type: string
+                    type: array
+                  noNewPrivileges:
+                    description: No new privileges
+                    type: boolean
+                  readOnlyRootFS:
+                    description: Read-only root filesystem
+                    type: boolean
+                  runAsGroup:
+                    description: Group ID to run as
+                    format: int64
+                    type: integer
+                  runAsUser:
+                    description: User ID to run as
+                    format: int64
+                    type: integer
+                type: object
+              volumes:
+                description: Volume specifications
+                items:
+                  type: string
+                type: array
+              workspace:
+                description: Workspace configuration
+                type: string
+              workflows:
+                description: List of workflows to be executed by the task scheduler
+                items:
+                  description: WorkflowDefinition defines a workflow
+                  properties:
+                    name:
+                      description: Name of the workflow
+                      type: string
+                    description:
+                      description: Description of the workflow
+                      type: string
+                    schedule:
+                      description: Cron schedule for the workflow
+                      type: string
+                    enabled:
+                      description: Whether the workflow is enabled
+                      type: boolean
+                    timezone:
+                      description: Timezone for the workflow schedule
+                      type: string
+                    workspace:
+                      description: Workspace volume configuration for step data sharing
+                      properties:
+                        enabled:
+                          description: Enable workspace volume (default true for multi-step workflows)
+                          type: boolean
+                        size:
+                          description: Size of the workspace volume (default 1Gi)
+                          type: string
+                        storageClass:
+                          description: Storage class for the workspace volume
+                          type: string
+                        mountPath:
+                          description: Mount path within containers (default /workspace)
+                          type: string
+                        accessModes:
+                          description: Access modes for the volume
+                          items:
+                            type: string
+                          type: array
+                        reclaimPolicy:
+                          description: Volume reclaim policy (Delete or Retain)
+                          type: string
+                      type: object
+                    steps:
+                      description: Steps in the workflow
+                      items:
+                        description: WorkflowStep defines a step in a workflow
+                        properties:
+                          name:
+                            description: Name of the step
+                            type: string
+                          tool:
+                            description: Tool to execute
+                            type: string
+                          parameters:
+                            additionalProperties:
+                              type: string
+                            description: Parameters for the tool
+                            type: object
+                          condition:
+                            description: Condition for executing the step
+                            type: string
+                          retryPolicy:
+                            description: Retry policy for the step
+                            properties:
+                              maxRetries:
+                                description: Maximum number of retries
+                                type: integer
+                              retryDelay:
+                                description: Delay between retries
+                                type: string
+                              backoffStrategy:
+                                description: Backoff strategy (linear, exponential, fixed)
+                                type: string
+                            type: object
+                        required:
+                        - name
+                        - tool
+                        type: object
+                      type: array
+                    retryPolicy:
+                      description: Retry policy for the entire workflow
+                      properties:
+                        maxRetries:
+                          description: Maximum number of retries
+                          type: integer
+                        retryDelay:
+                          description: Delay between retries
+                          type: string
+                        backoffStrategy:
+                          description: Backoff strategy (linear, exponential, fixed)
+                          type: string
+                      type: object
+                  required:
+                  - name
+                  - steps
+                  type: object
+                type: array
+            type: object
+          status:
+            description: MCPTaskSchedulerStatus defines the observed state of MCPTaskScheduler
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations of an object's state
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              phase:
+                description: Phase represents the current phase of the MCPTaskScheduler
+                type: string
+              readyReplicas:
+                description: Number of ready replicas
+                format: int32
+                type: integer
+              replicas:
+                description: Total number of replicas
+                format: int32
+                type: integer
+              taskStats:
+                description: Task statistics
+                type: object
+              workflowStats:
+                description: Workflow statistics
+                type: object
+              workflowExecutions:
+                description: Workflow execution history (most recent 10 executions per workflow)
+                items:
+                  description: WorkflowExecution represents a single execution instance of a workflow
+                  properties:
+                    id:
+                      description: Execution ID (unique)
+                      type: string
+                    workflowName:
+                      description: Workflow name
+                      type: string
+                    startTime:
+                      description: Execution start time
+                      format: date-time
+                      type: string
+                    endTime:
+                      description: Execution end time (if completed)
+                      format: date-time
+                      type: string
+                    duration:
+                      description: Execution duration (if completed)
+                      format: int64
+                      type: integer
+                    phase:
+                      description: Current phase of the execution
+                      type: string
+                    message:
+                      description: Human-readable message describing current state
+                      type: string
+                    stepResults:
+                      additionalProperties:
+                        description: StepResult represents the result of a single workflow step execution
+                        properties:
+                          phase:
+                            description: Current phase of the step
+                            type: string
+                          output:
+                            description: Step output (if successful)
+                            type: object
+                          error:
+                            description: Error message (if failed)
+                            type: string
+                          duration:
+                            description: Step execution duration
+                            format: int64
+                            type: integer
+                          attempts:
+                            description: Number of attempts made
+                            format: int32
+                            type: integer
+                        required:
+                        - phase
+                        - attempts
+                        type: object
+                      description: Results from each step
+                      type: object
+                  required:
+                  - id
+                  - workflowName
+                  - startTime
+                  - phase
+                  type: object
+                type: array
+              connectionInfo:
+                description: Connection information
+                type: object
+              healthStatus:
+                description: Health status
+                type: string
+              serviceEndpoints:
+                description: Service endpoints
+                items:
+                  type: object
+                type: array
+              observedGeneration:
+                description: Observed generation
+                format: int64
+                type: integer
+              lastSuccessfulConfig:
+                description: Last successful configuration
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

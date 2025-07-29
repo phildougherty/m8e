@@ -1,0 +1,66 @@
+name: Update Homebrew Formula
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout main repo
+      uses: actions/checkout@v4
+
+    - name: Get version from tag
+      id: get_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Calculate tarball SHA256
+      id: calc_sha
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        SHA256=$(curl -sL "https://github.com/phildougherty/m8e/archive/refs/tags/v$VERSION.tar.gz" | sha256sum | cut -d' ' -f1)
+        echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+        echo "SHA256: $SHA256"
+
+    - name: Checkout homebrew-tap
+      uses: actions/checkout@v4
+      with:
+        repository: phildougherty/homebrew-tap
+        token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        path: homebrew-tap
+
+    - name: Update formula
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        SHA256="${{ steps.calc_sha.outputs.sha256 }}"
+        
+        cd homebrew-tap
+        
+        # Update the formula
+        sed -i "s|url \".*\"|url \"https://github.com/phildougherty/m8e/archive/refs/tags/v$VERSION.tar.gz\"|" matey.rb
+        sed -i "s|sha256 \".*\"|sha256 \"$SHA256\"|" matey.rb
+        
+        # Remove version line if it exists (let Homebrew auto-detect from URL)
+        sed -i '/^  version /d' matey.rb
+        
+        echo "Updated matey.rb for version $VERSION"
+
+    - name: Commit and push formula update
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        cd homebrew-tap
+        
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add matey.rb
+        git commit -m "chore: update matey formula to v$VERSION
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+        git push origin main
