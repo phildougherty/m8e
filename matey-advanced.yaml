@@ -4,6 +4,23 @@
 version: '1'  # REQUIRED
 
 # ============================================================================
+# REGISTRY CONFIGURATION - OPTIONAL (container image registry)
+# ============================================================================
+registry:
+  url: mcp.robotrad.io            # OPTIONAL (registry URL)
+  username: "${REGISTRY_USERNAME}" # OPTIONAL ENV VAR (registry username)
+  password: "${REGISTRY_PASSWORD}" # OPTIONAL ENV VAR (registry password)
+  insecure: false                 # OPTIONAL (allow insecure connections)
+
+# ============================================================================
+# PROXY CONFIGURATION - OPTIONAL (MCP service proxy)
+# ============================================================================
+proxy:
+  url: mcp.robotrad.io            # OPTIONAL (proxy URL)
+  port: 8080                      # OPTIONAL (proxy port)
+  host: 0.0.0.0                   # OPTIONAL (proxy host)
+
+# ============================================================================
 # PROXY AUTHENTICATION - OPTIONAL (but recommended for production)
 # ============================================================================
 proxy_auth:
@@ -372,6 +389,30 @@ volumes:
     external: false                # OPTIONAL (use external volume)
     labels:                        # OPTIONAL (volume labels)
       backup: "daily"
+
+# ============================================================================
+# MEMORY SERVICE CONFIGURATION - OPTIONAL (knowledge graph and memory management)
+# ============================================================================
+memory:
+  enabled: true                    # OPTIONAL (default: false)
+  port: 3001                      # OPTIONAL (default: 3001)
+  host: "0.0.0.0"                 # OPTIONAL (default: "localhost")
+  database_url: "postgresql://memory:${POSTGRES_PASSWORD}@postgres:5432/memory_graph?sslmode=disable" # OPTIONAL
+  postgres_enabled: true          # OPTIONAL (default: false)
+  postgres_port: 5432             # OPTIONAL (default: 5432)
+  postgres_db: memory_graph       # OPTIONAL (default: memory_graph)
+  postgres_user: memory           # OPTIONAL (default: postgres)
+  postgres_password: "${POSTGRES_PASSWORD}" # REQUIRED ENV VAR if postgres_enabled
+  cpus: "1.0"                     # OPTIONAL (CPU limit)
+  memory: "1g"                    # OPTIONAL (memory limit)
+  postgres_cpus: "2.0"            # OPTIONAL (PostgreSQL CPU limit)
+  postgres_memory: "2g"           # OPTIONAL (PostgreSQL memory limit)
+  volumes:                        # OPTIONAL (volume mounts)
+    - postgres-memory-data:/var/lib/postgresql/data
+  authentication:                 # OPTIONAL (memory service auth)
+    enabled: true                 # OPTIONAL (default: false)
+    required_scope: "mcp:tools"   # OPTIONAL (required OAuth scope)
+    allow_api_key: true           # OPTIONAL (allow API key auth)
 
 # ============================================================================
 # TASK SCHEDULER CONFIGURATION - OPTIONAL (AI-powered workflow orchestration)
