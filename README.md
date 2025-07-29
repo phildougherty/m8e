@@ -23,7 +23,7 @@ Matey is a production-ready Kubernetes-native orchestrator that enables AI agent
 - **AI-Powered Automation**: Task scheduling with AI reasoning and autonomous workflows  
 - **Enterprise Security**: OAuth 2.1, JWT tokens, RBAC, and comprehensive audit logging
 - **Service Discovery**: Automatic Kubernetes-native MCP server discovery and health monitoring
-- **Multi-Protocol Support**: HTTP, SSE, WebSocket, and STDIO transport protocols
+- **Multi-Protocol Support**: HTTP, SSE, and WebSocket transport protocols
 - **Memory & Context**: PostgreSQL-backed knowledge graph for persistent AI memory
 - **Rich Tooling**: 20+ CLI commands for complete lifecycle management
 
@@ -78,11 +78,12 @@ brew install phildougherty/tap/matey
 go install github.com/phildougherty/m8e/cmd/matey@latest
 ```
 
-#### Option C: Download Binary
+#### Option C: Build from Source
 ```bash
-# Linux/macOS
-curl -L https://github.com/phildougherty/m8e/releases/latest/download/matey-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.gz | tar xz
-sudo mv matey /usr/local/bin/
+git clone https://github.com/phildougherty/m8e.git
+cd m8e
+make build
+make install
 ```
 
 ### Step 3: Create Your Configuration
@@ -230,9 +231,6 @@ matey create-config -t claude-code
 
 # For Gemini
 matey create-config -t gemini
-
-# For custom IDE integration
-matey create-config -t generic
 ```
 
 ### Step 8: Connect Your AI Client
@@ -241,8 +239,8 @@ Copy the generated configuration to your AI client:
 
 #### Claude Code
 ```bash
-# Copy to Claude Code config directory
-cp .claude-code-config.json ~/.config/claude-code/config.json
+# Copy to your project directory
+cp client-configs/.mcp.json /home/dev/myrepo/.mcp.json
 ```
 
 #### Gemini/Other Clients
