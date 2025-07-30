@@ -185,6 +185,36 @@ servers:
             required_scope: mcp:tools
 ```
 
+### Registry Credentials Configuration
+
+For accessing private container registries, configure credentials in one of these ways:
+
+#### Option 1: In matey.yaml configuration
+```yaml
+registry:
+  url: ghcr.io
+  username: your-username
+  password: your-token-or-password
+```
+
+#### Option 2: Environment Variables
+```bash
+# Matey-specific environment variables
+export MATEY_REGISTRY_URL=ghcr.io
+export MATEY_REGISTRY_USERNAME=your-username
+export MATEY_REGISTRY_PASSWORD=your-token-or-password
+
+# GitHub-specific environment variables (fallback)
+export GITHUB_USERNAME=your-github-username  # or GITHUB_ACTOR
+export GITHUB_TOKEN=your-github-token
+# Registry URL defaults to ghcr.io for GitHub
+```
+
+**Priority Order:**
+1. First tries to load from `matey.yaml` config file
+2. If config missing/invalid, falls back to environment variables
+3. If no credentials found, skips creating registry secret (public images only)
+
 ### Step 4: Install Matey Components
 
 Deploy the Kubernetes controllers and CRDs:
