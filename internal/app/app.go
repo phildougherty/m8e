@@ -89,13 +89,12 @@ func New() (*App, error) {
 
 // detectClusterMCPProxy detects the MCP proxy endpoint in the cluster
 func detectClusterMCPProxy() string {
-	// Try multiple connection methods in order of preference
+	// Try multiple connection methods in order of preference, prioritizing localhost
 	endpoints := []string{
-		"https://mcp.robotrad.io",
-		"http://localhost:30876",
-		"http://localhost:9876",
-		"http://matey-proxy.matey.svc.cluster.local:9876",
-		"http://localhost:8080",
+		"http://localhost:9876", // Default localhost port
+		"http://localhost:30876", // NodePort service
+		"http://localhost:8080", // Alternative port
+		"http://matey-proxy.matey.svc.cluster.local:9876", // Internal cluster URL
 	}
 	
 	// For now, return the first endpoint

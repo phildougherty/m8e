@@ -212,10 +212,14 @@ func generateClaudeCodeConfig(cfg *config.ComposeConfig, outputDir string) error
 		McpServers: make(map[string]mcpServer),
 	}
 
-	// Get registry URL and API key
-	registryURL := cfg.Registry.URL
-	if registryURL == "" {
-		registryURL = "mcp.robotrad.io"
+	// Get proxy URL and API key  
+	proxyURL := cfg.GetProxyURL()
+	// Remove protocol prefix to get just the host
+	proxyHost := strings.TrimPrefix(proxyURL, "https://")
+	proxyHost = strings.TrimPrefix(proxyHost, "http://")
+	// Remove port if present
+	if idx := strings.Index(proxyHost, ":"); idx != -1 {
+		proxyHost = proxyHost[:idx]
 	}
 
 	apiKey := cfg.ProxyAuth.APIKey
@@ -235,11 +239,11 @@ func generateClaudeCodeConfig(cfg *config.ComposeConfig, outputDir string) error
 			Type: protocol, // Use the actual server protocol
 		}
 
-		// Build the URL
-		if registryURL != "" {
-			server.URL = fmt.Sprintf("https://%s/%s", registryURL, name)
+		// Build the URL using proxy host
+		if proxyHost != "" {
+			server.URL = fmt.Sprintf("https://%s/%s", proxyHost, name)
 		} else {
-			// Fallback to direct server URL if no registry
+			// Fallback to direct server URL if no proxy host
 			if srvCfg.HttpPort > 0 {
 				server.URL = fmt.Sprintf("http://localhost:%d", srvCfg.HttpPort)
 			} else {
@@ -250,7 +254,7 @@ func generateClaudeCodeConfig(cfg *config.ComposeConfig, outputDir string) error
 		// Add OAuth discovery if OAuth is enabled in config
 		if cfg.OAuth != nil && cfg.OAuth.Enabled {
 			server.OAuth = &mcpOAuthConfig{
-				DiscoveryURL: fmt.Sprintf("https://%s/.well-known/oauth-authorization-server/%s", registryURL, name),
+				DiscoveryURL: fmt.Sprintf("https://%s/.well-known/oauth-authorization-server/%s", proxyHost, name),
 			}
 		} else if apiKey != "" {
 			// Fall back to API key authentication if OAuth is not enabled
@@ -304,10 +308,14 @@ func generateGeminiConfig(cfg *config.ComposeConfig, outputDir string) error {
 		McpServers: make(map[string]geminiServer),
 	}
 
-	// Get registry URL and API key
-	registryURL := cfg.Registry.URL
-	if registryURL == "" {
-		registryURL = "mcp.robotrad.io"
+	// Get proxy URL and API key  
+	proxyURL := cfg.GetProxyURL()
+	// Remove protocol prefix to get just the host
+	proxyHost := strings.TrimPrefix(proxyURL, "https://")
+	proxyHost = strings.TrimPrefix(proxyHost, "http://")
+	// Remove port if present
+	if idx := strings.Index(proxyHost, ":"); idx != -1 {
+		proxyHost = proxyHost[:idx]
 	}
 
 	apiKey := cfg.ProxyAuth.APIKey
@@ -328,7 +336,7 @@ func generateGeminiConfig(cfg *config.ComposeConfig, outputDir string) error {
 			protocol = "http" // default
 		}
 
-		serverURL := fmt.Sprintf("https://%s/%s", registryURL, name)
+		serverURL := fmt.Sprintf("https://%s/%s", proxyHost, name)
 
 		if protocol == "sse" {
 			server.URL = serverURL // Use url for SSE (expects text/event-stream)
@@ -357,7 +365,7 @@ func generateGeminiConfig(cfg *config.ComposeConfig, outputDir string) error {
 
 	// Add the matey MCP server (internal cluster management tools)
 	mateyServer := geminiServer{
-		HttpURL: fmt.Sprintf("https://%s/matey", registryURL),
+		HttpURL: fmt.Sprintf("https://%s/matey", proxyHost),
 		Timeout: 30000,
 		Trust:   false,
 	}
@@ -753,10 +761,14 @@ func generateOpenCodeConfig(cfg *config.ComposeConfig, outputDir string) error {
 		},
 	}
 
-	// Get registry URL and API key
-	registryURL := cfg.Registry.URL
-	if registryURL == "" {
-		registryURL = "mcp.robotrad.io"
+	// Get proxy URL and API key  
+	proxyURL := cfg.GetProxyURL()
+	// Remove protocol prefix to get just the host
+	proxyHost := strings.TrimPrefix(proxyURL, "https://")
+	proxyHost = strings.TrimPrefix(proxyHost, "http://")
+	// Remove port if present
+	if idx := strings.Index(proxyHost, ":"); idx != -1 {
+		proxyHost = proxyHost[:idx]
 	}
 
 	apiKey := cfg.ProxyAuth.APIKey
@@ -787,8 +799,8 @@ func generateOpenCodeConfig(cfg *config.ComposeConfig, outputDir string) error {
 				server.Type = "http"
 			}
 
-			// Build the URL through the registry proxy
-			server.URL = fmt.Sprintf("https://%s/%s", registryURL, name)
+			// Build the URL through the proxy
+			server.URL = fmt.Sprintf("https://%s/%s", proxyHost, name)
 
 			// Add authentication headers if API key is provided
 			if apiKey != "" {
@@ -799,7 +811,7 @@ func generateOpenCodeConfig(cfg *config.ComposeConfig, outputDir string) error {
 		} else {
 			// Default to HTTP if no specific configuration
 			server.Type = "http"
-			server.URL = fmt.Sprintf("https://%s/%s", registryURL, name)
+			server.URL = fmt.Sprintf("https://%s/%s", proxyHost, name)
 
 			if apiKey != "" {
 				server.Headers = map[string]string{
@@ -814,7 +826,7 @@ func generateOpenCodeConfig(cfg *config.ComposeConfig, outputDir string) error {
 	// Add the matey MCP server (internal cluster management tools)
 	mateyServer := openCodeServer{
 		Type: "http",
-		URL:  fmt.Sprintf("https://%s/matey", registryURL),
+		URL:  fmt.Sprintf("https://%s/matey", proxyHost),
 	}
 
 	// Add authentication headers if API key is provided

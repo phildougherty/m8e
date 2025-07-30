@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -176,7 +177,7 @@ func createMCPProxyResource(namespace string, port int, apiKey string, cfg *conf
 			ServiceAccount: "matey-controller",
 			Ingress: &crd.IngressConfig{
 				Enabled: true,
-				Host:    "mcp.robotrad.io",
+				Host:    getIngressHost(cfg),
 				Annotations: map[string]string{
 					"nginx.ingress.kubernetes.io/rewrite-target":       "/",
 					"nginx.ingress.kubernetes.io/cors-allow-origin":    "*",
@@ -252,4 +253,26 @@ func buildOAuthConfig(cfg *config.ComposeConfig) *crd.OAuthConfig {
 	oauth.ScopesSupported = cfg.OAuth.ScopesSupported
 	
 	return oauth
+}
+
+// getIngressHost returns the ingress host from config or a localhost default
+func getIngressHost(cfg *config.ComposeConfig) string {
+	if cfg != nil && cfg.Proxy.URL != "" {
+		// Extract host from proxy URL
+		proxyURL := cfg.GetProxyURL()
+		// Remove protocol prefix
+		host := proxyURL
+		if strings.HasPrefix(host, "https://") {
+			host = strings.TrimPrefix(host, "https://")
+		} else if strings.HasPrefix(host, "http://") {
+			host = strings.TrimPrefix(host, "http://")
+		}
+		// Remove port if present
+		if idx := strings.Index(host, ":"); idx != -1 {
+			host = host[:idx]
+		}
+		return host
+	}
+	// Default to localhost for local development
+	return "localhost"
 }
