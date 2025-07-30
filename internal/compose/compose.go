@@ -282,7 +282,7 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 		deploymentName string
 		serviceType    string
 	}{
-		{"matey-mcp-server", "matey-mcp-server", "matey-core"},
+		{"matey-mcp-server", "matey-mcp-server", "mcp-server"},
 		{"matey-proxy", "matey-proxy", "matey-core"},
 		{"matey-controller-manager", "matey-controller-manager", "matey-core"},
 	}
@@ -417,6 +417,21 @@ func (c *K8sComposer) getEnhancedServiceInfo(serviceName, serviceType string) *E
 		}
 	}
 
+	// Strategy 4: For matey-mcp-server specifically, try app=matey + component=mcp-server
+	if !foundPods && serviceName == "matey-mcp-server" {
+		podList = &corev1.PodList{}
+		err = c.k8sClient.List(ctx, podList,
+			client.InNamespace(c.namespace),
+			client.MatchingLabels(map[string]string{
+				"app": "matey",
+				"component": "mcp-server",
+			}))
+		
+		if err == nil && len(podList.Items) > 0 {
+			foundPods = true
+		}
+	}
+
 	if !foundPods {
 		c.logger.Debug("No pods found for service %s using any label strategy", serviceName)
 		// Still return deployment info if we have it
@@ -547,12 +562,12 @@ func (c *K8sComposer) checkProxyConnection(serviceName string) bool {
 
 // checkServiceViaProxy checks service health and connectivity via proxy API
 func (c *K8sComposer) checkServiceViaProxy(serviceName string) (connected bool, health string) {
-	// Try multiple potential proxy URLs
+	// Try multiple potential proxy URLs, prioritizing localhost and cluster URLs
 	urlsToTry := []string{
 		c.config.GetProxyURL(),
-		"http://localhost:9876",
+		"http://localhost:9876", // Default localhost
+		"http://matey-proxy.matey.svc.cluster.local:9876", // Internal cluster URL
 		"http://matey-proxy:9876",
-		"http://matey-proxy.matey.svc.cluster.local:9876",
 	}
 	
 	// Remove empty URLs
