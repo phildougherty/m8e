@@ -23,7 +23,6 @@ mcpmemories.matey.io          2024-01-15T10:30:00Z
 mcpproxies.matey.io           2024-01-15T10:30:00Z
 mcpservers.matey.io           2024-01-15T10:30:00Z
 mcptaskschedulers.matey.io    2024-01-15T10:30:00Z
-mcptoolboxes.matey.io         2024-01-15T10:30:00Z
 workflows.matey.io            2024-01-15T10:30:00Z
 ```
 

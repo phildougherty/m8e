@@ -253,5 +253,3 @@ func buildOAuthConfig(cfg *config.ComposeConfig) *crd.OAuthConfig {
 	
 	return oauth
 }
-
-

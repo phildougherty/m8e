@@ -23,9 +23,11 @@ spec:
         mcp.matey.ai/server-name: matey
     spec:
       serviceAccountName: matey-mcp-server
+      imagePullSecrets:
+      - name: registry-secret
       containers:
       - name: matey-mcp-server
-        image: mcp.robotrad.io/matey:latest
+        image: ghcr.io/phildougherty/matey:latest
         imagePullPolicy: Always
         command: ["./matey"]
         args: ["mcp-server", "--port=8081", "--namespace=matey"]
@@ -109,10 +111,10 @@ rules:
   resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["mcp.matey.ai"]
-  resources: ["mcpservers", "mcptoolboxes", "workflows", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"]
+  resources: ["mcpservers", "workflows", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["mcp.matey.ai"]
-  resources: ["mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"]
+  resources: ["mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status"]
   verbs: ["get", "update", "patch"]
 - apiGroups: ["batch"]
   resources: ["jobs", "cronjobs"]

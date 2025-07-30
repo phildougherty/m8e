@@ -424,6 +424,11 @@ func (r *MCPServerReconciler) buildPodSpec(mcpServer *mcpv1.MCPServer, container
 				Name: secret,
 			})
 		}
+	} else {
+		// Automatically add registry-secret if no ImagePullSecrets are specified
+		podSpec.ImagePullSecrets = append(podSpec.ImagePullSecrets, corev1.LocalObjectReference{
+			Name: "registry-secret",
+		})
 	}
 
 	// Set node selector

@@ -684,7 +684,7 @@ func (r *MCPMemoryReconciler) buildMemoryEnvVars(memory *crd.MCPMemory) []corev1
 
 // buildMemoryContainer creates the main memory container
 func (r *MCPMemoryReconciler) buildMemoryContainer(memory *crd.MCPMemory) corev1.Container {
-	image := "mcpcompose/memory:latest"
+	image := "ghcr.io/phildougherty/memory:latest"
 	if r.Config != nil {
 		image = r.Config.GetRegistryImage(image)
 	}
@@ -786,6 +786,20 @@ func (r *MCPMemoryReconciler) buildMemoryPodSpec(memory *crd.MCPMemory) corev1.P
 	// Apply service account
 	if memory.Spec.ServiceAccount != "" {
 		podSpec.ServiceAccountName = memory.Spec.ServiceAccount
+	}
+
+	// Set image pull secrets
+	if len(memory.Spec.ImagePullSecrets) > 0 {
+		for _, secret := range memory.Spec.ImagePullSecrets {
+			podSpec.ImagePullSecrets = append(podSpec.ImagePullSecrets, corev1.LocalObjectReference{
+				Name: secret,
+			})
+		}
+	} else {
+		// Automatically add registry-secret if no ImagePullSecrets are specified
+		podSpec.ImagePullSecrets = append(podSpec.ImagePullSecrets, corev1.LocalObjectReference{
+			Name: "registry-secret",
+		})
 	}
 
 	return podSpec

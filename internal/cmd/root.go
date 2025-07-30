@@ -30,6 +30,13 @@ func NewRootCommand(version string) *cobra.Command {
 	rootCmd.AddCommand(NewTopCommand())
 	rootCmd.AddCommand(NewLogsCommand())
 	
+	// Add service commands
+	rootCmd.AddCommand(NewControllerManagerCommand())
+	rootCmd.AddCommand(NewMCPServerCommand())
+	rootCmd.AddCommand(NewProxyCommand())
+	rootCmd.AddCommand(NewMemoryCommand())
+	rootCmd.AddCommand(NewTaskSchedulerCommand())
+	
 	// Add utility commands
 	rootCmd.AddCommand(NewValidateCommand())
 	rootCmd.AddCommand(NewCompletionCommand())

@@ -451,9 +451,9 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 	if image == "" {
 		// Use registry image by default for better reliability
 		if r.Config != nil {
-			image = r.Config.GetRegistryImage("matey:latest")
+			image = r.Config.GetRegistryImage("phildougherty/matey:latest")
 		} else {
-			image = "mcp.robotrad.io/matey:latest"
+			image = "ghcr.io/phildougherty/matey:latest"
 		}
 	}
 	// Apply registry prefix for non-registry images
@@ -514,7 +514,7 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 		Image:           image,
 		ImagePullPolicy: corev1.PullAlways,
 		Command:         []string{"./matey"},
-		Args:            []string{"scheduler-server"},
+		Args:            []string{"task-scheduler", "--file", "/app/config/matey.yaml"},
 		Env:             env,
 		VolumeMounts: []corev1.VolumeMount{
 			{
@@ -543,9 +543,9 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 	if len(taskScheduler.Spec.Args) > 0 {
 		container.Args = taskScheduler.Spec.Args
 	} else {
-		// Default args for built-in scheduler-server with config file
+		// Default args for built-in task-scheduler with config file
 		container.Args = []string{
-			"scheduler-server",
+			"task-scheduler",
 			"--file", "/app/config/matey.yaml",
 		}
 	}
@@ -591,6 +591,20 @@ func (r *MCPTaskSchedulerReconciler) buildPodSpec(taskScheduler *crd.MCPTaskSche
 	} else {
 		// Default to dedicated task-scheduler service account with proper RBAC
 		podSpec.ServiceAccountName = "task-scheduler"
+	}
+
+	// Set image pull secrets
+	if len(taskScheduler.Spec.ImagePullSecrets) > 0 {
+		for _, secret := range taskScheduler.Spec.ImagePullSecrets {
+			podSpec.ImagePullSecrets = append(podSpec.ImagePullSecrets, corev1.LocalObjectReference{
+				Name: secret,
+			})
+		}
+	} else {
+		// Automatically add registry-secret if no ImagePullSecrets are specified
+		podSpec.ImagePullSecrets = append(podSpec.ImagePullSecrets, corev1.LocalObjectReference{
+			Name: "registry-secret",
+		})
 	}
 
 	return podSpec

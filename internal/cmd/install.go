@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/phildougherty/m8e/internal/config"
 	"github.com/phildougherty/m8e/internal/crd"
 )
 
@@ -90,6 +92,13 @@ func installCRDs(dryRun bool, namespace string) error {
 		return fmt.Errorf("failed to install CRDs: %w", err)
 	}
 
+	// Create namespace first
+	err = createNamespace(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+	fmt.Printf("✓ Namespace %s created\n", namespace)
+
 	// Install RBAC resources
 	err = installServiceAccount(ctx, k8sClient, namespace)
 	if err != nil {
@@ -136,6 +145,19 @@ func installCRDs(dryRun bool, namespace string) error {
 		return fmt.Errorf("failed to install shared postgres: %w", err)
 	}
 	fmt.Printf("✓ Shared matey-postgres installed in namespace %s\n", namespace)
+
+	// Create image pull secret if registry credentials are configured
+	err = createImagePullSecret(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to create image pull secret: %w", err)
+	}
+
+	// Create default MCPProxy resource to enable proxy functionality
+	err = installDefaultMCPProxy(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to install default MCPProxy: %w", err)
+	}
+	fmt.Printf("✓ Default MCPProxy installed in namespace %s\n", namespace)
 
 	fmt.Println("\nMatey installation complete!")
 	fmt.Println("You can now run 'matey up' to start your services.")
@@ -195,7 +217,6 @@ func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
 		"mcpmemory.yaml",
 		"mcptaskscheduler.yaml",
 		"mcpproxy.yaml",
-		"mcptoolbox.yaml",
 		"mcppostgres.yaml",
 	}
 
@@ -221,6 +242,21 @@ func installCRDsFromYAML(ctx context.Context, k8sClient client.Client) error {
 		fmt.Printf("✓ %s CRD installed\n", crd.Spec.Names.Kind)
 	}
 
+	return nil
+}
+
+// createNamespace creates the namespace if it doesn't exist
+func createNamespace(ctx context.Context, k8sClient client.Client, namespace string) error {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+		},
+	}
+
+	err := k8sClient.Create(ctx, ns)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
 	return nil
 }
 
@@ -284,12 +320,12 @@ func installClusterRole(ctx context.Context, k8sClient client.Client) error {
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres", "mcptoolboxes"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status"},
 				Verbs:     []string{"get", "list", "watch", "update", "patch"},
 			},
 		},
@@ -370,12 +406,12 @@ func installMCPServerRBAC(ctx context.Context, k8sClient client.Client, namespac
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres", "mcptoolboxes"},
+				Resources: []string{"mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"},
 				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 			},
 			{
 				APIGroups: []string{"mcp.matey.ai"},
-				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"},
+				Resources: []string{"mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status"},
 				Verbs:     []string{"get", "update", "patch"},
 			},
 			{
@@ -619,6 +655,179 @@ GRANT ALL PRIVILEGES ON DATABASE memory_graph TO postgres;`,
 	err = k8sClient.Create(ctx, mateyPostgres)
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("failed to create matey-postgres: %w", err)
+	}
+
+	return nil
+}
+
+// createImagePullSecret creates a docker registry secret if credentials are configured
+func createImagePullSecret(ctx context.Context, k8sClient client.Client, namespace string) error {
+	// Try to load config to get registry credentials
+	cfg, err := config.LoadConfig("matey.yaml")
+	if err != nil {
+		// If no config file or error loading, check environment variables
+		return createImagePullSecretFromEnv(ctx, k8sClient, namespace)
+	}
+
+	// Check if registry credentials are configured
+	if cfg.Registry.Username == "" || cfg.Registry.Password == "" {
+		// Try environment variables as fallback
+		return createImagePullSecretFromEnv(ctx, k8sClient, namespace)
+	}
+
+	// Determine registry URL
+	registryURL := cfg.Registry.URL
+	if registryURL == "" {
+		registryURL = "ghcr.io" // Default to GitHub Container Registry
+	}
+
+	// Create the image pull secret
+	secretName := "registry-secret"
+	dockerConfigJSON := fmt.Sprintf(`{
+		"auths": {
+			"%s": {
+				"username": "%s",
+				"password": "%s",
+				"auth": "%s"
+			}
+		}
+	}`, registryURL, cfg.Registry.Username, cfg.Registry.Password, 
+		base64.StdEncoding.EncodeToString([]byte(cfg.Registry.Username+":"+cfg.Registry.Password)))
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(dockerConfigJSON),
+		},
+	}
+
+	err = k8sClient.Create(ctx, secret)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create image pull secret: %w", err)
+	}
+
+	if !errors.IsAlreadyExists(err) {
+		fmt.Printf("✓ Image pull secret created for registry %s\n", registryURL)
+	}
+
+	return nil
+}
+
+// createImagePullSecretFromEnv creates image pull secret from environment variables
+func createImagePullSecretFromEnv(ctx context.Context, k8sClient client.Client, namespace string) error {
+	// Check environment variables
+	registryURL := os.Getenv("MATEY_REGISTRY_URL")
+	username := os.Getenv("MATEY_REGISTRY_USERNAME") 
+	password := os.Getenv("MATEY_REGISTRY_PASSWORD")
+	
+	// Also check for GitHub-specific env vars
+	if registryURL == "" && username == "" && password == "" {
+		registryURL = "ghcr.io"
+		username = os.Getenv("GITHUB_USERNAME")
+		if username == "" {
+			username = os.Getenv("GITHUB_ACTOR")
+		}
+		password = os.Getenv("GITHUB_TOKEN")
+	}
+
+	if username == "" || password == "" {
+		// No credentials found, skip creating secret
+		fmt.Printf("⚠ No registry credentials found, skipping image pull secret creation\n")
+		fmt.Printf("  Configure registry credentials in matey.yaml or set environment variables:\n")
+		fmt.Printf("  - MATEY_REGISTRY_USERNAME and MATEY_REGISTRY_PASSWORD\n")
+		fmt.Printf("  - or GITHUB_USERNAME/GITHUB_ACTOR and GITHUB_TOKEN for GHCR\n")
+		return nil
+	}
+
+	if registryURL == "" {
+		registryURL = "ghcr.io"
+	}
+
+	// Create the image pull secret
+	secretName := "registry-secret"
+	dockerConfigJSON := fmt.Sprintf(`{
+		"auths": {
+			"%s": {
+				"username": "%s", 
+				"password": "%s",
+				"auth": "%s"
+			}
+		}
+	}`, registryURL, username, password,
+		base64.StdEncoding.EncodeToString([]byte(username+":"+password)))
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeDockerConfigJson,
+		Data: map[string][]byte{
+			corev1.DockerConfigJsonKey: []byte(dockerConfigJSON),
+		},
+	}
+
+	err := k8sClient.Create(ctx, secret)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create image pull secret: %w", err)
+	}
+
+	if !errors.IsAlreadyExists(err) {
+		fmt.Printf("✓ Image pull secret created for registry %s\n", registryURL)
+	}
+
+	return nil
+}
+
+// installDefaultMCPProxy creates a default MCPProxy resource
+func installDefaultMCPProxy(ctx context.Context, k8sClient client.Client, namespace string) error {
+	// Create MCPProxy resource
+	replicas := int32(1)
+	mcpProxy := &crd.MCPProxy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-proxy",
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app":                        "matey",
+				"app.kubernetes.io/name":     "matey",
+				"app.kubernetes.io/instance": "matey-proxy",
+				"app.kubernetes.io/component": "proxy",
+				"app.kubernetes.io/managed-by": "matey",
+			},
+		},
+		Spec: crd.MCPProxySpec{
+			Port:        int32(9876),
+			Replicas:    &replicas,
+			ServiceType: "NodePort",
+			Auth: &crd.ProxyAuthConfig{
+				Enabled: false,
+				APIKey:  "",
+			},
+			ServiceAccount: "matey-controller",
+			Ingress: &crd.IngressConfig{
+				Enabled: false, // Disabled by default during install
+			},
+		},
+	}
+
+	// Create the resource
+	err := k8sClient.Create(ctx, mcpProxy)
+	if err != nil {
+		// Check if it already exists
+		if errors.IsAlreadyExists(err) {
+			existing := &crd.MCPProxy{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mcpProxy), existing); err != nil {
+				return fmt.Errorf("failed to get existing MCPProxy: %w", err)
+			}
+			// Don't update existing proxy - leave user configuration intact
+			fmt.Printf("MCPProxy already exists, skipping creation\n")
+			return nil
+		}
+		return fmt.Errorf("failed to create MCPProxy: %w", err)
 	}
 
 	return nil

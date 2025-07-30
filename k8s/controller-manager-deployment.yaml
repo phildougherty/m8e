@@ -22,9 +22,12 @@ spec:
         app.kubernetes.io/managed-by: matey
     spec:
       serviceAccountName: matey-controller-manager
+      imagePullSecrets:
+      - name: registry-secret
       containers:
       - name: controller-manager
-        image: mcp.robotrad.io/matey:latest
+        image: ghcr.io/phildougherty/matey:latest
+        imagePullPolicy: Always
         command:
         - /app/matey
         args:

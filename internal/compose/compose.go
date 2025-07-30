@@ -15,6 +15,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -241,7 +242,7 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 		if err != nil {
 			memStatus = "error"
 		}
-		serviceInfo := c.getEnhancedServiceInfo("matey-memory", "memory")
+		serviceInfo := c.getEnhancedServiceInfo("memory", "memory")
 		status.Services["memory"] = &ServiceStatus{
 			Name:            "memory",
 			Status:          memStatus,
@@ -253,31 +254,11 @@ func (c *K8sComposer) Status() (*ComposeStatus, error) {
 		}
 	}
 
-	// Check task scheduler status
-	if c.config.TaskScheduler != nil && c.config.TaskScheduler.Enabled {
-		tsStatus, err := c.taskSchedulerManager.GetStatus()
-		if err != nil {
-			tsStatus = "error"
-		}
-		serviceInfo := c.getEnhancedServiceInfo("matey-task-scheduler", "task-scheduler")
-		status.Services["task-scheduler"] = &ServiceStatus{
-			Name:            "task-scheduler",
-			Status:          tsStatus,
-			Type:            "task-scheduler",
-			StartTime:       serviceInfo.StartTime,
-			ProxyConnected:  serviceInfo.ProxyConnected,
-			HealthStatus:    serviceInfo.HealthStatus,
-			RestartCount:    serviceInfo.RestartCount,
-		}
-	}
 
 	// Check MCP server statuses via Kubernetes API
 	for serverName := range c.config.Servers {
-		// Skip memory and task-scheduler if they have dedicated configurations
+		// Skip memory if it has dedicated configuration
 		if serverName == "memory" && c.config.Memory.Enabled {
-			continue
-		}
-		if serverName == "task-scheduler" && c.config.TaskScheduler != nil && c.config.TaskScheduler.Enabled {
 			continue
 		}
 		
@@ -877,9 +858,134 @@ func (c *K8sComposer) getServiceType(serverName string) string {
 	return "mcp-server"
 }
 
+// startProxyService creates and starts the MCPProxy resource
+func (c *K8sComposer) startProxyService() error {
+	ctx := context.Background()
+	
+	// Determine proxy port
+	port := 9876
+	if c.config.Proxy.Port != 0 {
+		port = c.config.Proxy.Port
+	}
+	
+	// Get API key from config
+	apiKey := ""
+	if c.config.ProxyAuth.Enabled {
+		apiKey = c.config.ProxyAuth.APIKey
+	}
+	
+	// Create MCPProxy resource
+	replicas := int32(1)
+	mcpProxy := &crd.MCPProxy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matey-proxy",
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"app":                        "matey",
+				"app.kubernetes.io/name":     "matey",
+				"app.kubernetes.io/instance": "matey-proxy",
+			},
+		},
+		Spec: crd.MCPProxySpec{
+			Port:        int32(port),
+			Replicas:    &replicas,
+			ServiceType: "NodePort",
+			Auth: &crd.ProxyAuthConfig{
+				Enabled: apiKey != "",
+				APIKey:  apiKey,
+			},
+			OAuth:          c.buildOAuthConfig(),
+			ServiceAccount: "matey-controller",
+			Ingress: &crd.IngressConfig{
+				Enabled: true,
+				Host:    c.config.Proxy.Host,
+				Annotations: map[string]string{
+					"nginx.ingress.kubernetes.io/rewrite-target":       "/",
+					"nginx.ingress.kubernetes.io/cors-allow-origin":    "*",
+					"nginx.ingress.kubernetes.io/cors-allow-methods":   "GET, POST, OPTIONS",
+					"nginx.ingress.kubernetes.io/cors-allow-headers":   "Authorization, Content-Type",
+				},
+			},
+		},
+	}
+	
+	// Create or update the resource
+	err := c.k8sClient.Create(ctx, mcpProxy)
+	if err != nil {
+		// Check if it already exists
+		if errors.IsAlreadyExists(err) {
+			existing := &crd.MCPProxy{}
+			if err := c.k8sClient.Get(ctx, client.ObjectKeyFromObject(mcpProxy), existing); err != nil {
+				return fmt.Errorf("failed to get existing MCPProxy: %w", err)
+			}
+			existing.Spec = mcpProxy.Spec
+			if err := c.k8sClient.Update(ctx, existing); err != nil {
+				return fmt.Errorf("failed to update MCPProxy: %w", err)
+			}
+			c.logger.Info("Updated existing MCPProxy resource")
+			return nil
+		}
+		return fmt.Errorf("failed to create MCPProxy: %w", err)
+	}
+	
+	c.logger.Info("MCPProxy resource created successfully")
+	return nil
+}
+
+// buildOAuthConfig builds OAuth configuration from config
+func (c *K8sComposer) buildOAuthConfig() *crd.OAuthConfig {
+	if c.config.OAuth == nil || !c.config.OAuth.Enabled {
+		return nil
+	}
+	
+	oauth := &crd.OAuthConfig{
+		Enabled: true,
+		Issuer:  c.config.OAuth.Issuer,
+	}
+	
+	// Convert endpoints
+	if c.config.OAuth.Endpoints != (config.OAuthEndpoints{}) {
+		oauth.Endpoints = crd.OAuthEndpoints{
+			Authorization: c.config.OAuth.Endpoints.Authorization,
+			Token:         c.config.OAuth.Endpoints.Token,
+			UserInfo:      c.config.OAuth.Endpoints.UserInfo,
+			Revoke:        c.config.OAuth.Endpoints.Revoke,
+			Discovery:     c.config.OAuth.Endpoints.Discovery,
+		}
+	}
+	
+	// Convert tokens
+	if c.config.OAuth.Tokens != (config.TokenConfig{}) {
+		oauth.Tokens = crd.TokenConfig{
+			AccessTokenTTL:  c.config.OAuth.Tokens.AccessTokenTTL,
+			RefreshTokenTTL: c.config.OAuth.Tokens.RefreshTokenTTL,
+			CodeTTL:         c.config.OAuth.Tokens.CodeTTL,
+			Algorithm:       c.config.OAuth.Tokens.Algorithm,
+		}
+	}
+	
+	// Convert security
+	oauth.Security = crd.OAuthSecurityConfig{
+		RequirePKCE: c.config.OAuth.Security.RequirePKCE,
+	}
+	
+	// Convert arrays
+	oauth.GrantTypes = c.config.OAuth.GrantTypes
+	oauth.ResponseTypes = c.config.OAuth.ResponseTypes
+	oauth.ScopesSupported = c.config.OAuth.ScopesSupported
+	
+	return oauth
+}
+
 // startAllEnabledServices starts all services that are enabled in config
 func (c *K8sComposer) startAllEnabledServices() error {
 	var errors []string
+
+	// Start proxy service - always start if install created the MCPProxy resource
+	c.logger.Info("Starting proxy service")
+	if err := c.startProxyService(); err != nil {
+		errors = append(errors, fmt.Sprintf("proxy: %v", err))
+	}
 
 	// Start memory service if enabled
 	if c.config.Memory.Enabled {
@@ -922,11 +1028,6 @@ func (c *K8sComposer) startSpecificServices(serviceNames []string) error {
 			c.logger.Info("Starting memory service")
 			if err := c.memoryManager.Start(); err != nil {
 				errors = append(errors, fmt.Sprintf("memory: %v", err))
-			}
-		case "task-scheduler":
-			c.logger.Info("Starting task scheduler service")
-			if err := c.taskSchedulerManager.Start(); err != nil {
-				errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
 			}
 		case "controller-manager":
 			c.logger.Info("Starting controller manager")
@@ -1017,11 +1118,6 @@ func (c *K8sComposer) stopSpecificServices(serviceNames []string) error {
 			c.logger.Info("Stopping memory service")
 			if err := c.memoryManager.Stop(); err != nil {
 				errors = append(errors, fmt.Sprintf("memory: %v", err))
-			}
-		case "task-scheduler":
-			c.logger.Info("Stopping task scheduler service")
-			if err := c.taskSchedulerManager.Stop(); err != nil {
-				errors = append(errors, fmt.Sprintf("task-scheduler: %v", err))
 			}
 		case "controller-manager":
 			c.logger.Info("Stopping controller manager")
@@ -1250,7 +1346,7 @@ func (c *K8sComposer) createControllerManagerDeployment() *appsv1.Deployment {
 					Containers: []corev1.Container{
 						{
 							Name:  "controller-manager",
-							Image: "mcp.robotrad.io/matey:latest",
+							Image: "ghcr.io/phildougherty/matey:latest",
 							Command: []string{"/app/matey"},
 							Args: []string{
 								"controller-manager",
@@ -1966,8 +2062,6 @@ func getDeploymentName(serviceName string) string {
 		return "matey-proxy"
 	case "memory":
 		return "matey-memory"
-	case "task-scheduler":
-		return "matey-task-scheduler"
 	case "controller-manager":
 		return "matey-controller-manager"
 	default:

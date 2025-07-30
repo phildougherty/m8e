@@ -142,7 +142,7 @@ rules:
   resources: ["deployments", "replicasets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["matey.io"]
-  resources: ["mcpservers", "mcpmemories", "mcpproxies", "mcptaskschedulers", "mcptoolboxes", "workflows"]
+  resources: ["mcpservers", "mcpmemories", "mcpproxies", "mcptaskschedulers", "workflows"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["apiextensions.k8s.io"]
   resources: ["customresourcedefinitions"]

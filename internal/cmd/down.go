@@ -16,10 +16,15 @@ func NewDownCommand() *cobra.Command {
 This command deletes the Kubernetes Deployments, Services, ConfigMaps, and other resources
 for the specified services. If no services are specified, all services will be stopped.
 
+Available services:
+  memory, task-scheduler, controller-manager, proxy, mcp-server
+  
 Examples:
-  matey down                  # Stop all services
-  matey down memory           # Stop only memory service
-  matey down memory task-scheduler  # Stop memory and task scheduler`,
+  matey down                       # Stop all services
+  matey down memory                # Stop only memory service  
+  matey down memory task-scheduler # Stop memory and task scheduler
+  matey down proxy                 # Stop proxy service
+  matey down controller-manager    # Stop controller manager`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			file, _ := cmd.Flags().GetString("file")
 			namespace, _ := cmd.Flags().GetString("namespace")

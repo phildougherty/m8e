@@ -39,10 +39,10 @@ rules:
   verbs: ["get", "list"]
 # MCP Custom Resources
 - apiGroups: ["mcp.matey.ai"]
-  resources: ["mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres", "mcptoolboxes"]
+  resources: ["mcpservers", "mcpmemories", "mcptaskschedulers", "mcpproxies", "mcppostgres"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["mcp.matey.ai"]
-  resources: ["mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status", "mcptoolboxes/status"]
+  resources: ["mcpservers/status", "mcpmemories/status", "mcptaskschedulers/status", "mcpproxies/status", "mcppostgres/status"]
   verbs: ["get", "list", "watch", "update", "patch"]
 
 ---

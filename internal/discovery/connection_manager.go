@@ -64,6 +64,8 @@ type MCPConnection struct {
 	StreamableHTTPConnection *MCPStreamableHTTPConnection
 	LastUsed                 time.Time
 	ErrorCount               int
+	ConsecutiveFailures      int
+	LastKeepAlive            time.Time
 	mu                       sync.RWMutex
 }
 
@@ -87,9 +89,12 @@ type DynamicConnectionManager struct {
 	mu             sync.RWMutex
 	
 	// Connection settings
-	maxRetries     int
-	retryDelay     time.Duration
-	healthInterval time.Duration
+	maxRetries      int
+	retryDelay      time.Duration
+	healthInterval  time.Duration
+	keepAliveInterval time.Duration
+	healthTimeout   time.Duration
+	maxConsecutiveFailures int
 }
 
 // NewDynamicConnectionManager creates a new dynamic connection manager
@@ -100,37 +105,46 @@ func NewDynamicConnectionManager(serviceDiscovery *K8sServiceDiscovery, logger *
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create HTTP clients for different protocols
+	// Create HTTP clients for different protocols with enhanced keep-alive settings
 	httpClient := &http.Client{
 		Timeout: 30 * time.Minute, // Extended for execute_agent
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:          200,
+			MaxIdleConnsPerHost:   20,
+			IdleConnTimeout:       600 * time.Second, // 10 minutes
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DisableKeepAlives:     false,
 		},
 	}
 
-	// SSE client with longer timeout for persistent connections
+	// SSE client with enhanced persistent connection settings
 	sseClient := &http.Client{
 		Timeout: 0, // No timeout for SSE connections
 		Transport: &http.Transport{
-			MaxIdleConns:        50,
-			MaxIdleConnsPerHost: 5,
-			IdleConnTimeout:     300 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       900 * time.Second, // 15 minutes
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			DisableKeepAlives:     false,
 		},
 	}
 
 	dcm := &DynamicConnectionManager{
-		connections:      make(map[string]*MCPConnection),
-		serviceDiscovery: serviceDiscovery,
-		httpClient:       httpClient,
-		sseClient:        sseClient,
-		logger:           logger,
-		ctx:              ctx,
-		cancel:           cancel,
-		maxRetries:       3,
-		retryDelay:       time.Second * 5,
-		healthInterval:   time.Minute * 2,
+		connections:            make(map[string]*MCPConnection),
+		serviceDiscovery:       serviceDiscovery,
+		httpClient:             httpClient,
+		sseClient:              sseClient,
+		logger:                 logger,
+		ctx:                    ctx,
+		cancel:                 cancel,
+		maxRetries:             5, // Increased from 3
+		retryDelay:             time.Second * 10, // Increased from 5
+		healthInterval:         time.Minute * 3, // Increased from 2
+		keepAliveInterval:      time.Second * 30, // New keep-alive interval
+		healthTimeout:          time.Second * 15, // Increased from 5
+		maxConsecutiveFailures: 3, // New threshold for marking unhealthy
 	}
 
 	// Register as service discovery handler
@@ -145,6 +159,12 @@ func (dcm *DynamicConnectionManager) Start() error {
 
 	// Start health checking goroutine
 	go dcm.healthCheckLoop()
+	
+	// Start keep-alive goroutine
+	go dcm.keepAliveLoop()
+	
+	// Start connection recovery goroutine
+	go dcm.connectionRecoveryLoop()
 
 	// Discover existing services and establish connections
 	services, err := dcm.serviceDiscovery.DiscoverMCPServers()
@@ -193,14 +213,16 @@ func (dcm *DynamicConnectionManager) OnServiceAdded(endpoint ServiceEndpoint) {
 
 	// Create new connection
 	conn := &MCPConnection{
-		Name:         endpoint.Name,
-		Endpoint:     endpoint.URL,
-		Protocol:     endpoint.Protocol,
-		Port:         endpoint.Port,
-		Capabilities: endpoint.Capabilities,  // Copy capabilities from service endpoint
-		LastUsed:     time.Now(),
-		Status:       "connecting",
-		ErrorCount:   0,
+		Name:                endpoint.Name,
+		Endpoint:            endpoint.URL,
+		Protocol:            endpoint.Protocol,
+		Port:                endpoint.Port,
+		Capabilities:        endpoint.Capabilities,  // Copy capabilities from service endpoint
+		LastUsed:            time.Now(),
+		Status:              "connecting",
+		ErrorCount:          0,
+		ConsecutiveFailures: 0,
+		LastKeepAlive:       time.Now(),
 	}
 
 	dcm.connections[endpoint.Name] = conn
@@ -332,6 +354,8 @@ func (dcm *DynamicConnectionManager) initializeConnection(conn *MCPConnection) {
 	} else {
 		conn.Status = "connected"
 		conn.ErrorCount = 0
+		conn.ConsecutiveFailures = 0
+		conn.LastKeepAlive = time.Now()
 		dcm.logger.Debug("Successfully connected to %s", conn.Name)
 		
 		// Perform initial health check to verify MCP protocol response
@@ -438,6 +462,252 @@ func (dcm *DynamicConnectionManager) healthCheckLoop() {
 	}
 }
 
+// keepAliveLoop performs periodic keep-alive requests on connections
+func (dcm *DynamicConnectionManager) keepAliveLoop() {
+	ticker := time.NewTicker(dcm.keepAliveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-dcm.ctx.Done():
+			return
+		case <-ticker.C:
+			dcm.performKeepAlive()
+		}
+	}
+}
+
+// performKeepAlive sends keep-alive requests to all connected services
+func (dcm *DynamicConnectionManager) performKeepAlive() {
+	dcm.mu.RLock()
+	connections := make([]*MCPConnection, 0, len(dcm.connections))
+	for _, conn := range dcm.connections {
+		connections = append(connections, conn)
+	}
+	dcm.mu.RUnlock()
+
+	for _, conn := range connections {
+		go dcm.sendKeepAlive(conn)
+	}
+}
+
+// sendKeepAlive sends a lightweight keep-alive request to maintain connection
+func (dcm *DynamicConnectionManager) sendKeepAlive(conn *MCPConnection) {
+	conn.mu.RLock()
+	if conn.Status != "connected" {
+		conn.mu.RUnlock()
+		return
+	}
+	connName := conn.Name
+	protocol := conn.Protocol
+	conn.mu.RUnlock()
+
+	dcm.logger.Debug("Sending keep-alive to %s (%s)", connName, protocol)
+
+	// Send lightweight ping based on protocol
+	var success bool
+	switch protocol {
+	case "http":
+		success = dcm.sendHTTPKeepAlive(conn)
+	case "http-stream":
+		success = dcm.sendStreamableHTTPKeepAlive(conn)
+	case "sse":
+		success = dcm.sendSSEKeepAlive(conn)
+	default:
+		success = true // Assume success for unknown protocols
+	}
+
+	conn.mu.Lock()
+	if success {
+		conn.LastKeepAlive = time.Now()
+		// Reset consecutive failures on successful keep-alive
+		if conn.ConsecutiveFailures > 0 {
+			dcm.logger.Debug("Keep-alive successful for %s, resetting consecutive failures", connName)
+			conn.ConsecutiveFailures = 0
+		}
+	} else {
+		conn.ConsecutiveFailures++
+		dcm.logger.Debug("Keep-alive failed for %s (consecutive failures: %d)", connName, conn.ConsecutiveFailures)
+	}
+	conn.mu.Unlock()
+}
+
+// sendHTTPKeepAlive sends a lightweight HTTP keep-alive request
+func (dcm *DynamicConnectionManager) sendHTTPKeepAlive(conn *MCPConnection) bool {
+	conn.mu.RLock()
+	if conn.HTTPConnection == nil {
+		conn.mu.RUnlock()
+		return false
+	}
+	baseURL := conn.HTTPConnection.BaseURL
+	authToken := conn.HTTPConnection.AuthToken
+	conn.mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Send a simple ping request
+	request := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "keep-alive",
+		"method":  "ping",
+	}
+
+	reqBytes, err := json.Marshal(request)
+	if err != nil {
+		return false
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return false
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	if authToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Any response (including errors) indicates the connection is alive
+	return resp.StatusCode < 500
+}
+
+// sendStreamableHTTPKeepAlive sends a lightweight streamable HTTP keep-alive request
+func (dcm *DynamicConnectionManager) sendStreamableHTTPKeepAlive(conn *MCPConnection) bool {
+	conn.mu.RLock()
+	if conn.StreamableHTTPConnection == nil {
+		conn.mu.RUnlock()
+		return false
+	}
+	baseURL := conn.StreamableHTTPConnection.BaseURL
+	authToken := conn.StreamableHTTPConnection.AuthToken
+	conn.mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	request := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "keep-alive",
+		"method":  "ping",
+	}
+
+	reqBytes, err := json.Marshal(request)
+	if err != nil {
+		return false
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return false
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	if authToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+authToken)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode < 500
+}
+
+// sendSSEKeepAlive sends a lightweight SSE keep-alive request
+func (dcm *DynamicConnectionManager) sendSSEKeepAlive(conn *MCPConnection) bool {
+	conn.mu.RLock()
+	if conn.SSEConnection == nil {
+		conn.mu.RUnlock()
+		return false
+	}
+	baseURL := conn.SSEConnection.BaseURL
+	conn.mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Simple connectivity test for SSE
+	sseURL := baseURL + "/sse"
+	req, err := http.NewRequestWithContext(ctx, "GET", sseURL, nil)
+	if err != nil {
+		return false
+	}
+
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	client := &http.Client{Timeout: dcm.healthTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == 200
+}
+
+// connectionRecoveryLoop periodically attempts to recover failed connections
+func (dcm *DynamicConnectionManager) connectionRecoveryLoop() {
+	ticker := time.NewTicker(time.Minute * 10) // Recovery attempts every 10 minutes
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-dcm.ctx.Done():
+			return
+		case <-ticker.C:
+			dcm.attemptConnectionRecovery()
+		}
+	}
+}
+
+// attemptConnectionRecovery tries to recover connections that have failed or are unhealthy
+func (dcm *DynamicConnectionManager) attemptConnectionRecovery() {
+	dcm.mu.RLock()
+	connections := make([]*MCPConnection, 0, len(dcm.connections))
+	for _, conn := range dcm.connections {
+		connections = append(connections, conn)
+	}
+	dcm.mu.RUnlock()
+
+	for _, conn := range connections {
+		conn.mu.RLock()
+		shouldRecover := (conn.Status == "failed" || conn.Status == "unhealthy") && 
+			conn.ErrorCount > dcm.maxRetries &&
+			time.Since(conn.LastUsed) > time.Minute*5 // Wait 5 minutes before recovery attempt
+		connName := conn.Name
+		errorCount := conn.ErrorCount
+		conn.mu.RUnlock()
+
+		if shouldRecover {
+			dcm.logger.Info("Attempting connection recovery for %s (errors: %d)", connName, errorCount)
+			
+			// Reset error counts to allow retry
+			conn.mu.Lock()
+			conn.ErrorCount = 0
+			conn.ConsecutiveFailures = 0
+			conn.Status = "connecting"
+			conn.mu.Unlock()
+			
+			// Attempt to reinitialize connection
+			go dcm.initializeConnection(conn)
+		}
+	}
+}
+
 // performHealthChecks checks the health of all connections
 func (dcm *DynamicConnectionManager) performHealthChecks() {
 	dcm.mu.RLock()
@@ -455,11 +725,12 @@ func (dcm *DynamicConnectionManager) performHealthChecks() {
 // checkConnectionHealth checks the health of a single connection
 func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) {
 	conn.mu.RLock()
-	if conn.Status != "connected" {
-		conn.mu.RUnlock()
-		return
-	}
+	connName := conn.Name
+	connStatus := conn.Status
 	conn.mu.RUnlock()
+	
+	// Health check all connections, including unhealthy ones, to allow recovery
+	dcm.logger.Debug("Performing health check for %s (current status: %s)", connName, connStatus)
 
 	// Perform health check based on protocol
 	var healthy bool
@@ -476,15 +747,29 @@ func (dcm *DynamicConnectionManager) checkConnectionHealth(conn *MCPConnection) 
 
 	conn.mu.Lock()
 	if !healthy {
-		conn.Status = "unhealthy"
+		conn.ConsecutiveFailures++
 		conn.ErrorCount++
-		dcm.logger.Info("Health check failed for %s (errors: %d)", conn.Name, conn.ErrorCount)
+		
+		// Only mark unhealthy if consecutive failures exceed threshold
+		if conn.ConsecutiveFailures >= dcm.maxConsecutiveFailures {
+			conn.Status = "unhealthy"
+			dcm.logger.Info("Health check failed for %s (consecutive failures: %d, total errors: %d) - marking unhealthy", 
+				conn.Name, conn.ConsecutiveFailures, conn.ErrorCount)
+		} else {
+			dcm.logger.Debug("Health check failed for %s (consecutive failures: %d/%d, total errors: %d) - staying connected", 
+				conn.Name, conn.ConsecutiveFailures, dcm.maxConsecutiveFailures, conn.ErrorCount)
+		}
 	} else {
-		// Reset error count and mark as connected if health check passes
+		// Reset consecutive failures and error count on successful health check
+		if conn.ConsecutiveFailures > 0 || conn.ErrorCount > 0 {
+			dcm.logger.Debug("Health check recovered for %s (resetting %d consecutive failures, %d total errors)", 
+				conn.Name, conn.ConsecutiveFailures, conn.ErrorCount)
+		}
+		conn.ConsecutiveFailures = 0
 		conn.ErrorCount = 0
 		if conn.Status == "unhealthy" {
 			conn.Status = "connected"
-			dcm.logger.Info("Health check recovered for %s", conn.Name)
+			dcm.logger.Info("Health check fully recovered for %s", conn.Name)
 		}
 	}
 	conn.mu.Unlock()
@@ -512,7 +797,7 @@ func (dcm *DynamicConnectionManager) checkHTTPHealth(conn *MCPConnection) bool {
 	dcm.logger.Debug("HTTP connection available for %s - BaseURL: %s", connName, baseURL)
 
 	// Test actual MCP protocol response with an initialize request
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), dcm.healthTimeout)
 	defer cancel()
 
 	// Create a minimal initialize request
@@ -578,7 +863,7 @@ func (dcm *DynamicConnectionManager) sendHTTPHealthRequest(ctx context.Context, 
 	httpReq.Header.Set("Accept", "application/json")
 
 	// Send request with shorter timeout for health checks
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: dcm.healthTimeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
@@ -628,7 +913,7 @@ func (dcm *DynamicConnectionManager) checkStreamableHTTPHealth(conn *MCPConnecti
 	}
 
 	// Test actual MCP protocol response with an initialize request
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), dcm.healthTimeout)
 	defer cancel()
 
 	request := map[string]interface{}{
@@ -789,7 +1074,7 @@ func (dcm *DynamicConnectionManager) checkSSEHealth(conn *MCPConnection) bool {
 	}
 
 	// Simple SSE connectivity test - just check if SSE endpoint responds
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), dcm.healthTimeout)
 	defer cancel()
 
 	// Try to connect to SSE endpoint

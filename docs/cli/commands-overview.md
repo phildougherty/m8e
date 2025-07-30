@@ -26,7 +26,7 @@ matey install [flags]
 - `--dry-run` - Print resources without installing
 
 **What it installs:**
-- Custom Resource Definitions (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy, MCPToolbox, Workflow)
+- Custom Resource Definitions (MCPServer, MCPMemory, MCPTaskScheduler, MCPProxy, Workflow)
 - RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
 - Necessary cluster permissions
 
@@ -417,7 +417,6 @@ matey inspect [resource-type] [resource-name] [flags]
 - `server` - MCPServer resources
 - `task-scheduler` - MCPTaskScheduler resources
 - `proxy` - MCPProxy resources
-- `toolbox` - MCPToolbox resources
 - `workflow` - Workflow resources
 - `all` - All resource types (default)
 
