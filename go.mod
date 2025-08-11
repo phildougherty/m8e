@@ -21,7 +21,7 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/text v0.27.0
+	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.0
 	k8s.io/apiextensions-apiserver v0.33.0
