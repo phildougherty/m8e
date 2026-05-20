@@ -1,0 +1,93 @@
+version: "1"
+
+# Registry for container images
+registry:
+    url: mcp.robotrad.io
+
+# Proxy configuration
+proxy:
+    url: mcp.robotrad.io
+
+# Proxy authentication
+proxy_auth:
+    enabled: true
+    api_key: your-api-key-here
+
+# OAuth configuration
+oauth:
+    enabled: true
+    issuer: https://mcp.robotrad.io
+    endpoints:
+        authorization: /oauth/authorize
+        token: /oauth/token
+    tokens:
+        access_token_ttl: 1h
+        refresh_token_ttl: 168h
+    grant_types:
+        - authorization_code
+        - refresh_token
+    scopes_supported:
+        - mcp:tools
+        - mcp:resources
+
+# OAuth clients
+oauth_clients:
+    my-app:
+        client_id: my-app-client
+        name: My Application
+        redirect_uris:
+            - http://localhost:3000/oauth/callback
+        scopes:
+            - mcp:tools
+            - mcp:resources
+        grant_types:
+            - authorization_code
+            - refresh_token
+        public_client: true
+
+# Task scheduler
+task_scheduler:
+    enabled: true
+    port: 8018
+    database_url: postgresql://user:pass@postgres:5432/scheduler
+    postgres_enabled: true
+    mcp_proxy_url: https://mcp.robotrad.io
+    mcp_proxy_api_key: your-api-key-here
+    workspace: /workspace
+
+# Memory service
+memory:
+    enabled: true
+    port: 3001
+    database_url: postgresql://user:pass@postgres:5432/memory
+    postgres_enabled: true
+
+# MCP servers
+servers:
+    example-server:
+        image: mcp.robotrad.io/example:latest
+        env:
+            HTTP_PORT: "8080"
+        http_port: 8080
+        protocol: sse
+        sse_path: /sse
+        capabilities:
+            - tools
+        authentication:
+            enabled: true
+            required_scope: mcp:tools
+
+    file-server:
+        image: mcp.robotrad.io/filesystem:latest
+        env:
+            HTTP_PORT: "8081"
+        http_port: 8081
+        protocol: http
+        capabilities:
+            - tools
+            - resources
+        volumes:
+            - "/workspace:/workspace:rw"
+        authentication:
+            enabled: true
+            required_scope: mcp:tools

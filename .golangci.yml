@@ -1,0 +1,71 @@
+# golangci-lint v2 configuration for matey (m8e).
+# Run via `make lint` or `golangci-lint run`.
+
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.24"
+  modules-download-mode: readonly
+
+linters:
+  # Explicit list: enable only what we want, so adding new linters in
+  # future golangci-lint releases doesn't silently start failing CI.
+  default: none
+  enable:
+    # Catches real bugs.
+    - errcheck       # unchecked errors
+    - ineffassign    # values assigned but never read
+    - staticcheck    # correctness/style (subsumes gosimple)
+    - unused         # dead funcs/types/vars
+    - govet          # vet checks (shadow, atomic alignment, ...)
+    - bodyclose      # missing http.Response.Body.Close()
+
+  settings:
+    errcheck:
+      # Don't require explicit handling for well-known fire-and-forget writers
+      # where there's nothing actionable. (Body.Close in particular is almost
+      # always deferred; bodyclose still ensures Close actually happens.)
+      exclude-functions:
+        - (io.Closer).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    staticcheck:
+      # Keep the correctness families (SA*, S1*) — they catch real bugs and
+      # genuine simplifications. Disable the opinion families:
+      #   QF*  — "QuickFix" style preferences (e.g. WriteString(Sprintf) → Fprintf).
+      #   ST*  — naming/comment style (e.g. ST1000 package comments, ST1020
+      #          "comment on exported func should start with X ").
+      # These are worth doing opportunistically; not worth gating CI on
+      # hundreds of mechanical rewrites in this codebase's existing surface.
+      checks:
+        - "all"
+        - "-QF*"
+        - "-ST*"
+  exclusions:
+    generated: lax
+    rules:
+      # Tests legitimately use os.Setenv/Unsetenv, encoder.Encode, w.Write on
+      # httptest recorders, and helper Start()/Stop() where the return value
+      # isn't load-bearing for the assertion. Don't make contributors paper
+      # over each one.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+
+      # Generated CRD code (zz_generated_*) is auto-emitted, skip everything.
+      - path: zz_generated.*\.go
+        linters:
+          - errcheck
+          - ineffassign
+          - staticcheck
+          - unused
+          - govet
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

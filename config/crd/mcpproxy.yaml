@@ -1,0 +1,553 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpproxies.mcp.matey.ai
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+spec:
+  group: mcp.matey.ai
+  names:
+    kind: MCPProxy
+    listKind: MCPProxyList
+    plural: mcpproxies
+    shortNames:
+    - mcpproxy
+    singular: mcpproxy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.discoveredServers
+      name: Servers
+      type: integer
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: MCPProxy represents an MCP proxy deployment that manages routing and service discovery
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MCPProxySpec defines the desired state of MCPProxy
+            properties:
+              # Server discovery configuration
+              serverSelector:
+                description: Server discovery configuration
+                properties:
+                  labelSelector:
+                    description: Label selector for MCPServer resources
+                    type: object
+                  namespaceSelector:
+                    description: Namespace selector for cross-namespace discovery
+                    type: object
+                  includeServers:
+                    description: Include servers by name
+                    items:
+                      type: string
+                    type: array
+                  excludeServers:
+                    description: Exclude servers by name
+                    items:
+                      type: string
+                    type: array
+                type: object
+              
+              # Proxy configuration
+              port:
+                description: Port for the proxy
+                format: int32
+                type: integer
+              host:
+                description: Host for the proxy
+                type: string
+              
+              # Authentication configuration
+              auth:
+                description: Authentication configuration
+                properties:
+                  enabled:
+                    description: Whether authentication is enabled
+                    type: boolean
+                  apiKey:
+                    description: API key for authentication
+                    type: string
+                  oauthFallback:
+                    description: Whether to use OAuth fallback
+                    type: boolean
+                type: object
+              
+              oauth:
+                description: OAuth configuration
+                properties:
+                  enabled:
+                    description: Whether OAuth is enabled
+                    type: boolean
+                  issuer:
+                    description: OAuth issuer
+                    type: string
+                  endpoints:
+                    description: OAuth endpoints
+                    properties:
+                      authorization:
+                        type: string
+                      token:
+                        type: string
+                      userinfo:
+                        type: string
+                      revoke:
+                        type: string
+                      discovery:
+                        type: string
+                    type: object
+                  tokens:
+                    description: Token configuration
+                    properties:
+                      accessTokenTTL:
+                        type: string
+                      refreshTokenTTL:
+                        type: string
+                      authorizationCodeTTL:
+                        type: string
+                      algorithm:
+                        type: string
+                    type: object
+                  security:
+                    description: OAuth security configuration
+                    properties:
+                      requirePKCE:
+                        type: boolean
+                    type: object
+                  grantTypes:
+                    description: Supported grant types
+                    items:
+                      type: string
+                    type: array
+                  responseTypes:
+                    description: Supported response types
+                    items:
+                      type: string
+                    type: array
+                  scopesSupported:
+                    description: Supported scopes
+                    items:
+                      type: string
+                    type: array
+                type: object
+              
+              rbac:
+                description: RBAC configuration
+                properties:
+                  enabled:
+                    description: Whether RBAC is enabled
+                    type: boolean
+                  scopes:
+                    description: Scopes configuration
+                    items:
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                      type: object
+                    type: array
+                  roles:
+                    description: Roles configuration
+                    additionalProperties:
+                      properties:
+                        scopes:
+                          items:
+                            type: string
+                          type: array
+                        servers:
+                          items:
+                            type: string
+                          type: array
+                      type: object
+                    type: object
+                type: object
+              
+              # Connection management
+              connections:
+                description: Connection management configuration
+                properties:
+                  maxConnections:
+                    description: Maximum number of connections
+                    format: int32
+                    type: integer
+                  maxIdleTime:
+                    description: Maximum idle time
+                    type: string
+                  healthCheckInterval:
+                    description: Health check interval
+                    type: string
+                  timeouts:
+                    description: Timeouts configuration
+                    additionalProperties:
+                      type: string
+                    type: object
+                  poolSize:
+                    description: Connection pool size
+                    format: int32
+                    type: integer
+                  enableMetrics:
+                    description: Whether to enable metrics
+                    type: boolean
+                type: object
+              
+              # Ingress configuration
+              ingress:
+                description: Ingress configuration
+                properties:
+                  enabled:
+                    description: Whether ingress is enabled
+                    type: boolean
+                  class:
+                    description: Ingress class
+                    type: string
+                  host:
+                    description: Ingress host
+                    type: string
+                  tls:
+                    description: Whether TLS is enabled
+                    type: boolean
+                  annotations:
+                    description: Ingress annotations
+                    additionalProperties:
+                      type: string
+                    type: object
+                  paths:
+                    description: Ingress paths
+                    items:
+                      properties:
+                        path:
+                          type: string
+                        pathType:
+                          type: string
+                        backend:
+                          type: string
+                      type: object
+                    type: array
+                type: object
+              
+              # Monitoring and observability
+              monitoring:
+                description: Monitoring configuration
+                properties:
+                  enabled:
+                    description: Whether monitoring is enabled
+                    type: boolean
+                  port:
+                    description: Monitoring port
+                    format: int32
+                    type: integer
+                  path:
+                    description: Monitoring path
+                    type: string
+                type: object
+              
+              # Audit configuration
+              audit:
+                description: Audit configuration
+                properties:
+                  enabled:
+                    description: Whether audit is enabled
+                    type: boolean
+                  logLevel:
+                    description: Audit log level
+                    type: string
+                  storage:
+                    description: Audit storage
+                    type: string
+                  retention:
+                    description: Retention configuration
+                    properties:
+                      maxEntries:
+                        format: int32
+                        type: integer
+                      maxAge:
+                        type: string
+                    type: object
+                  events:
+                    description: Audit events
+                    items:
+                      type: string
+                    type: array
+                type: object
+              
+              # Dashboard configuration
+              dashboard:
+                description: Dashboard configuration
+                properties:
+                  enabled:
+                    description: Whether dashboard is enabled
+                    type: boolean
+                  port:
+                    description: Dashboard port
+                    format: int32
+                    type: integer
+                  path:
+                    description: Dashboard path
+                    type: string
+                type: object
+              
+              # TLS configuration
+              tls:
+                description: TLS configuration
+                properties:
+                  enabled:
+                    description: Whether TLS is enabled
+                    type: boolean
+                  secretName:
+                    description: TLS secret name
+                    type: string
+                  certFile:
+                    description: Certificate file path
+                    type: string
+                  keyFile:
+                    description: Key file path
+                    type: string
+                type: object
+              
+              # Resource requirements
+              resources:
+                description: Resource requirements
+                properties:
+                  limits:
+                    additionalProperties:
+                      type: string
+                    description: Resource limits
+                    type: object
+                  requests:
+                    additionalProperties:
+                      type: string
+                    description: Resource requests
+                    type: object
+                type: object
+              
+              # Deployment configuration
+              replicas:
+                description: Number of replicas
+                format: int32
+                type: integer
+              nodeSelector:
+                description: Node selector
+                additionalProperties:
+                  type: string
+                type: object
+              tolerations:
+                description: Tolerations
+                items:
+                  properties:
+                    key:
+                      type: string
+                    operator:
+                      type: string
+                    value:
+                      type: string
+                    effect:
+                      type: string
+                    tolerationSeconds:
+                      format: int64
+                      type: integer
+                  type: object
+                type: array
+              affinity:
+                description: Affinity configuration
+                properties:
+                  nodeAffinity:
+                    type: object
+                  podAffinity:
+                    type: object
+                  podAntiAffinity:
+                    type: object
+                type: object
+              
+              # Service configuration
+              serviceType:
+                description: Service type (ClusterIP, NodePort, LoadBalancer)
+                type: string
+              serviceAnnotations:
+                description: Service annotations
+                additionalProperties:
+                  type: string
+                type: object
+              
+              # Kubernetes-specific configuration
+              serviceAccount:
+                description: Service account
+                type: string
+              imagePullSecrets:
+                description: Image pull secrets
+                items:
+                  type: string
+                type: array
+              podAnnotations:
+                description: Pod annotations
+                additionalProperties:
+                  type: string
+                type: object
+              labels:
+                description: Additional labels
+                additionalProperties:
+                  type: string
+                type: object
+            type: object
+          status:
+            description: MCPProxyStatus defines the observed state of MCPProxy
+            properties:
+              phase:
+                description: Phase represents the current phase of the MCPProxy
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations of an object's state
+                items:
+                  properties:
+                    type:
+                      description: Type of condition
+                      type: string
+                    status:
+                      description: Status of the condition
+                      type: string
+                    lastTransitionTime:
+                      description: Last transition time
+                      format: date-time
+                      type: string
+                    reason:
+                      description: Reason for the condition
+                      type: string
+                    message:
+                      description: Human readable message
+                      type: string
+                  required:
+                  - type
+                  - status
+                  type: object
+                type: array
+              discoveredServers:
+                description: Discovered servers
+                items:
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    endpoint:
+                      type: string
+                    protocol:
+                      type: string
+                    capabilities:
+                      items:
+                        type: string
+                      type: array
+                    status:
+                      type: string
+                    lastDiscovered:
+                      format: date-time
+                      type: string
+                    healthStatus:
+                      type: string
+                  type: object
+                type: array
+              endpoints:
+                description: Endpoints exposed by the proxy
+                items:
+                  properties:
+                    name:
+                      type: string
+                    url:
+                      type: string
+                    protocol:
+                      type: string
+                    port:
+                      format: int32
+                      type: integer
+                  type: object
+                type: array
+              connectionStats:
+                description: Connection statistics
+                properties:
+                  totalConnections:
+                    format: int32
+                    type: integer
+                  activeConnections:
+                    format: int32
+                    type: integer
+                  failedConnections:
+                    format: int32
+                    type: integer
+                  averageResponseTime:
+                    type: string
+                  requestsPerSecond:
+                    format: float
+                    type: number
+                  errorRate:
+                    format: float
+                    type: number
+                type: object
+              healthStatus:
+                description: Health status
+                type: string
+              replicas:
+                description: Total number of replicas
+                format: int32
+                type: integer
+              readyReplicas:
+                description: Number of ready replicas
+                format: int32
+                type: integer
+              serviceEndpoints:
+                description: Service endpoints
+                items:
+                  properties:
+                    name:
+                      description: Endpoint name
+                      type: string
+                    port:
+                      description: Endpoint port
+                      format: int32
+                      type: integer
+                    url:
+                      description: Endpoint URL
+                      type: string
+                  required:
+                  - name
+                  - port
+                  - url
+                  type: object
+                type: array
+              ingressEndpoints:
+                description: Ingress endpoints
+                items:
+                  properties:
+                    host:
+                      type: string
+                    path:
+                      type: string
+                    url:
+                      type: string
+                  type: object
+                type: array
+              observedGeneration:
+                description: Observed generation
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

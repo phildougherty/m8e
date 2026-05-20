@@ -1,0 +1,473 @@
+# AI-Powered Workflow Configuration Example
+# This example demonstrates advanced AI integration with workflow automation
+
+version: "3.8"
+
+services:
+  # AI-powered code analysis server
+  code-analysis:
+    image: mcp/code-analysis:latest
+    protocol: http
+    port: 8080
+    environment:
+      - LANGUAGE_SERVERS=typescript,python,go,rust
+      - ENABLE_LINTING=true
+      - ENABLE_FORMATTING=true
+    volumes:
+      - ./code:/workspace:ro
+    resources:
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+        
+  # Document processing and RAG
+  document-processor:
+    image: mcp/document-processor:latest
+    protocol: http
+    port: 8081
+    environment:
+      - VECTOR_DB_URL=postgresql://matey:${DB_PASSWORD}@memory:5432/matey_memory
+      - EMBEDDING_MODEL=text-embedding-ada-002
+      - CHUNK_SIZE=1000
+      - CHUNK_OVERLAP=200
+    depends_on:
+      - memory
+    volumes:
+      - documents:/documents
+    resources:
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+        
+  # Web scraping and research
+  web-researcher:
+    image: mcp/web-researcher:latest
+    protocol: http
+    port: 8082
+    environment:
+      - SEARCH_API_KEY=${SEARCH_API_KEY}
+      - SCRAPING_TIMEOUT=30s
+      - MAX_CONCURRENT_REQUESTS=10
+      - ENABLE_JAVASCRIPT=true
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "300m"
+      requests:
+        memory: "256Mi"
+        cpu: "150m"
+        
+  # Git operations server
+  git-ops:
+    image: mcp/git-ops:latest
+    protocol: stdio
+    command: ["git-mcp-server", "/workspace"]
+    environment:
+      - GIT_USER=${GIT_USER}
+      - GIT_EMAIL=${GIT_EMAIL}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - ./workspace:/workspace
+      - git-cache:/tmp/git-cache
+    resources:
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+        
+  # Memory service with vector storage
+  memory:
+    image: postgres:15
+    port: 5432
+    environment:
+      - POSTGRES_DB=matey_memory
+      - POSTGRES_USER=matey
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_EXTENSIONS=vector
+    volumes:
+      - memory-data:/var/lib/postgresql/data
+    resources:
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+        
+  # Task scheduler with AI integration
+  task-scheduler:
+    image: mcp/task-scheduler:latest
+    protocol: http
+    port: 8083
+    environment:
+      - DB_URL=postgresql://matey:${DB_PASSWORD}@memory:5432/matey_memory
+      - AI_PROVIDER=openai
+      - AI_MODEL=gpt-4
+      - ENABLE_AI_SCHEDULING=true
+      - WORKFLOW_TIMEOUT=1h
+    depends_on:
+      - memory
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "300m"
+      requests:
+        memory: "256Mi"
+        cpu: "150m"
+
+# Volumes for persistent storage
+volumes:
+  memory-data:
+    driver: kubernetes
+    driver_opts:
+      type: csi
+      driver: ebs.csi.aws.com
+      size: 50Gi
+      type: gp3
+      encrypted: true
+      
+  documents:
+    driver: kubernetes
+    driver_opts:
+      type: nfs
+      server: nfs.example.com
+      path: /exports/documents
+      
+  git-cache:
+    driver: kubernetes
+    driver_opts:
+      type: hostPath
+      path: /tmp/git-cache
+      create: true
+
+# Multiple AI providers for different use cases
+ai_providers:
+  # Primary for general tasks
+  - name: openai-gpt4
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4
+    max_tokens: 8000
+    temperature: 0.3
+    timeout: 60s
+    retry_attempts: 3
+    fallback: claude-sonnet
+    
+  # For code analysis
+  - name: openai-code
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4
+    max_tokens: 8000
+    temperature: 0.1
+    system_prompt: "You are an expert code analyst. Provide detailed, accurate analysis."
+    
+  # For creative tasks
+  - name: claude-sonnet
+    type: claude
+    api_key: ${CLAUDE_API_KEY}
+    model: claude-3-sonnet-20240229
+    max_tokens: 8000
+    temperature: 0.7
+    timeout: 60s
+    retry_attempts: 3
+    
+  # For research and analysis
+  - name: claude-opus
+    type: claude
+    api_key: ${CLAUDE_API_KEY}
+    model: claude-3-opus-20240229
+    max_tokens: 8000
+    temperature: 0.5
+    system_prompt: "You are a research assistant. Provide thorough, well-researched responses."
+    
+  # Local model for privacy-sensitive tasks
+  - name: ollama-local
+    type: ollama
+    endpoint: http://ollama:11434
+    model: llama2:13b
+    context_length: 8192
+    temperature: 0.3
+    timeout: 120s
+    keep_alive: 30m
+    
+  # For embeddings
+  - name: openai-embeddings
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    model: text-embedding-ada-002
+    timeout: 30s
+    
+  # Multimodal for image analysis
+  - name: openai-vision
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4-vision-preview
+    max_tokens: 4000
+    temperature: 0.3
+
+# OAuth authentication for team collaboration
+auth:
+  enabled: true
+  type: oauth
+  oauth:
+    providers:
+      - name: github
+        client_id: ${GITHUB_CLIENT_ID}
+        client_secret: ${GITHUB_CLIENT_SECRET}
+        scopes: [user:email, read:user, repo]
+        redirect_uri: https://matey.example.com/auth/github/callback
+        
+  jwt:
+    secret: ${JWT_SECRET}
+    algorithm: HS256
+    expiration: 12h
+    refresh_enabled: true
+    refresh_expiration: 7d
+    
+  rbac:
+    enabled: true
+    roles:
+      - name: researcher
+        permissions:
+          - "servers:read"
+          - "workflows:read"
+          - "workflows:execute"
+          - "tools:execute"
+          - "documents:read"
+          
+      - name: developer
+        permissions:
+          - "servers:*"
+          - "workflows:*"
+          - "tools:*"
+          - "documents:*"
+          - "git:*"
+          
+      - name: admin
+        permissions:
+          - "*"
+
+# Advanced service discovery for AI workflows
+discovery:
+  enabled: true
+  provider: kubernetes
+  cross_namespace: true
+  health_check_interval: 30s
+  timeout: 10s
+  retries: 3
+  
+  custom:
+    endpoints:
+      - name: embedding-service
+        url: http://embedding-service:8080
+        health_check: http://embedding-service:8080/health
+        capabilities: [embeddings, similarity_search]
+        
+      - name: vector-db
+        url: http://vector-db:9200
+        health_check: http://vector-db:9200/_health
+        capabilities: [vector_storage, semantic_search]
+
+# Comprehensive feature set for AI workflows
+features:
+  ai_integration: true
+  workflow_engine: true
+  memory_service: true
+  task_scheduler: true
+  audit_logging: true
+  metrics: true
+  tracing: true
+  dashboard: true
+  
+  # AI-specific features
+  experimental:
+    auto_scaling: true
+    smart_routing: true
+    context_management: true
+    model_switching: true
+    embedding_cache: true
+
+# Workflow definitions
+workflows:
+  # Code review workflow
+  code-review:
+    name: "AI Code Review"
+    description: "Automated code review with AI analysis"
+    schedule: "0 9 * * 1-5"  # Weekdays at 9 AM
+    steps:
+      - name: fetch-changes
+        tool: git-ops
+        action: fetch_recent_changes
+        params:
+          since: "24h"
+          
+      - name: analyze-code
+        tool: code-analysis
+        action: analyze_changes
+        params:
+          changes: "{{steps.fetch-changes.output}}"
+          include_suggestions: true
+          
+      - name: ai-review
+        ai_provider: openai-code
+        prompt: |
+          Please review the following code changes and provide detailed feedback:
+          {{steps.analyze-code.output}}
+          
+          Focus on:
+          1. Code quality and best practices
+          2. Security vulnerabilities
+          3. Performance implications
+          4. Maintainability issues
+          
+      - name: create-report
+        tool: document-processor
+        action: create_document
+        params:
+          content: "{{steps.ai-review.output}}"
+          format: "markdown"
+          title: "Code Review Report - {{date}}"
+          
+  # Research workflow
+  research-task:
+    name: "AI Research Assistant"
+    description: "Comprehensive research with web scraping and analysis"
+    trigger: "manual"
+    steps:
+      - name: web-research
+        tool: web-researcher
+        action: search_and_scrape
+        params:
+          query: "{{input.research_topic}}"
+          max_results: 10
+          
+      - name: process-documents
+        tool: document-processor
+        action: process_documents
+        params:
+          documents: "{{steps.web-research.output}}"
+          create_embeddings: true
+          
+      - name: ai-analysis
+        ai_provider: claude-opus
+        prompt: |
+          Based on the following research findings, provide a comprehensive analysis:
+          {{steps.process-documents.output}}
+          
+          Please include:
+          1. Key findings and insights
+          2. Trends and patterns
+          3. Conflicting viewpoints
+          4. Recommendations for further research
+          
+      - name: store-results
+        tool: memory
+        action: store_research
+        params:
+          topic: "{{input.research_topic}}"
+          findings: "{{steps.ai-analysis.output}}"
+          sources: "{{steps.web-research.sources}}"
+          
+  # Document processing workflow
+  document-analysis:
+    name: "Document Analysis Pipeline"
+    description: "Process and analyze documents with AI"
+    trigger: "file_upload"
+    steps:
+      - name: extract-text
+        tool: document-processor
+        action: extract_text
+        params:
+          file_path: "{{trigger.file_path}}"
+          
+      - name: create-embeddings
+        ai_provider: openai-embeddings
+        action: create_embeddings
+        params:
+          text: "{{steps.extract-text.output}}"
+          
+      - name: analyze-content
+        ai_provider: claude-sonnet
+        prompt: |
+          Analyze this document and provide:
+          1. Summary of main points
+          2. Key concepts and themes
+          3. Factual claims that need verification
+          4. Potential questions for further investigation
+          
+          Document content:
+          {{steps.extract-text.output}}
+          
+      - name: store-analysis
+        tool: memory
+        action: store_document_analysis
+        params:
+          document_id: "{{trigger.file_id}}"
+          analysis: "{{steps.analyze-content.output}}"
+          embeddings: "{{steps.create-embeddings.output}}"
+
+# Monitoring for AI workflows
+monitoring:
+  prometheus:
+    enabled: true
+    endpoint: /metrics
+    port: 9090
+    scrape_interval: 15s
+    ai_metrics:
+      - token_usage
+      - response_time
+      - error_rate
+      - model_performance
+      
+  grafana:
+    enabled: true
+    dashboards:
+      - name: ai-workflows
+        file: dashboards/ai-workflows.json
+      - name: model-performance
+        file: dashboards/model-performance.json
+        
+  alerts:
+    enabled: true
+    webhook: ${SLACK_WEBHOOK_URL}
+    rules:
+      - name: high-ai-token-usage
+        condition: ai_token_usage_rate > 1000
+        duration: 5m
+        severity: warning
+        
+      - name: ai-provider-down
+        condition: ai_provider_health == 0
+        duration: 1m
+        severity: critical
+        
+      - name: workflow-failure
+        condition: workflow_failure_rate > 10
+        duration: 2m
+        severity: warning
+        
+  logging:
+    level: info
+    format: json
+    ai_logging:
+      log_prompts: false  # Don't log prompts for privacy
+      log_responses: false  # Don't log responses for privacy
+      log_metadata: true   # Log metadata for debugging
+      
+  tracing:
+    enabled: true
+    jaeger:
+      endpoint: http://jaeger:14268/api/traces
+      sampler_rate: 0.1
+      ai_tracing:
+        trace_ai_calls: true
+        trace_workflows: true

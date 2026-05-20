@@ -1,0 +1,95 @@
+# Basic Matey Configuration Example
+# This example shows a minimal setup with common MCP servers
+
+version: "3.8"
+
+services:
+  # Simple filesystem server for file operations
+  filesystem:
+    image: mcp/filesystem-server:latest
+    protocol: stdio
+    command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+    volumes:
+      - ./workspace:/workspace
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+    
+  # Web search server
+  web-search:
+    image: mcp/web-search:latest
+    protocol: http
+    port: 8080
+    environment:
+      - SEARCH_API_KEY=${SEARCH_API_KEY}
+    resources:
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+    
+  # Memory service using PostgreSQL
+  memory:
+    image: postgres:15
+    port: 5432
+    environment:
+      - POSTGRES_DB=matey_memory
+      - POSTGRES_USER=matey
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - memory-data:/var/lib/postgresql/data
+    resources:
+      limits:
+        memory: "512Mi"
+        cpu: "300m"
+      requests:
+        memory: "256Mi"
+        cpu: "150m"
+
+# Volume definitions
+volumes:
+  memory-data:
+    driver: kubernetes
+    driver_opts:
+      type: hostPath
+      path: /var/lib/matey/memory
+
+# Basic AI provider configuration
+ai_providers:
+  - name: openai
+    type: openai
+    api_key: ${OPENAI_API_KEY}
+    model: gpt-4
+    max_tokens: 2000
+    temperature: 0.7
+
+# Simple authentication
+auth:
+  enabled: true
+  type: jwt
+  secret: ${JWT_SECRET}
+  expiration: 24h
+
+# Service discovery
+discovery:
+  enabled: true
+  cross_namespace: false
+  health_check_interval: 30s
+
+# Basic logging
+logging:
+  level: info
+  format: json
+  
+# Feature flags
+features:
+  ai_integration: true
+  memory_service: true
+  workflow_engine: false
+  task_scheduler: false
